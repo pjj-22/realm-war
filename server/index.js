@@ -6,6 +6,7 @@ import hexRoutes from './routes/hexes.js'
 import buildingRoutes from './routes/buildings.js'
 import militaryRoutes from './routes/military.js'
 import battleRoutes from './routes/battles.js'
+import eventRoutes from './routes/events.js'
 import { startTick } from './tick.js'
 import { DEV_MODE, STARTING_GOLD, STARTING_MANA } from './config.js'
 import { pool } from './db.js'
@@ -22,6 +23,7 @@ app.use('/api/hexes', hexRoutes)
 app.use('/api/buildings', buildingRoutes)
 app.use('/api/military', militaryRoutes)
 app.use('/api/battles', battleRoutes)
+app.use('/api/events', eventRoutes)
 
 app.get('/api/health', (_, res) => res.json({ ok: true, devMode: DEV_MODE }))
 

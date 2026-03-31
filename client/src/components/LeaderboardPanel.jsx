@@ -3,6 +3,7 @@ import { api } from '../api/client'
 
 export default function LeaderboardPanel({ player }) {
   const [board, setBoard] = useState([])
+  const [open, setOpen] = useState(false)
 
   useEffect(() => {
     load()
@@ -16,32 +17,76 @@ export default function LeaderboardPanel({ player }) {
 
   if (board.length === 0) return null
 
+  const top5 = board.slice(0, 5)
+  const playerInTop5 = top5.some(p => p.username === player?.username)
+  const playerRow = !playerInTop5 && player
+    ? board.find(p => p.username === player.username)
+    : null
+  const playerRank = playerRow ? board.indexOf(playerRow) + 1 : null
+
+  function Entry({ p, rank }) {
+    const isMe = p.username === player?.username
+    return (
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 8,
+        padding: '5px 0',
+        opacity: isMe ? 1 : 0.85,
+        fontWeight: isMe ? 'bold' : 'normal',
+        borderBottom: '1px solid rgba(74,58,122,0.3)',
+      }}>
+        <span style={{ fontSize: 12, color: '#8a7a9a', minWidth: 18, textAlign: 'right' }}>{rank}.</span>
+        <span style={{ width: 9, height: 9, borderRadius: '50%', background: p.color, display: 'inline-block', flexShrink: 0 }} />
+        <span style={{ fontSize: 14, flex: 1 }}>{p.username}</span>
+        <span style={{ fontSize: 13, color: '#9a8aaa' }}>{p.hex_count}▲</span>
+        <span style={{ fontSize: 13, color: '#8a7aaa' }}>{Math.round(p.total_strength)}⚔</span>
+      </div>
+    )
+  }
+
   return (
     <div style={{
       position: 'absolute', bottom: 16, left: '50%', transform: 'translateX(-50%)',
-      background: 'rgba(10,8,25,0.85)', border: '1px solid #4a3a7a',
-      borderRadius: 6, padding: '8px 16px',
+      background: 'rgba(10,8,25,0.88)', border: '1px solid #4a3a7a',
+      borderRadius: 6,
       color: '#c9b99a', fontFamily: 'Georgia, serif',
       boxShadow: '0 0 20px rgba(80,40,160,0.3)',
-      display: 'flex', gap: 20, alignItems: 'center',
-      pointerEvents: 'none',
+      minWidth: 220,
     }}>
-      <span style={{ fontSize: 10, letterSpacing: 2, color: '#5a4a7a', textTransform: 'uppercase', whiteSpace: 'nowrap' }}>
-        Leaderboard
-      </span>
-      {board.slice(0, 5).map((p, i) => (
-        <div key={p.username} style={{
-          display: 'flex', alignItems: 'center', gap: 5,
-          opacity: p.username === player?.username ? 1 : 0.8,
-          fontWeight: p.username === player?.username ? 'bold' : 'normal',
+      {/* Toggle header */}
+      <button
+        onClick={() => setOpen(o => !o)}
+        style={{
+          width: '100%', padding: '8px 16px',
+          background: 'none', border: 'none', cursor: 'pointer',
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          color: '#9a8aaa', fontFamily: 'Georgia, serif', fontSize: 12,
+          letterSpacing: 2, textTransform: 'uppercase',
         }}>
-          <span style={{ fontSize: 11, color: '#5a4a7a' }}>{i + 1}.</span>
-          <span style={{ width: 8, height: 8, borderRadius: '50%', background: p.color, display: 'inline-block', flexShrink: 0 }} />
-          <span style={{ fontSize: 12 }}>{p.username}</span>
-          <span style={{ fontSize: 11, color: '#7a6a9a' }}>{p.hex_count}▲</span>
-          <span style={{ fontSize: 11, color: '#9a7a9a' }}>{Math.round(p.total_strength)}⚔</span>
+        <span>🏆 Leaderboard</span>
+        <span style={{ fontSize: 13 }}>{open ? '▼' : '▲'}</span>
+      </button>
+
+      {open && (
+        <div style={{ padding: '4px 16px 12px', minWidth: 260 }}>
+          {top5.map((p, i) => <Entry key={p.username} p={p} rank={i + 1} />)}
+          {playerRow && (
+            <>
+              <div style={{ fontSize: 11, color: '#6a5878', textAlign: 'center', padding: '4px 0' }}>···</div>
+              <Entry p={playerRow} rank={playerRank} />
+            </>
+          )}
+          {player && !playerRow && !playerInTop5 && (
+            <>
+              <div style={{ fontSize: 11, color: '#6a5878', textAlign: 'center', padding: '4px 0' }}>···</div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 0', fontWeight: 'bold' }}>
+                <span style={{ fontSize: 12, color: '#8a7a9a', minWidth: 18, textAlign: 'right' }}>?.</span>
+                <span style={{ width: 9, height: 9, borderRadius: '50%', background: player.color, display: 'inline-block', flexShrink: 0 }} />
+                <span style={{ fontSize: 14 }}>{player.username}</span>
+              </div>
+            </>
+          )}
         </div>
-      ))}
+      )}
     </div>
   )
 }

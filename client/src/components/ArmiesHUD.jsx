@@ -3,25 +3,54 @@ import { api } from '../api/client'
 
 const ICONS = { knight: '⚔', archer: '🏹', trebuchet: '💣' }
 
-function ArmyRow({ army, isOwn, onRecall }) {
+function groupKey(army) {
+  const etaBucket = Math.round(new Date(army.arrives_at).getTime() / 10000)
+  return `${army.to_hex}::${etaBucket}`
+}
+
+function groupArmies(armies) {
+  const map = new Map()
+  for (const a of armies) {
+    const k = groupKey(a)
+    if (!map.has(k)) {
+      map.set(k, { key: k, to_hex: a.to_hex, armies: [], arrives_at: a.arrives_at, departed_at: a.departed_at })
+    }
+    map.get(k).armies.push(a)
+  }
+  return Array.from(map.values())
+}
+
+function compositionStr(armies) {
+  const totals = {}
+  for (const a of armies) totals[a.type] = (totals[a.type] || 0) + a.quantity
+  return Object.entries(totals)
+    .filter(([, q]) => q > 0)
+    .map(([t, q]) => `${ICONS[t] || t}${q}`)
+    .join(' ')
+}
+
+function ArmyGroupRow({ group, isOwn, onRecall, color, username }) {
   const [progress, setProgress] = useState(0)
   const [remaining, setRemaining] = useState(0)
 
+  const departedAt = group.departed_at || group.armies[0]?.departed_at
+  const arrivesAt  = group.arrives_at  || group.armies[0]?.arrives_at
+
   useEffect(() => {
     function update() {
-      const total = new Date(army.arrives_at) - new Date(army.departed_at)
-      const elapsed = Date.now() - new Date(army.departed_at)
+      const total   = new Date(arrivesAt) - new Date(departedAt)
+      const elapsed = Date.now() - new Date(departedAt)
       setProgress(Math.min(100, (elapsed / total) * 100))
-      setRemaining(Math.max(0, Math.ceil((new Date(army.arrives_at) - Date.now()) / 1000)))
+      setRemaining(Math.max(0, Math.ceil((new Date(arrivesAt) - Date.now()) / 1000)))
     }
     update()
     const interval = setInterval(update, 1000)
     return () => clearInterval(interval)
-  }, [army])
+  }, [arrivesAt, departedAt])
 
   const mins = Math.floor(remaining / 60)
   const secs = remaining % 60
-  const eta = mins > 0 ? `${mins}m ${secs}s` : `${secs}s`
+  const eta  = mins > 0 ? `${mins}m ${secs}s` : `${secs}s`
 
   return (
     <div style={{
@@ -31,23 +60,28 @@ function ArmyRow({ army, isOwn, onRecall }) {
       borderRadius: 4,
     }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
-        <span style={{ fontSize: 12 }}>
-          <span style={{ width: 8, height: 8, borderRadius: '50%', background: army.color, display: 'inline-block', marginRight: 5 }} />
-          {army.username} · {ICONS[army.type]}{army.quantity} {army.type}s
+        <span style={{ fontSize: 14 }}>
+          {color && (
+            <span style={{ width: 9, height: 9, borderRadius: '50%', background: color, display: 'inline-block', marginRight: 5 }} />
+          )}
+          {username && <>{username} · </>}
+          {compositionStr(group.armies)}
         </span>
         <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-          <span style={{ fontSize: 11, color: '#7a6a9a' }}>{eta}</span>
+          <span style={{ fontSize: 13, color: '#7a6a9a' }}>{eta}</span>
           {isOwn && (
-            <button onClick={() => onRecall(army.id)} style={{
-              padding: '1px 6px', background: 'rgba(100,30,30,0.4)',
-              border: '1px solid #6a2a2a', borderRadius: 3,
-              color: '#c09090', cursor: 'pointer', fontSize: 10, fontFamily: 'Georgia, serif',
-            }}>Recall</button>
+            <button
+              onClick={() => group.armies.forEach(a => onRecall(a.id))}
+              style={{
+                padding: '1px 6px', background: 'rgba(100,30,30,0.4)',
+                border: '1px solid #6a2a2a', borderRadius: 3,
+                color: '#c09090', cursor: 'pointer', fontSize: 10, fontFamily: 'Georgia, serif',
+              }}>Recall</button>
           )}
         </div>
       </div>
-      <div style={{ fontSize: 11, color: '#7a6a9a', marginBottom: 4 }}>
-        → {army.to_hex.slice(0, 10)}…
+      <div style={{ fontSize: 12, color: '#7a6a9a', marginBottom: 4 }}>
+        → {group.to_hex}
       </div>
       <div style={{ height: 3, background: 'rgba(255,255,255,0.1)', borderRadius: 2 }}>
         <div style={{
@@ -60,14 +94,17 @@ function ArmyRow({ army, isOwn, onRecall }) {
   )
 }
 
-export default function ArmiesHUD({ armies, player, claimedRef, onRefresh }) {
+export default function ArmiesHUD({ armies, activeBattles = [], player, claimedRef, onRefresh }) {
   const [open, setOpen] = useState(false)
 
   const myArmies = armies.filter(a => a.owner_id === player?.id)
-  const threats = armies.filter(a =>
+  const threats  = armies.filter(a =>
     player && a.owner_id !== player.id && claimedRef.current[a.to_hex]?.owner_id === player.id
   )
   const totalCount = myArmies.length + threats.length
+
+  const myGroups      = groupArmies(myArmies)
+  const threatGroups  = groupArmies(threats)
 
   async function handleRecall(id) {
     try {
@@ -82,27 +119,30 @@ export default function ArmiesHUD({ armies, player, claimedRef, onRefresh }) {
 
   return (
     <div style={{
-      position: 'absolute', top: 70, left: 16,
+      position: 'absolute', top: 56, left: 16,
       fontFamily: 'Georgia, serif', zIndex: 10,
     }}>
       {/* Toggle button */}
       <button onClick={() => setOpen(o => !o)} style={{
         display: 'flex', alignItems: 'center', gap: 8,
-        padding: '6px 12px',
+        padding: '8px 14px',
         background: 'rgba(10,8,25,0.85)', border: `1px solid ${threats.length > 0 ? '#7a2a2a' : '#4a3a7a'}`,
         borderRadius: 6, color: '#c9b99a', cursor: 'pointer',
-        fontSize: 12, letterSpacing: 1,
+        fontSize: 14, letterSpacing: 1,
         boxShadow: threats.length > 0 ? '0 0 12px rgba(180,40,40,0.4)' : '0 0 12px rgba(80,40,160,0.3)',
       }}>
         <span>⚔ Armies</span>
         {totalCount > 0 && (
           <span style={{
             background: threats.length > 0 ? '#7a2a2a' : '#4a3a7a',
-            borderRadius: 10, padding: '1px 7px', fontSize: 11,
+            borderRadius: 10, padding: '2px 8px', fontSize: 13,
           }}>{totalCount}</span>
         )}
         {threats.length > 0 && (
-          <span style={{ color: '#ff6060', fontSize: 11 }}>⚠ {threats.length}</span>
+          <span style={{ color: '#ff6060', fontSize: 13 }}>⚠ {threats.length}</span>
+        )}
+        {activeBattles.length > 0 && (
+          <span style={{ color: '#ff4444', fontSize: 13 }}>⚔ {activeBattles.length}</span>
         )}
       </button>
 
@@ -115,21 +155,37 @@ export default function ArmiesHUD({ armies, player, claimedRef, onRefresh }) {
           boxShadow: '0 0 30px rgba(80,40,160,0.4)',
           maxHeight: '60vh', overflowY: 'auto',
         }}>
-          {myArmies.length > 0 && (
+          {myGroups.length > 0 && (
             <>
               <div style={{ fontSize: 11, color: '#7a6a9a', letterSpacing: 2, marginBottom: 8, textTransform: 'uppercase' }}>
                 Your Armies ({myArmies.length})
               </div>
-              {myArmies.map(a => <ArmyRow key={a.id} army={a} isOwn onRecall={handleRecall} />)}
+              {myGroups.map(g => (
+                <ArmyGroupRow
+                  key={g.key}
+                  group={g}
+                  isOwn
+                  onRecall={handleRecall}
+                />
+              ))}
             </>
           )}
 
-          {threats.length > 0 && (
+          {threatGroups.length > 0 && (
             <>
-              <div style={{ fontSize: 11, color: '#c06060', letterSpacing: 2, marginBottom: 8, marginTop: myArmies.length > 0 ? 10 : 0, textTransform: 'uppercase' }}>
+              <div style={{ fontSize: 11, color: '#c06060', letterSpacing: 2, marginBottom: 8, marginTop: myGroups.length > 0 ? 10 : 0, textTransform: 'uppercase' }}>
                 ⚠ Incoming Threats ({threats.length})
               </div>
-              {threats.map(a => <ArmyRow key={a.id} army={a} isOwn={false} onRecall={handleRecall} />)}
+              {threatGroups.map(g => (
+                <ArmyGroupRow
+                  key={g.key}
+                  group={g}
+                  isOwn={false}
+                  onRecall={handleRecall}
+                  color={g.armies[0]?.color}
+                  username={g.armies[0]?.username}
+                />
+              ))}
             </>
           )}
 

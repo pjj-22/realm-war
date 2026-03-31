@@ -1,5 +1,16 @@
 import { pool } from './db.js'
-import { TICK_INTERVAL_MS, COMBAT_STRENGTH, BATTLE_ROUND_DAMAGE_RATE } from './config.js'
+import { TICK_INTERVAL_MS, COMBAT_STRENGTH, BATTLE_ROUND_DAMAGE_RATE, TROOP_ROLE_BONUS, ARCHER_TOWER_DEFENSE_BONUS, GOLD_CAP_BASE, GOLD_CAP_PER_HEX, GOLD_CAP_PER_MINE, MANA_CAP_BASE, MANA_CAP_PER_WELL } from './config.js'
+
+async function insertEvent(playerId, type, message, hexIndex = null) {
+  try {
+    await pool.query(
+      'INSERT INTO events (player_id, type, message, hex_index) VALUES ($1,$2,$3,$4)',
+      [playerId, type, message, hexIndex]
+    )
+  } catch (err) {
+    console.error('[event] Failed to insert event:', err.message)
+  }
+}
 
 const COMBAT_INTERVAL_MS = 15 * 1000
 const TRAINING_INTERVAL_MS = 15 * 1000
@@ -27,6 +38,24 @@ export async function runTick() {
       await pool.query('UPDATE players SET gold=gold+$1, mana=mana+$2 WHERE id=$3', [goldGain, manaGain, row.id])
     }
     console.log(`[tick] Resources updated for ${result.rows.length} players.`)
+
+    // Enforce resource caps
+    await pool.query(`
+      UPDATE players p SET
+        gold = LEAST(p.gold, $1 + COALESCE(s.hex_count, 0) * $2 + COALESCE(s.mine_count, 0) * $3),
+        mana = LEAST(p.mana, $4 + COALESCE(s.well_count, 0) * $5)
+      FROM (
+        SELECT p2.id,
+          COUNT(DISTINCT h.h3_index)::int AS hex_count,
+          COUNT(DISTINCT CASE WHEN b.type='mine'     THEN b.id END)::int AS mine_count,
+          COUNT(DISTINCT CASE WHEN b.type='mana_well' THEN b.id END)::int AS well_count
+        FROM players p2
+        LEFT JOIN hexes h ON h.owner_id = p2.id
+        LEFT JOIN buildings b ON b.h3_index = h.h3_index
+        GROUP BY p2.id
+      ) s
+      WHERE p.id = s.id
+    `, [GOLD_CAP_BASE, GOLD_CAP_PER_HEX, GOLD_CAP_PER_MINE, MANA_CAP_BASE, MANA_CAP_PER_WELL])
   } catch (err) {
     console.error('[tick] Resource error:', err.message)
   }
@@ -43,6 +72,7 @@ export async function processTraining() {
         DO UPDATE SET quantity = troops.quantity + EXCLUDED.quantity
       `, [job.owner_id, job.h3_index, job.type, job.quantity])
       await pool.query('DELETE FROM training_queue WHERE id=$1', [job.id])
+      await insertEvent(job.owner_id, 'training_complete', `✅ ${job.quantity} ${job.type}s finished training at ${job.h3_index}`, job.h3_index)
       console.log(`[training] ${job.quantity} ${job.type}s ready at ${job.h3_index}`)
     }
   } catch (err) {
@@ -83,7 +113,8 @@ export async function processCombat() {
 
       } else {
         // Enemy hex — start or join a battle
-        const attackStr = army.quantity * (COMBAT_STRENGTH[army.type] || 1)
+        const atkBonus = (TROOP_ROLE_BONUS[army.type] || TROOP_ROLE_BONUS.knight).attacker
+        const attackStr = army.quantity * (COMBAT_STRENGTH[army.type] || 1) * atkBonus
 
         const existingBattle = await pool.query(
           "SELECT * FROM battles WHERE h3_index=$1 AND status='active'", [army.to_hex]
@@ -96,30 +127,44 @@ export async function processCombat() {
                      : army.owner_id === battle.defender_id ? 'defender'
                      : 'attacker' // third party joins attacker side
 
+          const roleBonus = (TROOP_ROLE_BONUS[army.type] || TROOP_ROLE_BONUS.knight)[side]
+          const reinforceStr = army.quantity * (COMBAT_STRENGTH[army.type] || 1) * roleBonus
           const col = side === 'attacker' ? 'attacker_strength' : 'defender_strength'
-          await pool.query(`UPDATE battles SET ${col}=${col}+$1 WHERE id=$2`, [attackStr, battle.id])
+          await pool.query(`UPDATE battles SET ${col}=${col}+$1 WHERE id=$2`, [reinforceStr, battle.id])
           await pool.query(
             'INSERT INTO battle_participants (battle_id, player_id, side, troop_type, quantity) VALUES ($1,$2,$3,$4,$5)',
             [battle.id, army.owner_id, side, army.type, army.quantity]
           )
           await pool.query("UPDATE armies SET status='in_battle' WHERE id=$1", [army.id])
-          console.log(`[battle] reinforcement joined battle ${battle.id} as ${side} (+${attackStr.toFixed(1)} str)`)
+          console.log(`[battle] reinforcement joined battle ${battle.id} as ${side} (+${reinforceStr.toFixed(1)} str)`)
 
         } else {
           // Start new battle
           const defenders = await pool.query(
             'SELECT type, quantity FROM troops WHERE h3_index=$1', [army.to_hex]
           )
-          const defStr = defenders.rows.reduce((s, t) => s + t.quantity * (COMBAT_STRENGTH[t.type] || 1), 0)
+          const archerTowersRes = await pool.query(
+            "SELECT COUNT(*) AS cnt FROM buildings WHERE h3_index=$1 AND type='archer_tower'", [army.to_hex]
+          )
+          const archerTowers = Number(archerTowersRes.rows[0]?.cnt || 0)
+          const defMultiplier = 1 + archerTowers * ARCHER_TOWER_DEFENSE_BONUS
+          const defStr = defenders.rows.reduce((s, t) => {
+            const defBonus = (TROOP_ROLE_BONUS[t.type] || TROOP_ROLE_BONUS.knight).defender
+            return s + t.quantity * (COMBAT_STRENGTH[t.type] || 1) * defBonus
+          }, 0) * defMultiplier
 
           if (defStr === 0) {
             // No defenders — take hex directly
+            const prevOwner = await pool.query('SELECT owner_id FROM hexes WHERE h3_index=$1', [army.to_hex])
             await pool.query(
               'UPDATE hexes SET owner_id=$1, claimed_at=NOW() WHERE h3_index=$2',
               [army.owner_id, army.to_hex]
             )
             await depositTroops(army.owner_id, army.to_hex, army.type, army.quantity)
             await pool.query("UPDATE armies SET status='arrived' WHERE id=$1", [army.id])
+            if (prevOwner.rows[0]?.owner_id) {
+              await insertEvent(prevOwner.rows[0].owner_id, 'hex_lost', `💀 Your hex ${army.to_hex} was captured unopposed`, army.to_hex)
+            }
             console.log(`[combat] ${army.to_hex} taken unopposed`)
           } else {
             const battle = await pool.query(
@@ -172,32 +217,65 @@ export async function processBattleRounds() {
           await pool.query('DELETE FROM buildings WHERE h3_index=$1', [battle.h3_index])
           await pool.query('UPDATE hexes SET owner_id=$1, claimed_at=NOW() WHERE h3_index=$2',
             [battle.attacker_id, battle.h3_index])
-          const survivors = Math.round(newAtkStr)
-          if (survivors > 0) {
-            // Deposit survivors of most-represented attacker troop type
+          if (newAtkStr > 0) {
             const atk = await pool.query(
-              "SELECT troop_type, SUM(quantity) AS qty FROM battle_participants WHERE battle_id=$1 AND side='attacker' GROUP BY troop_type ORDER BY qty DESC LIMIT 1",
+              "SELECT troop_type, SUM(quantity) AS qty FROM battle_participants WHERE battle_id=$1 AND side='attacker' GROUP BY troop_type",
               [battle.id]
             )
-            if (atk.rows[0]) {
-              await depositTroops(battle.attacker_id, battle.h3_index, atk.rows[0].troop_type, survivors)
+            const totalAtkStr = atk.rows.reduce((s, r) => s + r.qty * (COMBAT_STRENGTH[r.troop_type] || 1), 0)
+            const survivalRate = totalAtkStr > 0 ? newAtkStr / totalAtkStr : 0
+            for (const r of atk.rows) {
+              const survivors = Math.round(r.qty * survivalRate)
+              if (survivors > 0) {
+                await depositTroops(battle.attacker_id, battle.h3_index, r.troop_type, survivors)
+                console.log(`[battle] ${battle.id} ATTACKER WINS at ${battle.h3_index} (${survivors} ${r.troop_type}s survive)`)
+              }
             }
+          } else {
+            console.log(`[battle] ${battle.id} ATTACKER WINS at ${battle.h3_index} (no survivors)`)
           }
-          console.log(`[battle] ${battle.id} ATTACKER WINS at ${battle.h3_index} (${survivors} survivors)`)
         } else {
           // Defender wins — attacker troops already deducted at march time; restore defender remnants
-          const defSurvivors = Math.round(newDefStr)
           await pool.query('DELETE FROM troops WHERE h3_index=$1', [battle.h3_index])
-          if (defSurvivors > 0) {
+          if (newDefStr > 0) {
             const def = await pool.query(
-              "SELECT troop_type, SUM(quantity) AS qty FROM battle_participants WHERE battle_id=$1 AND side='defender' GROUP BY troop_type ORDER BY qty DESC LIMIT 1",
+              "SELECT troop_type, SUM(quantity) AS qty FROM battle_participants WHERE battle_id=$1 AND side='defender' GROUP BY troop_type",
               [battle.id]
             )
-            if (def.rows[0]) {
-              await depositTroops(battle.defender_id, battle.h3_index, def.rows[0].troop_type, defSurvivors)
+            const totalDefStr = def.rows.reduce((s, r) => s + r.qty * (COMBAT_STRENGTH[r.troop_type] || 1), 0)
+            const survivalRate = totalDefStr > 0 ? newDefStr / totalDefStr : 0
+            for (const r of def.rows) {
+              const survivors = Math.round(r.qty * survivalRate)
+              if (survivors > 0) {
+                await depositTroops(battle.defender_id, battle.h3_index, r.troop_type, survivors)
+                console.log(`[battle] ${battle.id} DEFENDER WINS at ${battle.h3_index} (${survivors} ${r.troop_type}s survive)`)
+              }
             }
+          } else {
+            console.log(`[battle] ${battle.id} DEFENDER WINS at ${battle.h3_index} (no survivors)`)
           }
-          console.log(`[battle] ${battle.id} DEFENDER WINS at ${battle.h3_index} (${defSurvivors} survivors)`)
+        }
+
+        if (attackerWon) {
+          // Check if captured hex was the defender's capital
+          const defenderData = await pool.query('SELECT capital_hex FROM players WHERE id=$1', [battle.defender_id])
+          const isCapital = defenderData.rows[0]?.capital_hex === battle.h3_index
+          if (isCapital) {
+            // Cancel any in-progress training at that hex
+            await pool.query(
+              'DELETE FROM training_queue WHERE owner_id=$1 AND h3_index=$2',
+              [battle.defender_id, battle.h3_index]
+            )
+            await pool.query('UPDATE players SET capital_hex=NULL WHERE id=$1', [battle.defender_id])
+            await insertEvent(battle.defender_id, 'capital_lost', `👑 Your capital ${battle.h3_index} has fallen!`, battle.h3_index)
+            console.log(`[battle] ${battle.defender_id} lost their capital at ${battle.h3_index}`)
+          }
+          await insertEvent(battle.attacker_id, 'battle_won', `🏆 Battle won at ${battle.h3_index}`, battle.h3_index)
+          await insertEvent(battle.defender_id, 'battle_lost', `☠ Battle lost at ${battle.h3_index}`, battle.h3_index)
+          await insertEvent(battle.defender_id, 'hex_lost', `💀 Your hex ${battle.h3_index} was captured in battle`, battle.h3_index)
+        } else {
+          await insertEvent(battle.defender_id, 'battle_won', `🏆 Defended ${battle.h3_index} successfully`, battle.h3_index)
+          await insertEvent(battle.attacker_id, 'battle_lost', `☠ Attack on ${battle.h3_index} failed`, battle.h3_index)
         }
 
         await pool.query(
@@ -223,11 +301,34 @@ export async function processBattleRounds() {
   }
 }
 
+export async function processUpgrades() {
+  try {
+    const done = await pool.query('SELECT * FROM upgrade_queue WHERE completes_at <= NOW()')
+    for (const job of done.rows) {
+      await pool.query('UPDATE hexes SET upgrade_level=upgrade_level+1 WHERE h3_index=$1', [job.h3_index])
+      await pool.query('DELETE FROM upgrade_queue WHERE id=$1', [job.id])
+      const newLevel = await pool.query('SELECT upgrade_level FROM hexes WHERE h3_index=$1', [job.h3_index])
+      console.log(`[upgrade] ${job.h3_index} upgraded to level ${newLevel.rows[0]?.upgrade_level ?? '?'}`)
+    }
+  } catch (err) {
+    console.error('[upgrade] Error:', err.message)
+  }
+}
+
+export let nextTickAt = Date.now() + TICK_INTERVAL_MS
+
 export function startTick() {
   console.log(`[tick] Starting resource tick every ${TICK_INTERVAL_MS / 60000} minutes`)
-  runTick()
-  setInterval(runTick, TICK_INTERVAL_MS)
+
+  async function wrappedTick() {
+    await runTick()
+    nextTickAt = Date.now() + TICK_INTERVAL_MS
+  }
+
+  wrappedTick()
+  setInterval(wrappedTick, TICK_INTERVAL_MS)
   setInterval(processTraining, TRAINING_INTERVAL_MS)
   setInterval(processCombat, COMBAT_INTERVAL_MS)
   setInterval(processBattleRounds, BATTLE_INTERVAL_MS)
+  setInterval(processUpgrades, TRAINING_INTERVAL_MS)
 }

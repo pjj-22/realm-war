@@ -3,6 +3,7 @@ import bcrypt from 'bcryptjs'
 import { pool } from '../db.js'
 import { signToken, requireAuth } from '../auth.js'
 import { STARTING_GOLD, STARTING_MANA } from '../config.js'
+import { nextTickAt } from '../tick.js'
 
 const router = Router()
 
@@ -87,7 +88,12 @@ router.get('/stats', requireAuth, async (req, res) => {
       WHERE p.id = $1
       GROUP BY p.id
     `, [req.player.id])
-    res.json(result.rows[0] || { hex_count: 0, mines: 0, wells: 0, barracks: 0, towers: 0 })
+    const row = result.rows[0] || { hex_count: 0, mines: 0, wells: 0, barracks: 0, towers: 0 }
+    const { GOLD_CAP_BASE, GOLD_CAP_PER_HEX, GOLD_CAP_PER_MINE, MANA_CAP_BASE, MANA_CAP_PER_WELL } = await import('../config.js')
+    row.gold_cap = GOLD_CAP_BASE + row.hex_count * GOLD_CAP_PER_HEX + row.mines * GOLD_CAP_PER_MINE
+    row.mana_cap = MANA_CAP_BASE + row.wells * MANA_CAP_PER_WELL
+    row.next_tick_at = new Date(nextTickAt).toISOString()
+    res.json(row)
   } catch { res.status(500).json({ error: 'Server error' }) }
 })
 

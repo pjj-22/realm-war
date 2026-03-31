@@ -8,12 +8,14 @@ const router = Router()
 router.get('/', async (req, res) => {
   try {
     const result = await pool.query(`
-      SELECT h.h3_index, h.owner_id, p.color, p.username,
-        COALESCE(SUM(t.quantity), 0)::integer AS troop_count
+      SELECT h.h3_index, h.owner_id, h.upgrade_level, p.color, p.username, p.capital_hex,
+        COALESCE(SUM(DISTINCT t.quantity), 0)::integer AS troop_count,
+        COALESCE(array_agg(DISTINCT b.type) FILTER (WHERE b.type IS NOT NULL), '{}') AS building_types
       FROM hexes h
       JOIN players p ON p.id = h.owner_id
       LEFT JOIN troops t ON t.h3_index = h.h3_index
-      GROUP BY h.h3_index, h.owner_id, p.color, p.username
+      LEFT JOIN buildings b ON b.h3_index = h.h3_index
+      GROUP BY h.h3_index, h.owner_id, h.upgrade_level, p.color, p.username, p.capital_hex
     `)
     res.json(result.rows)
   } catch {

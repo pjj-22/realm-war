@@ -84,7 +84,13 @@ export default function BattlePanel({ hex, player, onMarchStart, onClose }) {
   const initialAtkStr = Number(battle.attacker_strength) + Number(battle.attacker_losses)
   const initialDefStr = Number(battle.defender_strength) + Number(battle.defender_losses)
   const maxStr = Math.max(initialAtkStr, initialDefStr, 1)
-  const roundsLeft = display ? Math.ceil(Math.log(0.01) / Math.log(1 - DAMAGE_RATE)) : '?'
+  // Each round the weaker side loses (strongerStr × DAMAGE_RATE), so rounds ≈ weaker / (stronger × rate)
+  const roundsLeft = display
+    ? Math.max(1, Math.ceil(
+        Math.min(display.atkStr, display.defStr) /
+        (Math.max(display.atkStr, display.defStr, 0.001) * DAMAGE_RATE)
+      ))
+    : '?'
   const isParticipant = player && (player.id === battle.attacker_id || player.id === battle.defender_id)
 
   const attackers = participants.filter(p => p.side === 'attacker')
@@ -137,7 +143,7 @@ export default function BattlePanel({ hex, player, onMarchStart, onClose }) {
 
       {/* Round info */}
       <div style={{ fontSize: 11, color: '#7a6a9a', marginBottom: 12, textAlign: 'center' }}>
-        Round {battle.round_number} · ~{roundsLeft} rounds total
+        Round {battle.round_number} · ~{Math.max(0, roundsLeft)} rounds remaining
       </div>
 
       <div style={{ borderTop: '1px solid #2a1a3a', marginBottom: 10 }} />

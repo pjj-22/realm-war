@@ -2,13 +2,16 @@ import { useEffect, useRef, useState, useCallback } from 'react'
 import maplibregl from 'maplibre-gl'
 import { latLngToCell, cellToBoundary, cellToLatLng, gridDisk, gridPathCells } from 'h3-js'
 import 'maplibre-gl/dist/maplibre-gl.css'
-import HexPanel from './HexPanel'
-import MilitaryPanel from './MilitaryPanel'
+import BottomDrawer from './BottomDrawer'
 import ArmiesHUD from './ArmiesHUD'
 import LeaderboardPanel from './LeaderboardPanel'
+import EventFeed from './EventFeed'
 import BattlePanel from './BattlePanel'
+import BattleParticles from './BattleParticles'
 import { useResourceTicker } from '../hooks/useResourceTicker'
 import { api } from '../api/client'
+import { GoldIcon, ManaIcon } from './Icons'
+
 
 const HEX_RESOLUTION = 7
 const MAX_HEXES = 10000
@@ -47,6 +50,7 @@ function hexToGeoJSONFeature(cell, claimed) {
       color: claimed?.color || null,
       username: claimed?.username || null,
       troop_count: claimed?.troop_count || 0,
+      upgrade_level: claimed?.upgrade_level || 0,
     },
     geometry: { type: 'Polygon', coordinates: [coords] },
   }
@@ -57,6 +61,12 @@ function buildGeoJSON(cells, claimedHexes) {
   return { type: 'FeatureCollection', features }
 }
 
+function parseTypes(types) {
+  if (!types) return []
+  if (Array.isArray(types)) return types
+  return types.replace(/[{}"]/g, '').split(',').filter(Boolean)
+}
+
 function buildClaimedGeoJSON(claimedHexes) {
   const features = Object.entries(claimedHexes).map(([cell, claimed]) =>
     hexToGeoJSONFeature(cell, claimed)
@@ -64,15 +74,107 @@ function buildClaimedGeoJSON(claimedHexes) {
   return { type: 'FeatureCollection', features }
 }
 
+function buildVisibleSet(claimedHexes, playerId) {
+  const visible = new Set()
+  for (const [cell, claimed] of Object.entries(claimedHexes)) {
+    if (claimed.owner_id !== playerId) continue
+    // Own hexes + 1-ring adjacency always visible
+    gridDisk(cell, 1).forEach(c => visible.add(c))
+    // Watch towers extend vision by 1 more ring
+    const types = claimed.building_types
+    const hasWatchTower = Array.isArray(types)
+      ? types.includes('watch_tower')
+      : typeof types === 'string' && types.includes('watch_tower')
+    if (hasWatchTower) gridDisk(cell, 2).forEach(c => visible.add(c))
+  }
+  return visible
+}
+
+function buildClaimedPoints(claimedHexes, visibleSet) {
+  const features = Object.entries(claimedHexes).map(([cell, claimed]) => {
+    const [lat, lng] = cellToLatLng(cell)
+    const isVisible = !visibleSet || visibleSet.has(cell)
+    return {
+      type: 'Feature',
+      properties: {
+        troop_count: isVisible ? (claimed.troop_count || 0) : -1,
+      },
+      geometry: { type: 'Point', coordinates: [lng, lat] },
+    }
+  })
+  return { type: 'FeatureCollection', features }
+}
+
+// Pip colors by building type — matches BottomDrawer dots
+const PIP_COLORS = {
+  mine:         '#c9902a',
+  mana_well:    '#3480c8',
+  barracks:     '#a84040',
+  watch_tower:  '#5a9840',
+  archer_tower: '#c05020',
+}
+
+const HEX_SHORT_RAD = 0.0058 // degrees lat, approximate for H3 res 7
+
+function buildPipFeatures(claimedHexes) {
+  const features = []
+  for (const [cell, claimed] of Object.entries(claimedHexes)) {
+    const types = parseTypes(claimed.building_types)
+    if (!types.length) continue
+    const [clat, clng] = cellToLatLng(cell)
+    const cosLat = Math.cos(clat * Math.PI / 180)
+    const n = Math.min(types.length, 6)
+    // Evenly space pips in a single centered horizontal row
+    const spacing = n > 1 ? Math.min(0.30, 1.20 / (n - 1)) : 0
+    const startX = -spacing * (n - 1) / 2
+    types.slice(0, 6).forEach((type, i) => {
+      const ox = startX + i * spacing
+      features.push({
+        type: 'Feature',
+        properties: { pip_color: PIP_COLORS[type] || '#888888' },
+        geometry: { type: 'Point', coordinates: [clng + (ox * HEX_SHORT_RAD) / cosLat, clat + 0.12 * HEX_SHORT_RAD] },
+      })
+    })
+  }
+  return { type: 'FeatureCollection', features }
+}
+
+function HarvestCountdown({ nextTickAt, onExpire }) {
+  const [secs, setSecs] = useState(0)
+  const firedRef = useRef(false)
+  useEffect(() => {
+    firedRef.current = false
+    function tick() {
+      const remaining = Math.max(0, Math.round((new Date(nextTickAt) - Date.now()) / 1000))
+      setSecs(remaining)
+      if (remaining === 0 && !firedRef.current) {
+        firedRef.current = true
+        // Re-fetch stats after a brief delay to let the server tick complete
+        setTimeout(onExpire, 1500)
+      }
+    }
+    tick()
+    const id = setInterval(tick, 1000)
+    return () => clearInterval(id)
+  }, [nextTickAt, onExpire])
+  const m = Math.floor(secs / 60), s = secs % 60
+  const label = m > 0 ? `${m}m ${String(s).padStart(2,'0')}s` : `${secs}s`
+  return (
+    <span style={{ fontSize: 11, color: secs <= 5 ? '#c9902a' : '#7a6890' }}>
+      harvest in {label}
+    </span>
+  )
+}
+
 export default function GameMap({ player, onLoginRequired, onPlayerUpdate }) {
   const mapContainer = useRef(null)
   const map = useRef(null)
   const claimedRef = useRef({})
   const [selectedHex, setSelectedHex] = useState(null)
-  const [showMilitary, setShowMilitary] = useState(false)
   const [zoom, setZoom] = useState(3)
   const [marchMode, setMarchMode] = useState(null) // { fromHex, type, quantity }
   const [armies, setArmies] = useState([])
+  const [activeBattles, setActiveBattles] = useState([])
   const [stats, setStats] = useState(null)
   const [activeBattle, setActiveBattle] = useState(null)
 
@@ -107,27 +209,41 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate }) {
   }, [])
 
   useEffect(() => {
-    if (!player) return
-    async function loadStats() {
-      try { setStats(await api.getStats()) } catch {}
+    async function loadActiveBattles() {
+      try { setActiveBattles(await api.getActiveBattles()) } catch {}
     }
+    loadActiveBattles()
+    const interval = setInterval(loadActiveBattles, 5000)
+    return () => clearInterval(interval)
+  }, [])
+
+  const loadStats = useCallback(async () => {
+    try { setStats(await api.getStats()) } catch {}
+  }, [])
+
+  useEffect(() => {
+    if (!player) return
     loadStats()
     const interval = setInterval(loadStats, 30000)
     return () => clearInterval(interval)
-  }, [player?.id])
+  }, [player?.id, loadStats])
 
   useEffect(() => {
     if (!selectedHex) { setActiveBattle(null); return }
     async function checkBattle() {
       try {
         const result = await api.getBattle(selectedHex.h3)
-        setActiveBattle(result.battle || null)
+        const newBattle = result.battle || null
+        setActiveBattle(prev => {
+          if (prev && !newBattle) loadClaimed() // battle just resolved — refresh map immediately
+          return newBattle
+        })
       } catch { setActiveBattle(null) }
     }
     checkBattle()
     const interval = setInterval(checkBattle, 5000)
     return () => clearInterval(interval)
-  }, [selectedHex?.h3])
+  }, [selectedHex?.h3, loadClaimed])
 
   useEffect(() => {
     if (map.current) return
@@ -150,7 +266,13 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate }) {
         id: 'claimed-fill',
         type: 'fill',
         source: 'claimed',
-        paint: { 'fill-color': ['get', 'color'], 'fill-opacity': 0.6 },
+        paint: { 'fill-color': ['get', 'color'], 'fill-opacity': 0.35 },
+      })
+
+      // Point source for labels — avoids polygon-tile duplication at high zoom
+      map.current.addSource('claimed-points', {
+        type: 'geojson',
+        data: { type: 'FeatureCollection', features: [] },
       })
 
       // Full hex grid (visible at zoom 5+)
@@ -164,7 +286,7 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate }) {
         source: 'hexes',
         paint: {
           'fill-color': ['case', ['!=', ['get', 'color'], null], ['get', 'color'], 'rgba(30,20,60,0.35)'],
-          'fill-opacity': 0.7,
+          'fill-opacity': 0.35,
         },
       })
       map.current.addLayer({
@@ -185,17 +307,41 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate }) {
       map.current.addLayer({
         id: 'hex-troop-labels',
         type: 'symbol',
-        source: 'claimed',
+        source: 'claimed-points',
         minzoom: 7,
         layout: {
-          'text-field': ['case', ['>', ['get', 'troop_count'], 0], ['to-string', ['get', 'troop_count']], ''],
-          'text-size': 11,
+          'text-field': ['case',
+            ['==', ['get', 'troop_count'], -1], '?',
+            ['>', ['get', 'troop_count'], 0], ['concat', ['to-string', ['get', 'troop_count']], '⚔'],
+            ''
+          ],
+          'text-size': 15,
           'text-allow-overlap': false,
+          'text-offset': [0, 1.0],
         },
         paint: {
-          'text-color': 'rgba(255,255,255,0.9)',
-          'text-halo-color': 'rgba(0,0,0,0.7)',
-          'text-halo-width': 1.5,
+          'text-color': 'rgba(255,255,255,0.95)',
+          'text-halo-color': 'rgba(0,0,0,0.8)',
+          'text-halo-width': 2,
+        },
+      })
+
+      // Building pips — one colored dot per building, arranged in a 3×2 grid inside each hex
+      map.current.addSource('building-pips', {
+        type: 'geojson',
+        data: { type: 'FeatureCollection', features: [] },
+      })
+      map.current.addLayer({
+        id: 'building-pips',
+        type: 'circle',
+        source: 'building-pips',
+        minzoom: 6.5,
+        paint: {
+          'circle-radius': ['interpolate', ['linear'], ['zoom'], 6.5, 3, 9, 6],
+          'circle-color': ['get', 'pip_color'],
+          'circle-stroke-width': 1,
+          'circle-stroke-color': 'rgba(0,0,0,0.55)',
+          'circle-opacity': 0.92,
         },
       })
 
@@ -210,7 +356,7 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate }) {
         source: 'armies',
         minzoom: 5,
         paint: {
-          'circle-radius': 10,
+          'circle-radius': 14,
           'circle-color': ['get', 'color'],
           'circle-opacity': 0.9,
           'circle-stroke-width': 2,
@@ -224,7 +370,7 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate }) {
         minzoom: 5,
         layout: {
           'text-field': ['get', 'label'],
-          'text-size': 10,
+          'text-size': 13,
           'text-allow-overlap': true,
           'text-ignore-placement': true,
         },
@@ -252,7 +398,31 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate }) {
       if (!hex) return
       setMarchMode(prev => {
         if (prev) {
-          // In targeting mode — send the march
+          if (prev.battleMode && !prev.fromHex) {
+            // Battle reinforce: user clicked source hex — open drawer on military tab
+            setSelectedHex(hex)
+            map.current.setFilter('hex-selected', ['==', ['get', 'h3'], hex.h3])
+            return { ...prev, fromHex: hex.h3 }
+          }
+          if (prev.groupId) {
+            // Group march — dispatch all troop types at once
+            api.marchGroup(prev.fromHex, hex.h3, prev.groupId)
+              .then(res => {
+                if (res.errors?.length) alert('Partial: ' + res.errors.join(', '))
+                loadClaimed()
+              })
+              .catch(err => alert(err.message))
+            return null
+          }
+          if (prev.troops) {
+            // Multi-type dispatch from the drawer
+            const entries = Object.entries(prev.troops).filter(([, qty]) => qty > 0)
+            Promise.all(entries.map(([type, qty]) => api.marchArmy(prev.fromHex, hex.h3, type, qty)))
+              .then(() => loadClaimed())
+              .catch(err => alert(err.message))
+            return null
+          }
+          // Single-type march (battle reinforce)
           api.marchArmy(prev.fromHex, hex.h3, prev.type, prev.quantity)
             .then(() => loadClaimed())
             .catch(err => alert(err.message))
@@ -270,8 +440,39 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate }) {
     })
     map.current.on('mouseleave', 'hex-fill', () => { map.current.getCanvas().style.cursor = '' })
 
-    return () => { map.current?.remove(); map.current = null }
+    return () => {
+      Object.values(battleMarkersRef.current).forEach(m => m.remove())
+      battleMarkersRef.current = {}
+      map.current?.remove()
+      map.current = null
+    }
   }, [])
+
+  const battleMarkersRef = useRef({})
+  useEffect(() => {
+    if (!map.current) return
+    const activeIds = new Set(activeBattles.map(b => b.h3_index))
+
+    // Add new markers
+    for (const battle of activeBattles) {
+      if (battleMarkersRef.current[battle.h3_index]) continue
+      const [lat, lng] = cellToLatLng(battle.h3_index)
+      const el = document.createElement('div')
+      el.className = 'battle-ring'
+      const marker = new maplibregl.Marker({ element: el, anchor: 'center' })
+        .setLngLat([lng, lat])
+        .addTo(map.current)
+      battleMarkersRef.current[battle.h3_index] = marker
+    }
+
+    // Remove stale markers
+    for (const [id, marker] of Object.entries(battleMarkersRef.current)) {
+      if (!activeIds.has(id)) {
+        marker.remove()
+        delete battleMarkersRef.current[id]
+      }
+    }
+  }, [activeBattles])
 
   function updateHexes() {
     if (!map.current?.getSource('hexes')) return
@@ -282,6 +483,9 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate }) {
   function updateClaimed() {
     if (!map.current?.getSource('claimed')) return
     map.current.getSource('claimed').setData(buildClaimedGeoJSON(claimedRef.current))
+    const visibleSet = player ? buildVisibleSet(claimedRef.current, player.id) : null
+    map.current.getSource('claimed-points')?.setData(buildClaimedPoints(claimedRef.current, visibleSet))
+    map.current.getSource('building-pips')?.setData(buildPipFeatures(claimedRef.current))
   }
 
   const armiesRef = useRef([])
@@ -367,113 +571,187 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate }) {
     }
   }
 
+  const [searchQuery, setSearchQuery] = useState('')
+  const [searchOpen, setSearchOpen] = useState(false)
+
+  async function handleSearch(e) {
+    e.preventDefault()
+    const q = searchQuery.trim()
+    if (!q) return
+    // Direct H3 index (15 hex chars starting with 8)
+    if (/^8[0-9a-f]{14}$/i.test(q)) {
+      try {
+        const [lat, lng] = cellToLatLng(q)
+        map.current?.flyTo({ center: [lng, lat], zoom: 9 })
+        setSearchOpen(false)
+        setSearchQuery('')
+      } catch { alert('Invalid hex index') }
+      return
+    }
+    // Geocode with Nominatim
+    try {
+      const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&format=json&limit=1`
+      const res = await fetch(url, { headers: { 'Accept-Language': 'en' } })
+      const data = await res.json()
+      if (data[0]) {
+        map.current?.flyTo({ center: [parseFloat(data[0].lon), parseFloat(data[0].lat)], zoom: 9 })
+        setSearchOpen(false)
+        setSearchQuery('')
+      } else {
+        alert('Location not found')
+      }
+    } catch { alert('Search failed') }
+  }
+
+  const goldCap = stats?.gold_cap ?? null
+  const manaCap = stats?.mana_cap ?? null
+  const goldOverCap = goldCap !== null && resources.gold >= goldCap
+  const manaOverCap = manaCap !== null && resources.mana >= manaCap
+
   return (
     <div style={{ position: 'relative', width: '100vw', height: '100vh' }}>
       <div ref={mapContainer} style={{ position: 'absolute', inset: 0 }} />
 
-      <div style={{
-        position: 'absolute', top: 20, left: '50%', transform: 'translateX(-50%)',
-        color: '#c9b99a', fontSize: '24px', letterSpacing: '6px', textTransform: 'uppercase',
-        textShadow: '0 0 20px rgba(100,60,200,0.8)', pointerEvents: 'none', fontFamily: 'Georgia, serif',
-      }}>
-        Realm War
-      </div>
-
-      {player && (
-        <div style={{
-          position: 'absolute', top: 16, right: 16,
-          background: 'rgba(10,8,25,0.85)', border: '1px solid #4a3a7a',
-          borderRadius: 6, padding: '10px 14px',
-          color: '#c9b99a', fontSize: 13, letterSpacing: 1,
-          fontFamily: 'Georgia, serif', textAlign: 'right',
-          boxShadow: '0 0 20px rgba(80,40,160,0.3)',
-        }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, justifyContent: 'flex-end' }}>
-            <span>{player.username}</span>
-            <span style={{ width: 10, height: 10, borderRadius: '50%', background: player.color, display: 'inline-block', flexShrink: 0 }} />
-          </div>
-          <div style={{ color: '#7a6a9a', fontSize: 11, marginBottom: 4, textAlign: 'right' }}>
-            ▲ {stats?.hex_count ?? ownedHexCount} territories
-          </div>
-          <div style={{ color: '#7a6a9a', fontSize: 11, display: 'flex', gap: 12, justifyContent: 'flex-end', marginBottom: 2 }}>
-            <span>⚜ {resources.gold}</span>
-            <span>✦ {resources.mana}</span>
-          </div>
-          {stats && (
-            <div style={{ color: '#5a4a6a', fontSize: 10, display: 'flex', gap: 8, justifyContent: 'flex-end', marginBottom: 8 }}>
-              <span>+{(stats.hex_count || 0) + (stats.mines || 0) * 3}/tick gold</span>
-              {stats.wells > 0 && <span>+{stats.wells * 3}/tick mana</span>}
-            </div>
-          )}
-          <button
-            onClick={async () => {
-              try {
-                const r = await api.devRefill()
-                onPlayerUpdate?.({ ...player, gold: r.gold, mana: r.mana })
-              } catch {}
-            }}
-            style={{
-              width: '100%', padding: '5px 0', marginBottom: 4,
-              background: 'rgba(40,80,40,0.3)', border: '1px solid #3a6a3a',
-              borderRadius: 4, color: '#90c090', cursor: 'pointer',
-              fontSize: 10, letterSpacing: 2, textTransform: 'uppercase',
-              fontFamily: 'Georgia, serif',
-            }}>
-            ⚗ Refill
-          </button>
-          <button
-            onClick={() => setShowMilitary(s => !s)}
-            style={{
-              width: '100%', padding: '5px 0',
-              background: showMilitary ? 'rgba(160,40,40,0.4)' : 'rgba(80,40,160,0.3)',
-              border: `1px solid ${showMilitary ? '#7a3a3a' : '#4a3a7a'}`,
-              borderRadius: 4, color: '#c9b99a', cursor: 'pointer',
-              fontSize: 10, letterSpacing: 2, textTransform: 'uppercase',
-              fontFamily: 'Georgia, serif',
-            }}>
-            ⚔ Military
-          </button>
-        </div>
+      {activeBattles.length > 0 && (
+        <BattleParticles battles={activeBattles} mapRef={map} />
       )}
 
+      {/* ── Top bar ────────────────────────────────────────────── */}
+      <div style={{
+        position: 'absolute', top: 0, left: 0, right: 0, height: 48,
+        background: 'rgba(5,3,14,0.94)',
+        borderBottom: '1px solid rgba(255,255,255,0.06)',
+        display: 'flex', alignItems: 'center', gap: 0,
+        fontFamily: 'Georgia, serif', zIndex: 20, padding: '0 16px',
+      }}>
+        {/* Title */}
+        <span style={{ fontSize: 13, letterSpacing: 5, color: '#7a6890', textTransform: 'uppercase', marginRight: 20, userSelect: 'none' }}>
+          Realm War
+        </span>
+
+        {/* Search */}
+        {searchOpen ? (
+          <form onSubmit={handleSearch} style={{ display: 'flex', gap: 5 }}>
+            <input autoFocus value={searchQuery} onChange={e => setSearchQuery(e.target.value)}
+              placeholder="City, country or hex ID…"
+              style={{
+                padding: '4px 10px', width: 200,
+                background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.12)',
+                borderRadius: 4, color: '#c4b498', fontFamily: 'Georgia, serif', fontSize: 13, outline: 'none',
+              }}
+            />
+            <button type="submit" style={{ padding: '4px 10px', background: 'rgba(80,50,160,0.3)', border: '1px solid rgba(120,80,200,0.3)', borderRadius: 4, color: '#c4b498', cursor: 'pointer', fontSize: 13, fontFamily: 'Georgia, serif' }}>Go</button>
+            <button type="button" onClick={() => setSearchOpen(false)} style={{ padding: '4px 8px', background: 'none', border: 'none', color: '#5a4870', cursor: 'pointer', fontSize: 16 }}>×</button>
+          </form>
+        ) : (
+          <button onClick={() => setSearchOpen(true)} style={{ background: 'none', border: 'none', color: '#7a6890', cursor: 'pointer', fontSize: 16, padding: '4px 8px' }}>
+            🔍
+          </button>
+        )}
+
+        <div style={{ flex: 1 }} />
+
+        {/* Resources */}
+        {player && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 20, marginRight: 20 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+              <GoldIcon size={14} />
+              <span style={{ fontSize: 15, color: goldOverCap ? '#e8a020' : '#c9902a', fontWeight: 'bold' }}>
+                {resources.gold}
+              </span>
+              {goldCap !== null && (
+                <span style={{ fontSize: 11, color: goldOverCap ? '#8a5818' : '#7a6890' }}>
+                  {goldOverCap ? '⚠ FULL' : `/ ${goldCap}`}
+                </span>
+              )}
+              {stats && <span style={{ fontSize: 11, color: '#6a5878', marginLeft: 2 }}>+{(stats.hex_count || 0) + (stats.mines || 0) * 3}</span>}
+            </div>
+            {(resources.mana > 0 || (stats?.wells ?? 0) > 0) && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                <ManaIcon size={14} />
+                <span style={{ fontSize: 15, color: manaOverCap ? '#6090e8' : '#3480c8', fontWeight: 'bold' }}>{resources.mana}</span>
+                {manaCap !== null && (
+                  <span style={{ fontSize: 11, color: manaOverCap ? '#3a5888' : '#5a7898' }}>
+                    {manaOverCap ? '⚠ FULL' : `/ ${manaCap}`}
+                  </span>
+                )}
+                {(stats?.wells ?? 0) > 0 && <span style={{ fontSize: 11, color: '#6a5878', marginLeft: 2 }}>+{stats.wells * 3}</span>}
+              </div>
+            )}
+            {stats?.next_tick_at && <HarvestCountdown nextTickAt={stats.next_tick_at} onExpire={loadStats} />}
+            <span style={{ fontSize: 13, color: '#7a6890' }}>▲ {stats?.hex_count ?? ownedHexCount}</span>
+            <button
+              onClick={async () => { try { const r = await api.devRefill(); onPlayerUpdate?.({ ...player, gold: r.gold, mana: r.mana }) } catch {} }}
+              style={{ padding: '3px 10px', background: 'rgba(30,60,30,0.4)', border: '1px solid rgba(50,100,50,0.4)', borderRadius: 4, color: '#70a870', cursor: 'pointer', fontSize: 11, letterSpacing: 1, fontFamily: 'Georgia, serif' }}>
+              Refill
+            </button>
+          </div>
+        )}
+
+        {/* Player + events */}
+        {player ? (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <EventFeed />
+            <span style={{ fontSize: 13, color: '#c4b498' }}>{player.username}</span>
+            <span style={{ width: 10, height: 10, borderRadius: '50%', background: player.color, display: 'inline-block' }} />
+          </div>
+        ) : (
+          <button onClick={onLoginRequired} style={{
+            padding: '6px 16px', background: 'rgba(80,50,160,0.3)', border: '1px solid rgba(120,80,200,0.4)',
+            borderRadius: 4, color: '#c4b498', cursor: 'pointer', fontSize: 12, letterSpacing: 2,
+            textTransform: 'uppercase', fontFamily: 'Georgia, serif',
+          }}>
+            Login / Register
+          </button>
+        )}
+      </div>
+
+      {/* ── Armies HUD (below top bar) ──────────────────────────── */}
       {player && (
         <ArmiesHUD
           armies={armies}
+          activeBattles={activeBattles}
           player={player}
           claimedRef={claimedRef}
           onRefresh={() => api.getArmies().then(setArmies).catch(() => {})}
         />
       )}
 
+      {/* ── Leaderboard ─────────────────────────────────────────── */}
       <LeaderboardPanel player={player} />
 
+      {/* ── Zoom hint ───────────────────────────────────────────── */}
       {zoom < 5 && (
         <div style={{
-          position: 'absolute', bottom: 40, left: '50%', transform: 'translateX(-50%)',
-          color: '#7a6a9a', fontSize: '13px', letterSpacing: '2px', pointerEvents: 'none',
+          position: 'absolute', bottom: 90, left: '50%', transform: 'translateX(-50%)',
+          color: '#6a5878', fontSize: 12, letterSpacing: 3, pointerEvents: 'none', whiteSpace: 'nowrap',
         }}>
           ZOOM IN TO SEE THE BATTLEFIELD
         </div>
       )}
 
+      {/* ── March mode banner ───────────────────────────────────── */}
       {marchMode && (
         <div style={{
-          position: 'absolute', top: 70, left: '50%', transform: 'translateX(-50%)',
-          background: 'rgba(120,30,30,0.92)', border: '1px solid #9a3a3a',
-          borderRadius: 6, padding: '10px 24px',
-          color: '#f0c0c0', fontFamily: 'Georgia, serif', fontSize: 14, letterSpacing: 2,
+          position: 'absolute', top: 56, left: '50%', transform: 'translateX(-50%)',
+          background: 'rgba(80,20,20,0.94)', border: '1px solid rgba(180,50,50,0.5)',
+          borderRadius: 6, padding: '9px 22px',
+          color: '#d49090', fontFamily: 'Georgia, serif', fontSize: 13, letterSpacing: 2,
           textTransform: 'uppercase', display: 'flex', alignItems: 'center', gap: 16,
-          boxShadow: '0 0 20px rgba(180,40,40,0.5)',
         }}>
-          <span>⚔ Select target hex</span>
-          <button
-            onClick={() => setMarchMode(null)}
-            style={{ background: 'none', border: '1px solid #9a3a3a', borderRadius: 4, color: '#f0c0c0', cursor: 'pointer', padding: '2px 10px', fontSize: 12 }}>
+          <span>
+            {marchMode.battleMode && !marchMode.fromHex
+              ? 'Select source hex to reinforce from'
+              : marchMode.groupId ? `March "${marchMode.groupName}" to…` : 'Select target hex'}
+          </span>
+          <button onClick={() => setMarchMode(null)}
+            style={{ background: 'none', border: '1px solid rgba(180,50,50,0.5)', borderRadius: 4, color: '#d49090', cursor: 'pointer', padding: '2px 10px', fontSize: 12 }}>
             Cancel
           </button>
         </div>
       )}
 
+      {/* ── Battle panel ────────────────────────────────────────── */}
       {activeBattle && selectedHex && (
         <BattlePanel
           hex={selectedHex}
@@ -483,23 +761,28 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate }) {
         />
       )}
 
-      {showMilitary && player && selectedHex && !activeBattle && (
-        <MilitaryPanel
-          hex={selectedHex}
-          player={player}
-          onPlayerUpdate={onPlayerUpdate}
-          onMarchStart={(fromHex, type, quantity) => setMarchMode({ fromHex, type, quantity })}
-          onClose={() => setShowMilitary(false)}
-        />
-      )}
-
-      {selectedHex && (
-        <HexPanel
+      {/* ── Bottom drawer — replaces all floating panels ────────── */}
+      {selectedHex && !activeBattle && (
+        <BottomDrawer
           hex={selectedHex}
           player={player}
           onClaim={handleClaim}
           onLoginRequired={onLoginRequired}
-          onBuild={onPlayerUpdate}
+          onBuild={(updatedPlayer, h3Index, buildingType) => {
+            onPlayerUpdate(updatedPlayer)
+            if (h3Index && buildingType && claimedRef.current[h3Index]) {
+              const h = claimedRef.current[h3Index]
+              claimedRef.current[h3Index] = { ...h, building_types: [...parseTypes(h.building_types), buildingType] }
+              updateClaimed()
+              updateHexes()
+            }
+          }}
+          onPlayerUpdate={onPlayerUpdate}
+          onMarchStart={(fromHex, troops) => {
+            setSelectedHex(null)
+            map.current?.setFilter('hex-selected', ['==', ['get', 'h3'], ''])
+            setMarchMode({ fromHex, troops })
+          }}
           onClose={() => {
             setSelectedHex(null)
             map.current?.setFilter('hex-selected', ['==', ['get', 'h3'], ''])

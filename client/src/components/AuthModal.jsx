@@ -2,6 +2,8 @@ import { useState } from 'react'
 import { HexColorPicker } from 'react-colorful'
 import { api } from '../api/client'
 
+const PRESET_COLORS = ['#e05050', '#e09030', '#d0c030', '#50c050', '#3090e0', '#8050d0', '#d050a0']
+
 const styles = {
   overlay: {
     position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.8)',
