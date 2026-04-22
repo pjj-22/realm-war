@@ -1,56 +1,35 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { api } from '../api/client'
-import { GoldIcon, ManaIcon } from './Icons'
+import { GoldIcon } from './Icons'
 
 // ── constants ─────────────────────────────────────────────────────────────────
 
 const BUILDING_DEFS = [
   {
-    type: 'mine', label: 'Mine', color: '#c9902a', goldCost: 5, manaCost: 0,
+    type: 'mine', label: 'Mine', color: '#c9902a', goldCost: 5,
     effect: '+3 gold per harvest',
     desc: 'Extracts gold from the land each harvest cycle. Stack multiple mines on one hex to maximize income from your richest territories.',
   },
   {
-    type: 'mana_well', label: 'Mana Well', color: '#3480c8', goldCost: 5, manaCost: 0,
-    effect: '+3 mana per harvest',
-    desc: 'Taps ley lines beneath the hex to generate mana. Mana is required for advanced buildings and trebuchet training.',
-  },
-  {
-    type: 'barracks', label: 'Barracks', color: '#a84040', goldCost: 10, manaCost: 0,
+    type: 'barracks', label: 'Barracks', color: '#a84040', goldCost: 10,
     effect: 'Enables training · halves train time',
     desc: 'Without a barracks you cannot train troops on this hex. Building one also cuts all training times in half. Only one barracks per hex.',
   },
   {
-    type: 'watch_tower', label: 'Watch Tower', color: '#5a9840', goldCost: 5, manaCost: 0,
-    effect: '+1 ring of vision',
-    desc: 'Extends your sight radius by one extra hex ring from this location, revealing enemy armies and unclaimed land before they reach you.',
-  },
-  {
-    type: 'archer_tower', label: 'Archer Tower', color: '#c05020', goldCost: 10, manaCost: 0,
-    effect: '+30% defender strength',
-    desc: 'Rains arrows on attackers during any battle fought on this hex. Each tower stacks, making fortified hexes dramatically harder to capture.',
+    type: 'fort', label: 'Fort', color: '#5a9840', goldCost: 10,
+    effect: '+40% defender strength',
+    desc: 'A fortified position that strengthens your garrison. Each fort adds 40% to the defensive strength of troops holding this hex.',
   },
 ]
 
 const TROOP_DEFS = [
   {
-    type: 'knight', label: 'Knights', goldCost: 1, manaCost: 0, time: '6s',
-    atk: '1.0', def: '1.0',
-    desc: 'Balanced all-rounders. Equal strength attacking and defending. Cheap and fast to train — the backbone of any army.',
-  },
-  {
-    type: 'archer', label: 'Archers', goldCost: 1, manaCost: 0, time: '6s',
-    atk: '1.0', def: '1.25',
-    desc: 'Cheap ranged troops that excel when defending from fortified positions. 25% combat bonus when garrisoned on a hex under attack.',
-  },
-  {
-    type: 'trebuchet', label: 'Trebuchets', goldCost: 5, manaCost: 0, time: '12s',
-    atk: '1.5', def: '1.0',
-    desc: 'Powerful siege engines with 3× base combat strength and a 50% attack bonus. Slow and expensive but devastating when storming enemy hexes.',
+    type: 'troop', label: 'Troops', goldCost: 1, time: '6s',
+    desc: 'Versatile soldiers for claiming territory, garrisoning hexes, and attacking enemies. Train in bulk and march them across the map.',
   },
 ]
 
-const UPGRADE_COST = { gold: 20, mana: 5 }
+const UPGRADE_COST = { gold: 20 }
 const UPGRADE_MINUTES = 0.5
 
 // ── small utilities ───────────────────────────────────────────────────────────
@@ -178,7 +157,7 @@ export default function BottomDrawer({ hex, player, onClaim, onLoginRequired, on
   const [military, setMilitary] = useState(null)
   const [trainQty, setTrainQty] = useState(10)
   const [dispatching, setDispatching] = useState(false)
-  const [dispatchQty, setDispatchQty] = useState({ knight: 0, archer: 0, trebuchet: 0 })
+  const [dispatchQty, setDispatchQty] = useState({ troop: 0 })
   const [busy, setBusy] = useState(false)
 
   useEffect(() => { setTab('territory') }, [hex?.h3])
@@ -215,13 +194,12 @@ export default function BottomDrawer({ hex, player, onClaim, onLoginRequired, on
   // ── derived data ─────────────────────────────────────────────
 
   const income = (() => {
-    if (!buildingData?.buildings) return { gold: 1, mana: 0 }
-    let gold = 1, mana = 0
+    if (!buildingData?.buildings) return { gold: 1 }
+    let gold = 1
     for (const b of buildingData.buildings) {
       if (b.type === 'mine') gold += 3
-      else if (b.type === 'mana_well') mana += 3
     }
-    return { gold, mana }
+    return { gold }
   })()
 
   const troopMap = {}
@@ -290,12 +268,7 @@ export default function BottomDrawer({ hex, player, onClaim, onLoginRequired, on
   }
 
   function openDispatch() {
-    // Default to sending everything available
-    setDispatchQty({
-      knight:    troopMap.knight    || 0,
-      archer:    troopMap.archer    || 0,
-      trebuchet: troopMap.trebuchet || 0,
-    })
+    setDispatchQty({ troop: troopMap.troop || 0 })
     setDispatching(true)
   }
 
@@ -327,11 +300,6 @@ export default function BottomDrawer({ hex, player, onClaim, onLoginRequired, on
               <span style={{ display: 'flex', alignItems: 'center', gap: 5, color: '#c9902a' }}>
                 <GoldIcon size={13} /> +{income.gold} next harvest
               </span>
-              {income.mana > 0 && (
-                <span style={{ display: 'flex', alignItems: 'center', gap: 5, color: '#3480c8' }}>
-                  <ManaIcon size={13} /> +{income.mana} next harvest
-                </span>
-              )}
             </div>
           )}
         </div>
@@ -421,7 +389,6 @@ export default function BottomDrawer({ hex, player, onClaim, onLoginRequired, on
                         <span>{b.label}</span>
                         <span style={{ color: '#7a6890', fontSize: 11 }}>
                           <GoldIcon size={10} /> {b.goldCost}
-                          {b.manaCost > 0 && <><ManaIcon size={10} style={{ marginLeft: 4 }} /> {b.manaCost}</>}
                         </span>
                         <span style={{ color: '#8070a0', fontSize: 11, marginLeft: 'auto' }}>{b.effect}</span>
                       </div>
@@ -447,7 +414,7 @@ export default function BottomDrawer({ hex, player, onClaim, onLoginRequired, on
                 ? <UpgradeBar completes_at={buildingData.upgrading.completes_at} onExpire={loadBuildings} />
                 : buildingData.upgradeLevel < buildingData.maxUpgradeLevel
                   ? <Btn onClick={handleUpgrade} disabled={busy}>
-                      Upgrade — <GoldIcon size={11} /> {UPGRADE_COST.gold} <ManaIcon size={11} /> {UPGRADE_COST.mana} · +2 slots
+                      Upgrade — <GoldIcon size={11} /> {UPGRADE_COST.gold} · +2 slots
                     </Btn>
                   : <span style={{ fontSize: 12, color: '#6a5878' }}>Max level reached — no further upgrades available.</span>
               }
@@ -565,9 +532,6 @@ export default function BottomDrawer({ hex, player, onClaim, onLoginRequired, on
             <div key={t.type} style={{ marginBottom: 12, padding: '8px 10px', background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 4 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
                 <span style={{ fontSize: 14, color: '#c4b498', flex: 1 }}>{t.label}</span>
-                <span style={{ fontSize: 11, color: '#7a6890' }}>
-                  atk {t.atk} · def {t.def}
-                </span>
                 <span style={{ fontSize: 11, color: '#6a5878', display: 'flex', alignItems: 'center', gap: 3 }}>
                   <GoldIcon size={10} />{t.goldCost} · {t.time}
                 </span>

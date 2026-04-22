@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { api } from '../api/client'
 
-const ICONS = { knight: '⚔', archer: '🏹', trebuchet: '💣' }
+const ICONS = { troop: '⚔' }
 
 function groupKey(army) {
   const etaBucket = Math.round(new Date(army.arrives_at).getTime() / 10000)

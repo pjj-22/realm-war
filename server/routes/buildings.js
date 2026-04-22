@@ -30,7 +30,7 @@ router.get('/:h3Index', async (req, res) => {
       maxUpgradeLevel: MAX_UPGRADE_LEVEL,
       upgrading: upgradeRow.rows[0] || null,
     })
-  } catch (err) {
+  } catch {
     res.status(500).json({ error: 'Server error' })
   }
 })
@@ -64,18 +64,18 @@ router.post('/', requireAuth, async (req, res) => {
     }
 
     const cost = BUILDING_COSTS[type]
-    const player = await pool.query('SELECT gold, mana FROM players WHERE id=$1', [req.player.id])
-    const { gold, mana } = player.rows[0]
-    if (gold < cost.gold || mana < cost.mana) {
-      return res.status(400).json({ error: `Need ${cost.gold}g ${cost.mana}m, have ${gold}g ${mana}m` })
+    const player = await pool.query('SELECT gold FROM players WHERE id=$1', [req.player.id])
+    const { gold } = player.rows[0]
+    if (gold < cost.gold) {
+      return res.status(400).json({ error: `Need ${cost.gold}g, have ${gold}g` })
     }
 
-    await pool.query('UPDATE players SET gold=gold-$1, mana=mana-$2 WHERE id=$3', [cost.gold, cost.mana, req.player.id])
+    await pool.query('UPDATE players SET gold=gold-$1 WHERE id=$2', [cost.gold, req.player.id])
     const built = await pool.query('INSERT INTO buildings (h3_index, type) VALUES ($1,$2) RETURNING *', [h3Index, type])
 
-    const updated = await pool.query('SELECT gold, mana FROM players WHERE id=$1', [req.player.id])
+    const updated = await pool.query('SELECT gold FROM players WHERE id=$1', [req.player.id])
     res.json({ success: true, building: built.rows[0], player: updated.rows[0] })
-  } catch (err) {
+  } catch {
     res.status(500).json({ error: 'Server error' })
   }
 })
@@ -112,19 +112,19 @@ router.post('/:h3Index/upgrade', requireAuth, async (req, res) => {
     const existing = await pool.query('SELECT id FROM upgrade_queue WHERE h3_index=$1', [h3Index])
     if (existing.rows[0]) return res.status(409).json({ error: 'Upgrade already in progress' })
 
-    const player = await pool.query('SELECT gold, mana FROM players WHERE id=$1', [req.player.id])
-    const { gold, mana } = player.rows[0]
-    if (gold < UPGRADE_COST.gold || mana < UPGRADE_COST.mana) {
-      return res.status(400).json({ error: `Need ${UPGRADE_COST.gold}g ${UPGRADE_COST.mana}m` })
+    const player = await pool.query('SELECT gold FROM players WHERE id=$1', [req.player.id])
+    const { gold } = player.rows[0]
+    if (gold < UPGRADE_COST.gold) {
+      return res.status(400).json({ error: `Need ${UPGRADE_COST.gold}g` })
     }
 
     const completesAt = new Date(Date.now() + UPGRADE_MINUTES * 60 * 1000)
-    await pool.query('UPDATE players SET gold=gold-$1, mana=mana-$2 WHERE id=$3', [UPGRADE_COST.gold, UPGRADE_COST.mana, req.player.id])
+    await pool.query('UPDATE players SET gold=gold-$1 WHERE id=$2', [UPGRADE_COST.gold, req.player.id])
     const job = await pool.query(
       'INSERT INTO upgrade_queue (owner_id, h3_index, completes_at) VALUES ($1,$2,$3) RETURNING *',
       [req.player.id, h3Index, completesAt]
     )
-    const updated = await pool.query('SELECT gold, mana FROM players WHERE id=$1', [req.player.id])
+    const updated = await pool.query('SELECT gold FROM players WHERE id=$1', [req.player.id])
     res.json({ upgrade: job.rows[0], player: updated.rows[0] })
   } catch {
     res.status(500).json({ error: 'Server error' })

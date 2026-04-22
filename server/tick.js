@@ -1,5 +1,7 @@
 import { pool } from './db.js'
-import { TICK_INTERVAL_MS, COMBAT_STRENGTH, BATTLE_ROUND_DAMAGE_RATE, TROOP_ROLE_BONUS, ARCHER_TOWER_DEFENSE_BONUS, GOLD_CAP_BASE, GOLD_CAP_PER_HEX, GOLD_CAP_PER_MINE, MANA_CAP_BASE, MANA_CAP_PER_WELL } from './config.js'
+import { TICK_INTERVAL_MS, BATTLE_ROUND_DAMAGE_RATE, FORT_DEFENSE_BONUS, GOLD_CAP_BASE, GOLD_CAP_PER_HEX, GOLD_CAP_PER_MINE } from './config.js'
+import { getIO } from './socket.js'
+import { ensureBots, processBots } from './bots.js'
 
 async function insertEvent(playerId, type, message, hexIndex = null) {
   try {
@@ -15,7 +17,7 @@ async function insertEvent(playerId, type, message, hexIndex = null) {
 const COMBAT_INTERVAL_MS = 15 * 1000
 const TRAINING_INTERVAL_MS = 15 * 1000
 const BATTLE_INTERVAL_MS = 15 * 1000
-const BASE_RATE = { gold: 1, mana: 0 }
+const BASE_RATE = { gold: 1 }
 
 export async function runTick() {
   console.log('[tick] Running resource tick...')
@@ -24,8 +26,7 @@ export async function runTick() {
       SELECT
         p.id,
         COUNT(DISTINCT h.h3_index) AS hex_count,
-        COALESCE(SUM(CASE WHEN b.type = 'mine'      THEN 3 ELSE 0 END), 0) AS gold_from_buildings,
-        COALESCE(SUM(CASE WHEN b.type = 'mana_well' THEN 3 ELSE 0 END), 0) AS mana_from_buildings
+        COALESCE(SUM(CASE WHEN b.type = 'mine' THEN 3 ELSE 0 END), 0) AS gold_from_buildings
       FROM players p
       LEFT JOIN hexes h ON h.owner_id = p.id
       LEFT JOIN buildings b ON b.h3_index = h.h3_index
@@ -33,29 +34,27 @@ export async function runTick() {
     `)
     for (const row of result.rows) {
       const goldGain = (Number(row.hex_count) * BASE_RATE.gold) + Number(row.gold_from_buildings)
-      const manaGain = Number(row.mana_from_buildings)
-      if (goldGain === 0 && manaGain === 0) continue
-      await pool.query('UPDATE players SET gold=gold+$1, mana=mana+$2 WHERE id=$3', [goldGain, manaGain, row.id])
+      if (goldGain === 0) continue
+      await pool.query('UPDATE players SET gold=gold+$1 WHERE id=$2', [goldGain, row.id])
     }
     console.log(`[tick] Resources updated for ${result.rows.length} players.`)
 
-    // Enforce resource caps
+    // Enforce gold cap
     await pool.query(`
       UPDATE players p SET
-        gold = LEAST(p.gold, $1 + COALESCE(s.hex_count, 0) * $2 + COALESCE(s.mine_count, 0) * $3),
-        mana = LEAST(p.mana, $4 + COALESCE(s.well_count, 0) * $5)
+        gold = LEAST(p.gold, $1 + COALESCE(s.hex_count, 0) * $2 + COALESCE(s.mine_count, 0) * $3)
       FROM (
         SELECT p2.id,
           COUNT(DISTINCT h.h3_index)::int AS hex_count,
-          COUNT(DISTINCT CASE WHEN b.type='mine'     THEN b.id END)::int AS mine_count,
-          COUNT(DISTINCT CASE WHEN b.type='mana_well' THEN b.id END)::int AS well_count
+          COUNT(DISTINCT CASE WHEN b.type='mine' THEN b.id END)::int AS mine_count
         FROM players p2
         LEFT JOIN hexes h ON h.owner_id = p2.id
         LEFT JOIN buildings b ON b.h3_index = h.h3_index
         GROUP BY p2.id
       ) s
       WHERE p.id = s.id
-    `, [GOLD_CAP_BASE, GOLD_CAP_PER_HEX, GOLD_CAP_PER_MINE, MANA_CAP_BASE, MANA_CAP_PER_WELL])
+    `, [GOLD_CAP_BASE, GOLD_CAP_PER_HEX, GOLD_CAP_PER_MINE])
+    getIO()?.emit('tick')
   } catch (err) {
     console.error('[tick] Resource error:', err.message)
   }
@@ -72,8 +71,8 @@ export async function processTraining() {
         DO UPDATE SET quantity = troops.quantity + EXCLUDED.quantity
       `, [job.owner_id, job.h3_index, job.type, job.quantity])
       await pool.query('DELETE FROM training_queue WHERE id=$1', [job.id])
-      await insertEvent(job.owner_id, 'training_complete', `✅ ${job.quantity} ${job.type}s finished training at ${job.h3_index}`, job.h3_index)
-      console.log(`[training] ${job.quantity} ${job.type}s ready at ${job.h3_index}`)
+      await insertEvent(job.owner_id, 'training_complete', `✅ ${job.quantity} troops finished training at ${job.h3_index}`, job.h3_index)
+      console.log(`[training] ${job.quantity} troops ready at ${job.h3_index}`)
     }
   } catch (err) {
     console.error('[training] Error:', err.message)
@@ -112,9 +111,8 @@ export async function processCombat() {
         console.log(`[combat] troops stationed at unclaimed ${army.to_hex} — awaiting claim`)
 
       } else {
-        // Enemy hex — start or join a battle
-        const atkBonus = (TROOP_ROLE_BONUS[army.type] || TROOP_ROLE_BONUS.knight).attacker
-        const attackStr = army.quantity * (COMBAT_STRENGTH[army.type] || 1) * atkBonus
+        // Enemy hex — attack strength is simply troop count
+        const attackStr = army.quantity
 
         const existingBattle = await pool.query(
           "SELECT * FROM battles WHERE h3_index=$1 AND status='active'", [army.to_hex]
@@ -127,31 +125,26 @@ export async function processCombat() {
                      : army.owner_id === battle.defender_id ? 'defender'
                      : 'attacker' // third party joins attacker side
 
-          const roleBonus = (TROOP_ROLE_BONUS[army.type] || TROOP_ROLE_BONUS.knight)[side]
-          const reinforceStr = army.quantity * (COMBAT_STRENGTH[army.type] || 1) * roleBonus
           const col = side === 'attacker' ? 'attacker_strength' : 'defender_strength'
-          await pool.query(`UPDATE battles SET ${col}=${col}+$1 WHERE id=$2`, [reinforceStr, battle.id])
+          await pool.query(`UPDATE battles SET ${col}=${col}+$1 WHERE id=$2`, [army.quantity, battle.id])
           await pool.query(
             'INSERT INTO battle_participants (battle_id, player_id, side, troop_type, quantity) VALUES ($1,$2,$3,$4,$5)',
             [battle.id, army.owner_id, side, army.type, army.quantity]
           )
           await pool.query("UPDATE armies SET status='in_battle' WHERE id=$1", [army.id])
-          console.log(`[battle] reinforcement joined battle ${battle.id} as ${side} (+${reinforceStr.toFixed(1)} str)`)
+          console.log(`[battle] reinforcement joined battle ${battle.id} as ${side} (+${army.quantity} str)`)
 
         } else {
           // Start new battle
           const defenders = await pool.query(
             'SELECT type, quantity FROM troops WHERE h3_index=$1', [army.to_hex]
           )
-          const archerTowersRes = await pool.query(
-            "SELECT COUNT(*) AS cnt FROM buildings WHERE h3_index=$1 AND type='archer_tower'", [army.to_hex]
+          const fortsRes = await pool.query(
+            "SELECT COUNT(*) AS cnt FROM buildings WHERE h3_index=$1 AND type='fort'", [army.to_hex]
           )
-          const archerTowers = Number(archerTowersRes.rows[0]?.cnt || 0)
-          const defMultiplier = 1 + archerTowers * ARCHER_TOWER_DEFENSE_BONUS
-          const defStr = defenders.rows.reduce((s, t) => {
-            const defBonus = (TROOP_ROLE_BONUS[t.type] || TROOP_ROLE_BONUS.knight).defender
-            return s + t.quantity * (COMBAT_STRENGTH[t.type] || 1) * defBonus
-          }, 0) * defMultiplier
+          const forts = Number(fortsRes.rows[0]?.cnt || 0)
+          const defMultiplier = 1 + forts * FORT_DEFENSE_BONUS
+          const defStr = defenders.rows.reduce((s, t) => s + t.quantity, 0) * defMultiplier
 
           if (defStr === 0) {
             // No defenders — take hex directly
@@ -165,6 +158,8 @@ export async function processCombat() {
             if (prevOwner.rows[0]?.owner_id) {
               await insertEvent(prevOwner.rows[0].owner_id, 'hex_lost', `💀 Your hex ${army.to_hex} was captured unopposed`, army.to_hex)
             }
+            getIO()?.emit('hexes:update')
+            getIO()?.emit('armies:update')
             console.log(`[combat] ${army.to_hex} taken unopposed`)
           } else {
             const battle = await pool.query(
@@ -184,7 +179,9 @@ export async function processCombat() {
               )
             }
             await pool.query("UPDATE armies SET status='in_battle' WHERE id=$1", [army.id])
-            console.log(`[battle] started at ${army.to_hex}: ${attackStr.toFixed(1)} atk vs ${defStr.toFixed(1)} def`)
+            getIO()?.emit('battle:update')
+            getIO()?.emit('armies:update')
+            console.log(`[battle] started at ${army.to_hex}: ${attackStr} atk vs ${defStr.toFixed(1)} def`)
           }
         }
       }
@@ -219,37 +216,33 @@ export async function processBattleRounds() {
             [battle.attacker_id, battle.h3_index])
           if (newAtkStr > 0) {
             const atk = await pool.query(
-              "SELECT troop_type, SUM(quantity) AS qty FROM battle_participants WHERE battle_id=$1 AND side='attacker' GROUP BY troop_type",
+              "SELECT SUM(quantity) AS qty FROM battle_participants WHERE battle_id=$1 AND side='attacker'",
               [battle.id]
             )
-            const totalAtkStr = atk.rows.reduce((s, r) => s + r.qty * (COMBAT_STRENGTH[r.troop_type] || 1), 0)
-            const survivalRate = totalAtkStr > 0 ? newAtkStr / totalAtkStr : 0
-            for (const r of atk.rows) {
-              const survivors = Math.round(r.qty * survivalRate)
-              if (survivors > 0) {
-                await depositTroops(battle.attacker_id, battle.h3_index, r.troop_type, survivors)
-                console.log(`[battle] ${battle.id} ATTACKER WINS at ${battle.h3_index} (${survivors} ${r.troop_type}s survive)`)
-              }
+            const totalAtkQty = Number(atk.rows[0]?.qty || 0)
+            const survivalRate = totalAtkQty > 0 ? newAtkStr / atkStr : 0
+            const survivors = Math.round(totalAtkQty * survivalRate)
+            if (survivors > 0) {
+              await depositTroops(battle.attacker_id, battle.h3_index, 'troop', survivors)
+              console.log(`[battle] ${battle.id} ATTACKER WINS at ${battle.h3_index} (${survivors} troops survive)`)
             }
           } else {
             console.log(`[battle] ${battle.id} ATTACKER WINS at ${battle.h3_index} (no survivors)`)
           }
         } else {
-          // Defender wins — attacker troops already deducted at march time; restore defender remnants
+          // Defender wins — restore defender remnants
           await pool.query('DELETE FROM troops WHERE h3_index=$1', [battle.h3_index])
           if (newDefStr > 0) {
             const def = await pool.query(
-              "SELECT troop_type, SUM(quantity) AS qty FROM battle_participants WHERE battle_id=$1 AND side='defender' GROUP BY troop_type",
+              "SELECT SUM(quantity) AS qty FROM battle_participants WHERE battle_id=$1 AND side='defender'",
               [battle.id]
             )
-            const totalDefStr = def.rows.reduce((s, r) => s + r.qty * (COMBAT_STRENGTH[r.troop_type] || 1), 0)
-            const survivalRate = totalDefStr > 0 ? newDefStr / totalDefStr : 0
-            for (const r of def.rows) {
-              const survivors = Math.round(r.qty * survivalRate)
-              if (survivors > 0) {
-                await depositTroops(battle.defender_id, battle.h3_index, r.troop_type, survivors)
-                console.log(`[battle] ${battle.id} DEFENDER WINS at ${battle.h3_index} (${survivors} ${r.troop_type}s survive)`)
-              }
+            const totalDefQty = Number(def.rows[0]?.qty || 0)
+            const survivalRate = totalDefQty > 0 ? newDefStr / defStr : 0
+            const survivors = Math.round(totalDefQty * survivalRate)
+            if (survivors > 0) {
+              await depositTroops(battle.defender_id, battle.h3_index, 'troop', survivors)
+              console.log(`[battle] ${battle.id} DEFENDER WINS at ${battle.h3_index} (${survivors} troops survive)`)
             }
           } else {
             console.log(`[battle] ${battle.id} DEFENDER WINS at ${battle.h3_index} (no survivors)`)
@@ -257,11 +250,9 @@ export async function processBattleRounds() {
         }
 
         if (attackerWon) {
-          // Check if captured hex was the defender's capital
           const defenderData = await pool.query('SELECT capital_hex FROM players WHERE id=$1', [battle.defender_id])
           const isCapital = defenderData.rows[0]?.capital_hex === battle.h3_index
           if (isCapital) {
-            // Cancel any in-progress training at that hex
             await pool.query(
               'DELETE FROM training_queue WHERE owner_id=$1 AND h3_index=$2',
               [battle.defender_id, battle.h3_index]
@@ -283,6 +274,9 @@ export async function processBattleRounds() {
           [attackerWon ? 'attacker_won' : 'defender_won', newAtkStr, newDefStr, battle.id]
         )
         await pool.query("UPDATE armies SET status='arrived' WHERE status='in_battle' AND to_hex=$1", [battle.h3_index])
+        getIO()?.emit('battle:update')
+        getIO()?.emit('hexes:update')
+        getIO()?.emit('armies:update')
 
       } else {
         // Battle continues
@@ -317,14 +311,16 @@ export async function processUpgrades() {
 
 export let nextTickAt = Date.now() + TICK_INTERVAL_MS
 
-export function startTick() {
+export async function startTick() {
   console.log(`[tick] Starting resource tick every ${TICK_INTERVAL_MS / 60000} minutes`)
 
   async function wrappedTick() {
     await runTick()
+    await processBots()
     nextTickAt = Date.now() + TICK_INTERVAL_MS
   }
 
+  await ensureBots()
   wrappedTick()
   setInterval(wrappedTick, TICK_INTERVAL_MS)
   setInterval(processTraining, TRAINING_INTERVAL_MS)

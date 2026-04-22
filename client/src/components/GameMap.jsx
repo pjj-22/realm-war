@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
+import { useSocket } from '../hooks/useSocket'
 import maplibregl from 'maplibre-gl'
 import { latLngToCell, cellToBoundary, cellToLatLng, gridDisk, gridPathCells } from 'h3-js'
 import 'maplibre-gl/dist/maplibre-gl.css'
@@ -10,7 +11,7 @@ import BattlePanel from './BattlePanel'
 import BattleParticles from './BattleParticles'
 import { useResourceTicker } from '../hooks/useResourceTicker'
 import { api } from '../api/client'
-import { GoldIcon, ManaIcon } from './Icons'
+import { GoldIcon } from './Icons'
 
 
 const HEX_RESOLUTION = 7
@@ -80,12 +81,6 @@ function buildVisibleSet(claimedHexes, playerId) {
     if (claimed.owner_id !== playerId) continue
     // Own hexes + 1-ring adjacency always visible
     gridDisk(cell, 1).forEach(c => visible.add(c))
-    // Watch towers extend vision by 1 more ring
-    const types = claimed.building_types
-    const hasWatchTower = Array.isArray(types)
-      ? types.includes('watch_tower')
-      : typeof types === 'string' && types.includes('watch_tower')
-    if (hasWatchTower) gridDisk(cell, 2).forEach(c => visible.add(c))
   }
   return visible
 }
@@ -107,11 +102,9 @@ function buildClaimedPoints(claimedHexes, visibleSet) {
 
 // Pip colors by building type — matches BottomDrawer dots
 const PIP_COLORS = {
-  mine:         '#c9902a',
-  mana_well:    '#3480c8',
-  barracks:     '#a84040',
-  watch_tower:  '#5a9840',
-  archer_tower: '#c05020',
+  mine:     '#c9902a',
+  barracks: '#a84040',
+  fort:     '#5a9840',
 }
 
 const HEX_SHORT_RAD = 0.0058 // degrees lat, approximate for H3 res 7
@@ -179,6 +172,7 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate }) {
   const [activeBattle, setActiveBattle] = useState(null)
 
   const ownedHexCount = Object.values(claimedRef.current).filter(h => h.owner_id === player?.id).length
+
   const { display: resources } = useResourceTicker(player, ownedHexCount)
 
   // Load all claimed hexes from server
@@ -193,40 +187,31 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate }) {
     } catch {}
   }, [])
 
-  useEffect(() => {
-    loadClaimed()
-    const interval = setInterval(loadClaimed, 15000)
-    return () => clearInterval(interval)
-  }, [loadClaimed])
-
-  useEffect(() => {
-    async function loadArmies() {
-      try { setArmies(await api.getArmies()) } catch {}
-    }
-    loadArmies()
-    const interval = setInterval(loadArmies, 10000)
-    return () => clearInterval(interval)
+  const loadArmies = useCallback(async () => {
+    try { setArmies(await api.getArmies()) } catch {}
   }, [])
 
-  useEffect(() => {
-    async function loadActiveBattles() {
-      try { setActiveBattles(await api.getActiveBattles()) } catch {}
-    }
-    loadActiveBattles()
-    const interval = setInterval(loadActiveBattles, 5000)
-    return () => clearInterval(interval)
+  const loadActiveBattles = useCallback(async () => {
+    try { setActiveBattles(await api.getActiveBattles()) } catch {}
   }, [])
 
   const loadStats = useCallback(async () => {
     try { setStats(await api.getStats()) } catch {}
   }, [])
 
-  useEffect(() => {
-    if (!player) return
-    loadStats()
-    const interval = setInterval(loadStats, 30000)
-    return () => clearInterval(interval)
-  }, [player?.id, loadStats])
+  // Initial loads on mount
+  useEffect(() => { loadClaimed() }, [loadClaimed])
+  useEffect(() => { loadArmies() }, [loadArmies])
+  useEffect(() => { loadActiveBattles() }, [loadActiveBattles])
+  useEffect(() => { if (player) loadStats() }, [player?.id, loadStats])
+
+  // Socket-driven updates — replace polling intervals
+  useSocket({
+    'hexes:update': loadClaimed,
+    'armies:update': loadArmies,
+    'battle:update': loadActiveBattles,
+    'tick': loadStats,
+  })
 
   useEffect(() => {
     if (!selectedHex) { setActiveBattle(null); return }
@@ -399,20 +384,10 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate }) {
       setMarchMode(prev => {
         if (prev) {
           if (prev.battleMode && !prev.fromHex) {
-            // Battle reinforce: user clicked source hex — open drawer on military tab
+            // Battle reinforce: user clicked source hex
             setSelectedHex(hex)
             map.current.setFilter('hex-selected', ['==', ['get', 'h3'], hex.h3])
             return { ...prev, fromHex: hex.h3 }
-          }
-          if (prev.groupId) {
-            // Group march — dispatch all troop types at once
-            api.marchGroup(prev.fromHex, hex.h3, prev.groupId)
-              .then(res => {
-                if (res.errors?.length) alert('Partial: ' + res.errors.join(', '))
-                loadClaimed()
-              })
-              .catch(err => alert(err.message))
-            return null
           }
           if (prev.troops) {
             // Multi-type dispatch from the drawer
@@ -422,7 +397,7 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate }) {
               .catch(err => alert(err.message))
             return null
           }
-          // Single-type march (battle reinforce)
+          // Single-type march
           api.marchArmy(prev.fromHex, hex.h3, prev.type, prev.quantity)
             .then(() => loadClaimed())
             .catch(err => alert(err.message))
@@ -493,11 +468,8 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate }) {
   const playerRef = useRef(null)
   playerRef.current = player
   const markersRef = useRef({})
-  const claimedPublicRef = useRef(claimedRef)
-  claimedPublicRef.current = claimedRef
 
   useEffect(() => {
-    const ICONS = { knight: '⚔', archer: '🏹', trebuchet: '💣' }
 
     function updateArmyPositions() {
       if (!map.current?.getSource('armies')) return
@@ -535,7 +507,7 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate }) {
         return {
           type: 'Feature',
           properties: {
-            label: `${ICONS[a.type] || '⚔'}${a.quantity}`,
+            label: `⚔${a.quantity}`,
             color: a.color || '#f0c040',
             isEnemy: isEnemy ? 1 : 0,
           },
@@ -604,9 +576,7 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate }) {
   }
 
   const goldCap = stats?.gold_cap ?? null
-  const manaCap = stats?.mana_cap ?? null
   const goldOverCap = goldCap !== null && resources.gold >= goldCap
-  const manaOverCap = manaCap !== null && resources.mana >= manaCap
 
   return (
     <div style={{ position: 'relative', width: '100vw', height: '100vh' }}>
@@ -666,22 +636,10 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate }) {
               )}
               {stats && <span style={{ fontSize: 11, color: '#6a5878', marginLeft: 2 }}>+{(stats.hex_count || 0) + (stats.mines || 0) * 3}</span>}
             </div>
-            {(resources.mana > 0 || (stats?.wells ?? 0) > 0) && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
-                <ManaIcon size={14} />
-                <span style={{ fontSize: 15, color: manaOverCap ? '#6090e8' : '#3480c8', fontWeight: 'bold' }}>{resources.mana}</span>
-                {manaCap !== null && (
-                  <span style={{ fontSize: 11, color: manaOverCap ? '#3a5888' : '#5a7898' }}>
-                    {manaOverCap ? '⚠ FULL' : `/ ${manaCap}`}
-                  </span>
-                )}
-                {(stats?.wells ?? 0) > 0 && <span style={{ fontSize: 11, color: '#6a5878', marginLeft: 2 }}>+{stats.wells * 3}</span>}
-              </div>
-            )}
             {stats?.next_tick_at && <HarvestCountdown nextTickAt={stats.next_tick_at} onExpire={loadStats} />}
             <span style={{ fontSize: 13, color: '#7a6890' }}>▲ {stats?.hex_count ?? ownedHexCount}</span>
             <button
-              onClick={async () => { try { const r = await api.devRefill(); onPlayerUpdate?.({ ...player, gold: r.gold, mana: r.mana }) } catch {} }}
+              onClick={async () => { try { const r = await api.devRefill(); onPlayerUpdate?.({ ...player, gold: r.gold }) } catch {} }}
               style={{ padding: '3px 10px', background: 'rgba(30,60,30,0.4)', border: '1px solid rgba(50,100,50,0.4)', borderRadius: 4, color: '#70a870', cursor: 'pointer', fontSize: 11, letterSpacing: 1, fontFamily: 'Georgia, serif' }}>
               Refill
             </button>
@@ -742,7 +700,7 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate }) {
           <span>
             {marchMode.battleMode && !marchMode.fromHex
               ? 'Select source hex to reinforce from'
-              : marchMode.groupId ? `March "${marchMode.groupName}" to…` : 'Select target hex'}
+              : 'Select target hex'}
           </span>
           <button onClick={() => setMarchMode(null)}
             style={{ background: 'none', border: '1px solid rgba(180,50,50,0.5)', borderRadius: 4, color: '#d49090', cursor: 'pointer', padding: '2px 10px', fontSize: 12 }}>

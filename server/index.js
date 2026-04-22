@@ -1,3 +1,4 @@
+import http from 'http'
 import express from 'express'
 import cors from 'cors'
 import dotenv from 'dotenv'
@@ -11,6 +12,7 @@ import { startTick } from './tick.js'
 import { DEV_MODE, STARTING_GOLD, STARTING_MANA } from './config.js'
 import { pool } from './db.js'
 import { requireAuth } from './auth.js'
+import { initSocket } from './socket.js'
 
 dotenv.config()
 
@@ -30,13 +32,16 @@ app.get('/api/health', (_, res) => res.json({ ok: true, devMode: DEV_MODE }))
 if (DEV_MODE) {
   // Top up resources without re-registering
   app.post('/api/dev/refill', requireAuth, async (req, res) => {
-    await pool.query('UPDATE players SET gold=$1, mana=$2 WHERE id=$3', [STARTING_GOLD, STARTING_MANA, req.player.id])
-    res.json({ gold: STARTING_GOLD, mana: STARTING_MANA })
+    await pool.query('UPDATE players SET gold=$1 WHERE id=$2', [STARTING_GOLD, req.player.id])
+    res.json({ gold: STARTING_GOLD })
   })
 }
 
+const httpServer = http.createServer(app)
+initSocket(httpServer)
+
 const PORT = process.env.PORT || 3001
-app.listen(PORT, () => {
+httpServer.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`)
   startTick()
 })

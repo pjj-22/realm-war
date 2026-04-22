@@ -1,7 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { api } from '../api/client'
 
-const COMBAT_STRENGTH = { knight: 1, archer: 1.2, trebuchet: 3 }
 const ROUND_MS = 15000
 const DAMAGE_RATE = 0.15
 

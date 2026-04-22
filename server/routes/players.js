@@ -18,7 +18,7 @@ router.post('/register', async (req, res) => {
     const hash = await bcrypt.hash(password, 10)
     const playerColor = color || '#4a90d9'
     const result = await pool.query(
-      'INSERT INTO players (username, password_hash, color, gold, mana) VALUES ($1, $2, $3, $4, $5) RETURNING id, username, color, gold, mana, capital_hex',
+      'INSERT INTO players (username, password_hash, color, gold, mana) VALUES ($1, $2, $3, $4, $5) RETURNING id, username, color, gold, capital_hex',
       [username, hash, playerColor, STARTING_GOLD, STARTING_MANA]
     )
     const player = result.rows[0]
@@ -36,7 +36,7 @@ router.post('/login', async (req, res) => {
 
   try {
     const result = await pool.query(
-      'SELECT id, username, color, gold, mana, capital_hex, password_hash FROM players WHERE username = $1',
+      'SELECT id, username, color, gold, capital_hex, password_hash FROM players WHERE username = $1',
       [username]
     )
     const player = result.rows[0]
@@ -58,14 +58,12 @@ router.get('/leaderboard', async (req, res) => {
     const result = await pool.query(`
       SELECT p.username, p.color,
         COUNT(DISTINCT h.h3_index)::integer AS hex_count,
-        COALESCE(SUM(t.quantity * CASE t.type
-          WHEN 'knight' THEN 1 WHEN 'archer' THEN 1.2 WHEN 'trebuchet' THEN 3 ELSE 1 END
-        ), 0)::numeric AS total_strength
+        COALESCE(SUM(t.quantity), 0)::integer AS total_troops
       FROM players p
       LEFT JOIN hexes h ON h.owner_id = p.id
       LEFT JOIN troops t ON t.owner_id = p.id
       GROUP BY p.id, p.username, p.color
-      ORDER BY hex_count DESC, total_strength DESC
+      ORDER BY hex_count DESC, total_troops DESC
       LIMIT 10
     `)
     res.json(result.rows)
@@ -79,19 +77,17 @@ router.get('/stats', requireAuth, async (req, res) => {
       SELECT
         COUNT(DISTINCT h.h3_index)::integer AS hex_count,
         COALESCE(SUM(CASE WHEN b.type='mine' THEN 1 ELSE 0 END), 0)::integer AS mines,
-        COALESCE(SUM(CASE WHEN b.type='mana_well' THEN 1 ELSE 0 END), 0)::integer AS wells,
         COALESCE(SUM(CASE WHEN b.type='barracks' THEN 1 ELSE 0 END), 0)::integer AS barracks,
-        COALESCE(SUM(CASE WHEN b.type='watch_tower' THEN 1 ELSE 0 END), 0)::integer AS towers
+        COALESCE(SUM(CASE WHEN b.type='fort' THEN 1 ELSE 0 END), 0)::integer AS forts
       FROM players p
       LEFT JOIN hexes h ON h.owner_id = p.id
       LEFT JOIN buildings b ON b.h3_index = h.h3_index
       WHERE p.id = $1
       GROUP BY p.id
     `, [req.player.id])
-    const row = result.rows[0] || { hex_count: 0, mines: 0, wells: 0, barracks: 0, towers: 0 }
-    const { GOLD_CAP_BASE, GOLD_CAP_PER_HEX, GOLD_CAP_PER_MINE, MANA_CAP_BASE, MANA_CAP_PER_WELL } = await import('../config.js')
+    const row = result.rows[0] || { hex_count: 0, mines: 0, barracks: 0, forts: 0 }
+    const { GOLD_CAP_BASE, GOLD_CAP_PER_HEX, GOLD_CAP_PER_MINE } = await import('../config.js')
     row.gold_cap = GOLD_CAP_BASE + row.hex_count * GOLD_CAP_PER_HEX + row.mines * GOLD_CAP_PER_MINE
-    row.mana_cap = MANA_CAP_BASE + row.wells * MANA_CAP_PER_WELL
     row.next_tick_at = new Date(nextTickAt).toISOString()
     res.json(row)
   } catch { res.status(500).json({ error: 'Server error' }) }
@@ -101,7 +97,7 @@ router.get('/stats', requireAuth, async (req, res) => {
 router.get('/me', requireAuth, async (req, res) => {
   try {
     const result = await pool.query(
-      'SELECT id, username, color, gold, mana, capital_hex FROM players WHERE id = $1',
+      'SELECT id, username, color, gold, capital_hex FROM players WHERE id = $1',
       [req.player.id]
     )
     res.json(result.rows[0])
