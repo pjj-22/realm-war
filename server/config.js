@@ -3,7 +3,8 @@
 export const DEV_MODE = true
 
 // ─── Starting resources ───────────────────────────────────────────────────────
-export const STARTING_GOLD = DEV_MODE ? 9999 : 100
+export const STARTING_GOLD   = DEV_MODE ? 9999 : 100
+export const STARTING_TROOPS = DEV_MODE ?   50 :  20
 export const STARTING_MANA = 0  // mana removed — kept for DB compat
 
 // ─── Resource tick ────────────────────────────────────────────────────────────

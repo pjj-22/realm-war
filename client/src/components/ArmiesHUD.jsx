@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { api } from '../api/client'
+import { useIsMobile } from '../hooks/useIsMobile'
 
 const ICONS = { troop: '⚔' }
 
@@ -95,6 +96,7 @@ function ArmyGroupRow({ group, isOwn, onRecall, color, username }) {
 }
 
 export default function ArmiesHUD({ armies, activeBattles = [], player, claimedRef, onRefresh }) {
+  const isMobile = useIsMobile()
   const [open, setOpen] = useState(false)
 
   const myArmies = armies.filter(a => a.owner_id === player?.id)
@@ -151,7 +153,8 @@ export default function ArmiesHUD({ armies, activeBattles = [], player, claimedR
         <div style={{
           marginTop: 4,
           background: 'rgba(10,8,25,0.92)', border: '1px solid #4a3a7a',
-          borderRadius: 6, padding: '14px 16px', width: 300,
+          borderRadius: 6, padding: '14px 16px',
+          width: isMobile ? 'calc(100vw - 32px)' : 300,
           boxShadow: '0 0 30px rgba(80,40,160,0.4)',
           maxHeight: '60vh', overflowY: 'auto',
         }}>

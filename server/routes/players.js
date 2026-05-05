@@ -4,6 +4,7 @@ import { pool } from '../db.js'
 import { signToken, requireAuth } from '../auth.js'
 import { STARTING_GOLD, STARTING_MANA } from '../config.js'
 import { nextTickAt } from '../tick.js'
+import { getCountry } from '../countries.js'
 
 const router = Router()
 
@@ -56,13 +57,13 @@ router.post('/login', async (req, res) => {
 router.get('/leaderboard', async (req, res) => {
   try {
     const result = await pool.query(`
-      SELECT p.username, p.color,
+      SELECT p.username, p.color, p.capital_hex,
         COUNT(DISTINCT h.h3_index)::integer AS hex_count,
         COALESCE(SUM(t.quantity), 0)::integer AS total_troops
       FROM players p
       LEFT JOIN hexes h ON h.owner_id = p.id
       LEFT JOIN troops t ON t.owner_id = p.id
-      GROUP BY p.id, p.username, p.color
+      GROUP BY p.id, p.username, p.color, p.capital_hex
       ORDER BY hex_count DESC, total_troops DESC
       LIMIT 10
     `)
@@ -89,6 +90,32 @@ router.get('/stats', requireAuth, async (req, res) => {
     const { GOLD_CAP_BASE, GOLD_CAP_PER_HEX, GOLD_CAP_PER_MINE } = await import('../config.js')
     row.gold_cap = GOLD_CAP_BASE + row.hex_count * GOLD_CAP_PER_HEX + row.mines * GOLD_CAP_PER_MINE
     row.next_tick_at = new Date(nextTickAt).toISOString()
+
+    // Income breakdown by country — group owned hexes + their mines by country
+    const hexRows = await pool.query(`
+      SELECT h.h3_index,
+        COALESCE(SUM(CASE WHEN b.type='mine' THEN 1 ELSE 0 END), 0)::integer AS mines
+      FROM hexes h
+      LEFT JOIN buildings b ON b.h3_index = h.h3_index
+      WHERE h.owner_id = $1
+      GROUP BY h.h3_index
+    `, [req.player.id])
+
+    const byCountry = new Map()
+    for (const { h3_index, mines } of hexRows.rows) {
+      const info = getCountry(h3_index)
+      const key = info ? info.name : 'Ocean / Islands'
+      const continent = info ? info.continent : 'Ocean'
+      if (!byCountry.has(key)) byCountry.set(key, { country: key, continent, hexes: 0, mines: 0 })
+      const entry = byCountry.get(key)
+      entry.hexes += 1
+      entry.mines += mines
+    }
+
+    row.income_by_country = Array.from(byCountry.values())
+      .map(e => ({ ...e, income: e.hexes + e.mines * 3 }))
+      .sort((a, b) => b.income - a.income)
+
     res.json(row)
   } catch { res.status(500).json({ error: 'Server error' }) }
 })

@@ -54,11 +54,12 @@ export default function AuthModal({ onAuth, onDismiss }) {
     setError('')
     setLoading(true)
     try {
-      const data = mode === 'login'
-        ? await api.login(username, password)
-        : await api.register(username, password, color)
+      const isNew = mode === 'register'
+      const data = isNew
+        ? await api.register(username, password, color)
+        : await api.login(username, password)
       localStorage.setItem('rw_token', data.token)
-      onAuth(data.player)
+      onAuth(data.player, isNew)
     } catch (err) {
       setError(err.message)
     } finally {

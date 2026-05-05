@@ -3,6 +3,7 @@ import { pool } from '../db.js'
 import { requireAuth } from '../auth.js'
 import { getIO } from '../socket.js'
 import { isOcean } from '../terrain.js'
+import { STARTING_TROOPS } from '../config.js'
 
 const router = Router()
 
@@ -69,6 +70,12 @@ router.post('/claim', requireAuth, async (req, res) => {
 
     if (isFirstHex) {
       await pool.query('UPDATE players SET capital_hex = $1 WHERE id = $2', [h3Index, req.player.id])
+      await pool.query(
+        `INSERT INTO troops (owner_id, h3_index, type, quantity)
+         VALUES ($1, $2, 'troop', $3)
+         ON CONFLICT (owner_id, h3_index, type) DO UPDATE SET quantity = troops.quantity + EXCLUDED.quantity`,
+        [req.player.id, h3Index, STARTING_TROOPS]
+      )
     }
 
     getIO()?.emit('hexes:update')

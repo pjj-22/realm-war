@@ -1,11 +1,8 @@
 import { pool } from './db.js'
 import { latLngToCell, gridDisk, gridDistance } from 'h3-js'
 import { getIO } from './socket.js'
-import {
-  STARTING_GOLD, STARTING_MANA,
-  TROOP_STATS, BUILDING_COSTS,
-  SLOT_BASE, SLOT_CAPITAL,
-} from './config.js'
+import { STARTING_GOLD, STARTING_MANA, STARTING_TROOPS, TROOP_STATS, BUILDING_COSTS, OCEAN_MARCH_MULTIPLIER } from './config.js'
+import { isOcean } from './terrain.js'
 
 const HEX_RES = 7
 
@@ -35,11 +32,12 @@ async function depositTroops(ownerId, hexIndex, type, quantity) {
   `, [ownerId, hexIndex, type, quantity])
 }
 
-// Find an unclaimed hex near a target coordinate
+// Find an unclaimed land hex near a target coordinate
 async function findFreeHex(centerHex) {
   for (let ring = 0; ring <= 15; ring++) {
     const candidates = gridDisk(centerHex, ring)
     for (const h of candidates) {
+      if (isOcean(h)) continue
       const row = await pool.query('SELECT owner_id FROM hexes WHERE h3_index=$1', [h])
       if (!row.rows[0]) return h
     }
@@ -68,7 +66,7 @@ export async function ensureBots() {
             [startHex, botId]
           )
           await pool.query('UPDATE players SET capital_hex=$1 WHERE id=$2', [startHex, botId])
-          await depositTroops(botId, startHex, 'troop', 20)
+          await depositTroops(botId, startHex, 'troop', STARTING_TROOPS)
           console.log(`[bot] Created ${def.username} at ${startHex}`)
         }
       }
@@ -109,22 +107,15 @@ async function botBuild(bot) {
     if (gold < 5) break
 
     const isCapital = h3_index === bot.capital_hex
-    const maxSlots = isCapital ? SLOT_CAPITAL : SLOT_BASE
 
-    const buildings = await pool.query('SELECT type FROM buildings WHERE h3_index=$1', [h3_index])
-    const types = buildings.rows.map(b => b.type)
-    if (types.length >= maxSlots) continue
+    // One building per hex — skip if already built
+    const existing = await pool.query('SELECT type FROM buildings WHERE h3_index=$1', [h3_index])
+    if (existing.rows.length >= 1) continue
 
-    // Build priority: barracks on capital, then mines everywhere, then fort
-    const buildOrder = isCapital
-      ? ['barracks', 'mine', 'fort']
-      : ['mine', 'fort']
+    // Priority: barracks on capital first, then mines on every hex, then forts
+    const buildOrder = isCapital ? ['barracks', 'mine', 'fort'] : ['mine', 'fort']
 
     for (const type of buildOrder) {
-      if (type === 'barracks' && (types.includes('barracks') || !isCapital)) continue
-      if (type === 'mine' && types.includes('mine')) continue
-      if (type === 'fort' && types.includes('fort')) continue
-
       const cost = BUILDING_COSTS[type]
       if (gold < cost.gold) continue
 
@@ -132,7 +123,7 @@ async function botBuild(bot) {
       await pool.query('INSERT INTO buildings (h3_index, type) VALUES ($1,$2)', [h3_index, type])
       gold -= cost.gold
       console.log(`[bot] ${bot.username} built ${type} at ${h3_index}`)
-      break // one build per hex
+      break
     }
   }
 }
@@ -244,13 +235,13 @@ async function botMarch(bot) {
     )
 
     const dist = Math.max(1, gridDistance(source.h3_index, target))
-    const arrivesAt = new Date(Date.now() + dist * TROOP_STATS.troop.marchMinutesPerHex * 60 * 1000)
+    const multiplier = isOcean(target) ? OCEAN_MARCH_MULTIPLIER : 1
+    const arrivesAt = new Date(Date.now() + dist * TROOP_STATS.troop.marchMinutesPerHex * multiplier * 60 * 1000)
     await pool.query(
       'INSERT INTO armies (owner_id, from_hex, to_hex, type, quantity, arrives_at, departed_at) VALUES ($1,$2,$3,$4,$5,$6,NOW())',
       [bot.id, source.h3_index, target, 'troop', sendQty, arrivesAt]
     )
     console.log(`[bot] ${bot.username} marching ${sendQty} troops → ${target}`)
-    break // one march action per bot per tick
   }
 }
 

@@ -1,15 +1,11 @@
 import { Router } from 'express'
 import { pool } from '../db.js'
 import { requireAuth } from '../auth.js'
-import { BUILDING_COSTS, UPGRADE_COST, UPGRADE_MINUTES, SLOT_BASE, SLOT_CAPITAL, SLOT_UPGRADE, MAX_UPGRADE_LEVEL, MAX_BARRACKS_PER_HEX } from '../config.js'
+import { BUILDING_COSTS, UPGRADE_COST, UPGRADE_MINUTES, MAX_UPGRADE_LEVEL } from '../config.js'
 
 const router = Router()
 const VALID_TYPES = Object.keys(BUILDING_COSTS)
-
-function slotCount(hex) {
-  const base = hex.capital_hex === hex.h3_index ? SLOT_CAPITAL : SLOT_BASE
-  return base + (hex.upgrade_level || 0) * SLOT_UPGRADE
-}
+const MAX_BUILDINGS_PER_HEX = 1
 
 // Get all buildings on a hex + slot info + upgrade status
 router.get('/:h3Index', async (req, res) => {
@@ -21,10 +17,9 @@ router.get('/:h3Index', async (req, res) => {
       pool.query('SELECT * FROM upgrade_queue WHERE h3_index=$1', [h3Index]),
     ])
     const hex = hexRow.rows[0] || { upgrade_level: 0, capital_hex: null }
-    const slots = slotCount({ ...hex, h3_index: h3Index })
     res.json({
       buildings: buildings.rows,
-      slots,
+      slots: MAX_BUILDINGS_PER_HEX,
       usedSlots: buildings.rows.length,
       upgradeLevel: hex.upgrade_level || 0,
       maxUpgradeLevel: MAX_UPGRADE_LEVEL,
@@ -52,15 +47,10 @@ router.post('/', requireAuth, async (req, res) => {
     const hex = hexRow.rows[0]
     const slots = slotCount({ ...hex, h3_index: h3Index })
 
-    // Check slot availability
+    // One building per hex
     const existing = await pool.query('SELECT type FROM buildings WHERE h3_index=$1', [h3Index])
-    if (existing.rows.length >= slots) {
-      return res.status(400).json({ error: `No slots available (${slots} total)` })
-    }
-
-    // Barracks limit per hex
-    if (type === 'barracks' && existing.rows.filter(b => b.type === 'barracks').length >= MAX_BARRACKS_PER_HEX) {
-      return res.status(400).json({ error: 'Max 1 barracks per hex' })
+    if (existing.rows.length >= MAX_BUILDINGS_PER_HEX) {
+      return res.status(400).json({ error: 'This hex already has a building' })
     }
 
     const cost = BUILDING_COSTS[type]

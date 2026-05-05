@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { api } from '../api/client'
 import { GoldIcon } from './Icons'
+import { useIsMobile } from '../hooks/useIsMobile'
 
 // ── constants ─────────────────────────────────────────────────────────────────
 
@@ -36,7 +37,7 @@ const UPGRADE_MINUTES = 0.5
 
 function Label({ children }) {
   return (
-    <div style={{ fontSize: 10, color: '#7a6890', letterSpacing: 3, textTransform: 'uppercase', marginBottom: 10 }}>
+    <div style={{ fontSize: 10, color: '#9a8060', letterSpacing: 3, textTransform: 'uppercase', marginBottom: 10 }}>
       {children}
     </div>
   )
@@ -47,9 +48,9 @@ function Dot({ color }) {
 }
 
 function Btn({ onClick, children, disabled, danger, muted }) {
-  const bg = danger ? 'rgba(140,30,30,0.25)' : muted ? 'rgba(255,255,255,0.03)' : 'rgba(80,50,160,0.22)'
-  const border = danger ? 'rgba(180,50,50,0.35)' : muted ? 'rgba(255,255,255,0.07)' : 'rgba(120,80,200,0.35)'
-  const color = danger ? '#c08080' : muted ? '#7a6890' : '#c4b498'
+  const bg = danger ? 'rgba(140,30,30,0.3)' : muted ? 'rgba(255,255,255,0.03)' : 'rgba(150,100,20,0.25)'
+  const border = danger ? 'rgba(180,50,50,0.4)' : muted ? 'rgba(255,255,255,0.07)' : 'rgba(200,150,40,0.4)'
+  const color = danger ? '#c08080' : muted ? '#7a6860' : '#d4b870'
   return (
     <button onClick={onClick} disabled={disabled} style={{
       padding: '7px 16px', background: bg,
@@ -148,6 +149,7 @@ function UpgradeBar({ completes_at, onExpire }) {
 // ── main component ────────────────────────────────────────────────────────────
 
 export default function BottomDrawer({ hex, player, onClaim, onLoginRequired, onBuild, onPlayerUpdate, onMarchStart, onClose }) {
+  const isMobile = useIsMobile()
   const isOwn    = !!(player && hex?.username === player.username)
   const isClaimed = !!hex?.owner
   const tabs = isOwn ? ['territory', 'buildings', 'military'] : ['territory']
@@ -156,7 +158,6 @@ export default function BottomDrawer({ hex, player, onClaim, onLoginRequired, on
   const [buildingData, setBuildingData] = useState(null)
   const [military, setMilitary] = useState(null)
   const [trainQty, setTrainQty] = useState(10)
-  const [dispatching, setDispatching] = useState(false)
   const [dispatchQty, setDispatchQty] = useState({ troop: 0 })
   const [busy, setBusy] = useState(false)
 
@@ -267,60 +268,61 @@ export default function BottomDrawer({ hex, player, onClaim, onLoginRequired, on
     finally { setBusy(false) }
   }
 
-  function openDispatch() {
-    setDispatchQty({ troop: troopMap.troop || 0 })
-    setDispatching(true)
-  }
-
   function handleDispatch() {
     const hasAny = Object.values(dispatchQty).some(n => n > 0)
     if (!hasAny) return
     onMarchStart?.(hex.h3, dispatchQty)
-    setDispatching(false)
   }
 
   // ── tab panels ───────────────────────────────────────────────
 
   function TerritoryPanel() {
+    const troops = Object.entries(troopMap).filter(([, n]) => n > 0)
     return (
-      <div style={{ display: 'flex', gap: 48 }}>
+      <div style={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', gap: isMobile ? 20 : 48 }}>
         <div style={{ flex: 1 }}>
-          <Label>Hex</Label>
-          <div style={{ marginBottom: 14 }}>
-            {isClaimed
-              ? <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <Dot color={hex.color} />
-                  <span style={{ fontSize: 18, color: '#d4c498' }}>{hex.username}</span>
-                </div>
-              : <span style={{ fontSize: 15, color: '#4a3a58' }}>Unclaimed Wildlands</span>
-            }
-          </div>
-          {isClaimed && (
-            <div style={{ display: 'flex', gap: 16, fontSize: 14, alignItems: 'center' }}>
-              <span style={{ display: 'flex', alignItems: 'center', gap: 5, color: '#c9902a' }}>
-                <GoldIcon size={13} /> +{income.gold} next harvest
-              </span>
-            </div>
-          )}
-        </div>
-        <div style={{ flex: 1 }}>
-          {isClaimed && Object.entries(troopMap).filter(([,n]) => n > 0).length > 0 && (
+          {isClaimed ? (
             <>
-              <Label>Garrison</Label>
-              <div style={{ display: 'flex', gap: 20, fontSize: 15, color: '#a090c0' }}>
-                {Object.entries(troopMap).filter(([,n]) => n > 0).map(([type, n]) => (
-                  <span key={type}>{n} {type}s</span>
-                ))}
+              <Label>Income</Label>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 18, color: '#c9902a', marginBottom: 16 }}>
+                <GoldIcon size={16} />
+                <span>+{income.gold}</span>
+                <span style={{ fontSize: 12, color: '#7a6040' }}>per harvest</span>
               </div>
+              {troops.length > 0 && (
+                <>
+                  <Label>Stationed</Label>
+                  <div style={{ fontSize: 18, color: '#d4b870' }}>
+                    {troops.map(([type, n]) => `${n} ${type}s`).join(' · ')}
+                  </div>
+                </>
+              )}
             </>
-          )}
-          {!isClaimed && (
-            <div style={{ paddingTop: 6 }}>
+          ) : (
+            <>
+              <div style={{ fontSize: 15, color: '#6a5838', marginBottom: 16 }}>Unclaimed territory</div>
               {!player
                 ? <Btn onClick={onLoginRequired} muted>Login to Claim</Btn>
                 : <Btn onClick={() => onClaim(hex.h3)}>Claim Territory</Btn>
               }
-            </div>
+            </>
+          )}
+        </div>
+        <div style={{ flex: 1 }}>
+          {isClaimed && buildingData?.buildings?.length > 0 && (
+            <>
+              <Label>Building</Label>
+              {buildingData.buildings.map(b => {
+                const def = BUILDING_DEFS.find(d => d.type === b.type)
+                return (
+                  <div key={b.id} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 15 }}>
+                    <Dot color={def?.color || '#888'} />
+                    <span style={{ color: '#d4c498' }}>{def?.label}</span>
+                    <span style={{ fontSize: 11, color: '#7a6040', marginLeft: 4 }}>{def?.effect}</span>
+                  </div>
+                )
+              })}
+            </>
           )}
         </div>
       </div>
@@ -329,18 +331,18 @@ export default function BottomDrawer({ hex, player, onClaim, onLoginRequired, on
 
   function BuildingsPanel() {
     if (!isOwn) return null
-    const buildable = buildingData
-      ? BUILDING_DEFS.filter(b => b.type !== 'barracks' || !buildingData.buildings.some(x => x.type === 'barracks'))
+    const hasBuilding = buildingData && buildingData.buildings.length > 0
+    const buildableTypes = buildingData
+      ? BUILDING_DEFS.filter(b => !buildingData.buildings.some(x => x.type === b.type))
       : []
-    const slotsLeft = buildingData ? buildingData.slots - buildingData.usedSlots : 0
 
     return (
-      <div style={{ display: 'flex', gap: 48 }}>
+      <div style={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', gap: isMobile ? 20 : 48 }}>
         {/* Built */}
         <div style={{ flex: 1 }}>
-          <Label>Built — {buildingData?.usedSlots ?? 0} / {buildingData?.slots ?? '?'} slots used</Label>
+          <Label>Building</Label>
           {builtGroups.length === 0 && (
-            <div style={{ fontSize: 13, color: '#6a5878' }}>No buildings constructed yet.</div>
+            <div style={{ fontSize: 13, color: '#6a5878' }}>No building constructed yet.</div>
           )}
           {builtGroups.map(g => {
             const def = BUILDING_DEFS.find(d => d.type === g.type)
@@ -350,12 +352,11 @@ export default function BottomDrawer({ hex, player, onClaim, onLoginRequired, on
                   <Dot color={def?.color || '#888'} />
                   <span style={{ fontSize: 14, color: '#c4b498', flex: 1 }}>
                     {def?.label}
-                    {g.ids.length > 1 && <span style={{ color: '#8070a0', marginLeft: 6 }}>×{g.ids.length}</span>}
                     {g.pending && <span style={{ color: '#7a6890', marginLeft: 6, fontSize: 12 }}>building…</span>}
                   </span>
                   <span style={{ fontSize: 11, color: '#8070a0' }}>{def?.effect}</span>
                   {!g.pending && (
-                    <button onClick={() => handleDemolish(g.ids[g.ids.length - 1])} disabled={busy}
+                    <button onClick={() => handleDemolish(g.ids[0])} disabled={busy}
                       style={{ background: 'none', border: 'none', color: '#7a4848', cursor: 'pointer', fontSize: 16, lineHeight: 1, padding: '0 4px' }}>
                       ×
                     </button>
@@ -369,13 +370,13 @@ export default function BottomDrawer({ hex, player, onClaim, onLoginRequired, on
           })}
         </div>
 
-        {/* Build + Upgrade */}
+        {/* Build */}
         <div style={{ flex: 1 }}>
-          {buildingData && slotsLeft > 0 && (
+          {!hasBuilding && buildableTypes.length > 0 && (
             <>
-              <Label>Build · {slotsLeft} slot{slotsLeft !== 1 ? 's' : ''} free</Label>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 18 }}>
-                {buildable.map(b => (
+              <Label>Build</Label>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {buildableTypes.map(b => (
                   <button key={b.type} onClick={() => handleBuild(b.type)} disabled={busy}
                     style={{
                       display: 'flex', alignItems: 'flex-start', gap: 10, textAlign: 'left',
@@ -399,26 +400,10 @@ export default function BottomDrawer({ hex, player, onClaim, onLoginRequired, on
               </div>
             </>
           )}
-          {buildingData && slotsLeft === 0 && (
-            <div style={{ fontSize: 12, color: '#6a5878', marginBottom: 14 }}>
-              All building slots are filled. Upgrade this hex to unlock more slots.
+          {hasBuilding && (
+            <div style={{ fontSize: 12, color: '#6a5878' }}>
+              Demolish the current building to build a different one.
             </div>
-          )}
-          {buildingData && (
-            <>
-              <Label>Hex Level {buildingData.upgradeLevel} / {buildingData.maxUpgradeLevel}</Label>
-              <div style={{ fontSize: 11, color: '#6a5878', marginBottom: 8, lineHeight: 1.5 }}>
-                Upgrading a hex expands its building capacity by 2 slots, letting you stack more mines, towers, or wells on prime territory.
-              </div>
-              {buildingData.upgrading
-                ? <UpgradeBar completes_at={buildingData.upgrading.completes_at} onExpire={loadBuildings} />
-                : buildingData.upgradeLevel < buildingData.maxUpgradeLevel
-                  ? <Btn onClick={handleUpgrade} disabled={busy}>
-                      Upgrade — <GoldIcon size={11} /> {UPGRADE_COST.gold} · +2 slots
-                    </Btn>
-                  : <span style={{ fontSize: 12, color: '#6a5878' }}>Max level reached — no further upgrades available.</span>
-              }
-            </>
           )}
         </div>
       </div>
@@ -430,135 +415,66 @@ export default function BottomDrawer({ hex, player, onClaim, onLoginRequired, on
 
   function MilitaryPanel() {
     if (!isOwn) return null
-    const totalReady = Object.values(troopMap).reduce((s, n) => s + n, 0)
+    const ready = troopMap.troop || 0
+    const sendQty = Math.min(dispatchQty.troop || ready, ready)
 
     return (
-      <div style={{ display: 'flex', gap: 48 }}>
+      <div style={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', gap: isMobile ? 20 : 48 }}>
 
-        {/* Left: garrison + dispatch */}
+        {/* Left: garrison + march */}
         <div style={{ flex: 1 }}>
           <Label>Garrison</Label>
-          {TROOP_DEFS.map(t => (
-            <div key={t.type} style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
-              <span style={{ fontSize: 14, color: '#c4b498', flex: 1 }}>{t.label}</span>
-              <span style={{ fontSize: 16, color: (troopMap[t.type] || 0) > 0 ? '#a090c0' : '#6a5878', minWidth: 36, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
-                {troopMap[t.type] || 0}
-              </span>
-            </div>
-          ))}
-
-          {/* Dispatch allocator */}
-          {dispatching ? (
-            <div style={{ marginTop: 14, padding: '12px 14px', background: 'rgba(80,40,140,0.12)', border: '1px solid rgba(120,80,200,0.2)', borderRadius: 6 }}>
-              <Label>Select how many to send</Label>
-              {TROOP_DEFS.map(t => {
-                const have = troopMap[t.type] || 0
-                const sending = dispatchQty[t.type] || 0
-                return (
-                  <div key={t.type} style={{ marginBottom: 10 }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 5 }}>
-                      <span style={{ fontSize: 13, color: '#8070a0' }}>{t.label}</span>
-                      <span style={{ fontSize: 12, color: sending > 0 ? '#c4b498' : '#6a5878' }}>
-                        {sending} <span style={{ color: '#6a5878' }}>/ {have}</span>
-                      </span>
-                    </div>
-                    <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-                      <button
-                        onClick={() => setDispatchQty(prev => ({ ...prev, [t.type]: 0 }))}
-                        disabled={have === 0}
-                        style={{
-                          padding: '3px 8px', borderRadius: 3, fontSize: 11, fontFamily: 'Georgia, serif',
-                          cursor: have === 0 ? 'default' : 'pointer',
-                          background: sending === 0 ? 'rgba(120,80,200,0.25)' : 'rgba(255,255,255,0.04)',
-                          border: `1px solid ${sending === 0 ? 'rgba(120,80,200,0.5)' : 'rgba(255,255,255,0.09)'}`,
-                          color: sending === 0 ? '#c4b498' : '#7a6890',
-                        }}>0</button>
-                      {DISPATCH_PRESETS.map(n => (
-                        <button key={n}
-                          onClick={() => setDispatchQty(prev => ({ ...prev, [t.type]: Math.min(have, n) }))}
-                          disabled={have === 0}
-                          style={{
-                            padding: '3px 8px', borderRadius: 3, fontSize: 11, fontFamily: 'Georgia, serif',
-                            cursor: have === 0 ? 'default' : 'pointer',
-                            background: sending === Math.min(have, n) && sending !== 0 ? 'rgba(120,80,200,0.25)' : 'rgba(255,255,255,0.04)',
-                            border: `1px solid ${sending === Math.min(have, n) && sending !== 0 ? 'rgba(120,80,200,0.5)' : 'rgba(255,255,255,0.09)'}`,
-                            color: have >= n ? '#c4b498' : '#7a6890',
-                            opacity: have === 0 ? 0.4 : 1,
-                          }}>{n}</button>
-                      ))}
-                      <button
-                        onClick={() => setDispatchQty(prev => ({ ...prev, [t.type]: have }))}
-                        disabled={have === 0}
-                        style={{
-                          padding: '3px 8px', borderRadius: 3, fontSize: 11, fontFamily: 'Georgia, serif',
-                          cursor: have === 0 ? 'default' : 'pointer',
-                          background: sending === have && have > 0 ? 'rgba(120,80,200,0.25)' : 'rgba(255,255,255,0.04)',
-                          border: `1px solid ${sending === have && have > 0 ? 'rgba(120,80,200,0.5)' : 'rgba(255,255,255,0.09)'}`,
-                          color: have > 0 ? '#c4b498' : '#7a6890',
-                          opacity: have === 0 ? 0.4 : 1,
-                        }}>All</button>
-                    </div>
-                  </div>
-                )
-              })}
-              <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
-                <Btn onClick={() => setDispatching(false)} muted>Cancel</Btn>
-                <Btn onClick={handleDispatch} disabled={!Object.values(dispatchQty).some(n => n > 0)}>
-                  Select Target on Map →
-                </Btn>
-              </div>
-            </div>
-          ) : totalReady > 0 && (
-            <div style={{ marginTop: 12 }}>
-              <Btn onClick={openDispatch} danger>Dispatch Army</Btn>
-            </div>
-          )}
-        </div>
-
-        {/* Right: train + queues */}
-        <div style={{ flex: 1 }}>
-          <Label>Train</Label>
-          <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginBottom: 14 }}>
-            {TRAIN_PRESETS.map(n => (
-              <button key={n} onClick={() => setTrainQty(n)} style={{
-                padding: '4px 10px', borderRadius: 3, fontSize: 12, fontFamily: 'Georgia, serif', cursor: 'pointer',
-                background: trainQty === n ? 'rgba(120,80,200,0.3)' : 'rgba(255,255,255,0.04)',
-                border: `1px solid ${trainQty === n ? 'rgba(120,80,200,0.6)' : 'rgba(255,255,255,0.09)'}`,
-                color: trainQty === n ? '#d4c8f0' : '#6a5880',
-              }}>{n}</button>
-            ))}
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 16 }}>
+            <span style={{ fontSize: 28, color: ready > 0 ? '#d4b870' : '#6a5848', fontVariantNumeric: 'tabular-nums' }}>{ready}</span>
+            <span style={{ fontSize: 13, color: '#9a8060' }}>troops ready</span>
           </div>
-          {TROOP_DEFS.map(t => (
-            <div key={t.type} style={{ marginBottom: 12, padding: '8px 10px', background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 4 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-                <span style={{ fontSize: 14, color: '#c4b498', flex: 1 }}>{t.label}</span>
-                <span style={{ fontSize: 11, color: '#6a5878', display: 'flex', alignItems: 'center', gap: 3 }}>
-                  <GoldIcon size={10} />{t.goldCost} · {t.time}
-                </span>
-                <Btn onClick={() => handleTrain(t.type)} disabled={busy}>
-                  Train {trainQty}
-                </Btn>
-              </div>
-              <div style={{ fontSize: 11, color: '#6a5878', lineHeight: 1.4 }}>{t.desc}</div>
-            </div>
-          ))}
 
-          {military?.training?.length > 0 && (
-            <div style={{ marginTop: 14 }}>
-              <Label>Training Queue</Label>
-              {military.training.map(j => <TrainBar key={j.id} job={j} />)}
+          {ready > 0 && (
+            <>
+              <Label>Send how many</Label>
+              <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginBottom: 12 }}>
+                {DISPATCH_PRESETS.map(n => (
+                  <button key={n}
+                    onClick={() => setDispatchQty({ troop: Math.min(ready, n) })}
+                    style={{
+                      padding: '4px 10px', borderRadius: 3, fontSize: 12, fontFamily: 'Georgia, serif', cursor: 'pointer',
+                      background: sendQty === Math.min(ready, n) ? 'rgba(180,130,30,0.3)' : 'rgba(255,255,255,0.04)',
+                      border: `1px solid ${sendQty === Math.min(ready, n) ? 'rgba(200,150,40,0.6)' : 'rgba(255,255,255,0.09)'}`,
+                      color: ready >= n ? '#d4b870' : '#6a5848',
+                      opacity: ready === 0 ? 0.4 : 1,
+                    }}>{n}</button>
+                ))}
+                <button
+                  onClick={() => setDispatchQty({ troop: ready })}
+                  style={{
+                    padding: '4px 10px', borderRadius: 3, fontSize: 12, fontFamily: 'Georgia, serif', cursor: 'pointer',
+                    background: sendQty === ready ? 'rgba(180,130,30,0.3)' : 'rgba(255,255,255,0.04)',
+                    border: `1px solid ${sendQty === ready ? 'rgba(200,150,40,0.6)' : 'rgba(255,255,255,0.09)'}`,
+                    color: '#d4b870',
+                  }}>All</button>
+              </div>
+              <Btn onClick={handleDispatch} danger>
+                March {sendQty} → Click target hex
+              </Btn>
+            </>
+          )}
+
+          {ready === 0 && (
+            <div style={{ fontSize: 12, color: '#6a5848' }}>
+              No troops stationed here. Train some first.
             </div>
           )}
+
           {military?.armies?.length > 0 && (
-            <div style={{ marginTop: 14 }}>
+            <div style={{ marginTop: 16 }}>
               <Label>Marching</Label>
               {military.armies.map(a => {
                 const pct = Math.min(100, ((Date.now() - new Date(a.departed_at)) / (new Date(a.arrives_at) - new Date(a.departed_at))) * 100)
                 const mins = Math.max(0, Math.ceil((new Date(a.arrives_at) - Date.now()) / 60000))
                 return (
                   <div key={a.id} style={{ marginBottom: 9 }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: '#6a5878', marginBottom: 3 }}>
-                      <span>{a.quantity} {a.type}s</span>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: '#9a8060', marginBottom: 3 }}>
+                      <span>{a.quantity} troops</span>
                       <span>{mins}m remaining</span>
                     </div>
                     <ProgressBar pct={pct} color="linear-gradient(90deg, #802020, #c04040)" />
@@ -568,51 +484,114 @@ export default function BottomDrawer({ hex, player, onClaim, onLoginRequired, on
             </div>
           )}
         </div>
+
+        {/* Right: train + queues */}
+        <div style={{ flex: 1 }}>
+          <Label>Train Troops · <GoldIcon size={10} /> 1 each</Label>
+          <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginBottom: 12 }}>
+            {TRAIN_PRESETS.map(n => (
+              <button key={n} onClick={() => setTrainQty(n)} style={{
+                padding: '4px 10px', borderRadius: 3, fontSize: 12, fontFamily: 'Georgia, serif', cursor: 'pointer',
+                background: trainQty === n ? 'rgba(180,130,30,0.3)' : 'rgba(255,255,255,0.04)',
+                border: `1px solid ${trainQty === n ? 'rgba(200,150,40,0.6)' : 'rgba(255,255,255,0.09)'}`,
+                color: trainQty === n ? '#d4b870' : '#6a5848',
+              }}>{n}</button>
+            ))}
+          </div>
+          <Btn onClick={() => handleTrain('troop')} disabled={busy}>
+            Train {trainQty}
+          </Btn>
+          {!buildingData?.buildings?.some(b => b.type === 'barracks') && (
+            <div style={{ fontSize: 11, color: '#8a6040', marginTop: 8 }}>
+              Build a Barracks first to train troops here.
+            </div>
+          )}
+
+          {military?.training?.length > 0 && (
+            <div style={{ marginTop: 16 }}>
+              <Label>Training Queue</Label>
+              {military.training.map(j => <TrainBar key={j.id} job={j} />)}
+            </div>
+          )}
+        </div>
       </div>
     )
   }
 
   // ── render ───────────────────────────────────────────────────
 
+  const [collapsed, setCollapsed] = useState(false)
+  const ownerLabel = isClaimed ? hex.username : 'Wildlands'
+
   return (
     <div style={{
-      position: 'absolute', bottom: 0, left: 0, right: 0,
-      background: 'rgba(5,3,14,0.97)',
-      borderTop: '1px solid rgba(100,70,30,0.5)',
+      position: 'absolute', bottom: 0,
+      left: isMobile ? 0 : '50%',
+      transform: isMobile ? 'none' : 'translateX(-50%)',
+      width: isMobile ? '100vw' : 'min(780px, 96vw)',
+      background: 'linear-gradient(180deg, rgba(18,12,4,0.98) 0%, rgba(10,7,2,0.99) 100%)',
+      border: '1px solid rgba(160,110,30,0.45)',
+      borderBottom: 'none',
+      borderRadius: isMobile ? '10px 10px 0 0' : '14px 14px 0 0',
+      boxShadow: '0 -4px 40px rgba(0,0,0,0.7), inset 0 1px 0 rgba(200,150,40,0.15)',
       fontFamily: 'Georgia, serif',
       color: '#c4b498',
       zIndex: 20,
     }}>
-      {/* Tab bar */}
-      <div style={{
-        display: 'flex', alignItems: 'stretch',
-        borderBottom: '1px solid rgba(255,255,255,0.05)',
-      }}>
-        {tabs.map(t => (
-          <button key={t} onClick={() => setTab(t)} style={{
-            padding: '11px 22px', background: 'none', border: 'none',
-            borderBottom: tab === t ? '2px solid #c9902a' : '2px solid transparent',
-            color: tab === t ? '#d4c498' : '#7a6890',
-            cursor: 'pointer', fontSize: 11, letterSpacing: 3,
-            textTransform: 'uppercase', fontFamily: 'Georgia, serif',
-          }}>
-            {t}
-          </button>
-        ))}
-        <div style={{ flex: 1 }} />
-        <span style={{ fontSize: 10, color: '#2a1a38', alignSelf: 'center', marginRight: 12 }}>{hex.h3}</span>
-        <button onClick={onClose} style={{
-          padding: '0 18px', background: 'none', border: 'none',
-          color: '#7a6890', cursor: 'pointer', fontSize: 22,
-        }}>×</button>
+      {/* Header — always visible */}
+      <div
+        onClick={() => setCollapsed(c => !c)}
+        style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          padding: isMobile ? '12px 16px 12px 18px' : '13px 20px 13px 28px',
+          cursor: 'pointer',
+          borderBottom: collapsed ? 'none' : '1px solid rgba(160,110,30,0.15)',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          {isClaimed && <Dot color={hex.color} />}
+          <span style={{ fontSize: 16, color: isClaimed ? '#e8d090' : '#5a4a28', letterSpacing: 2 }}>
+            {ownerLabel}
+          </span>
+          {hex.capital_hex === hex.h3 && (
+            <span style={{ fontSize: 10, color: '#b08030', letterSpacing: 2, textTransform: 'uppercase', border: '1px solid rgba(160,110,30,0.4)', borderRadius: 3, padding: '1px 6px' }}>Capital</span>
+          )}
+        </div>
+        <span style={{ fontSize: 13, color: '#5a4828', userSelect: 'none' }}>{collapsed ? '▲' : '▼'}</span>
       </div>
 
-      {/* Content */}
-      <div style={{ padding: '18px 32px 20px', overflowY: 'auto', maxHeight: '36vh' }}>
-        {tab === 'territory' && <TerritoryPanel />}
-        {tab === 'buildings' && <BuildingsPanel />}
-        {tab === 'military'  && <MilitaryPanel />}
-      </div>
+      {/* Tabs + content — hidden when collapsed */}
+      {!collapsed && (
+        <>
+          <div style={{
+            display: 'flex', alignItems: 'flex-end', gap: 2,
+            padding: isMobile ? '8px 16px 0' : '10px 28px 0',
+            borderBottom: '1px solid rgba(160,110,30,0.2)',
+          }}>
+            {tabs.map(t => (
+              <button key={t} onClick={() => setTab(t)} style={{
+                padding: isMobile ? '10px 16px 12px' : '8px 20px 10px',
+                background: tab === t ? 'rgba(160,110,30,0.12)' : 'none',
+                border: tab === t ? '1px solid rgba(160,110,30,0.3)' : '1px solid transparent',
+                borderBottom: tab === t ? '1px solid rgba(18,12,4,0.98)' : '1px solid transparent',
+                borderRadius: '6px 6px 0 0',
+                color: tab === t ? '#e0c070' : '#6a5838',
+                cursor: 'pointer', fontSize: 11, letterSpacing: 3,
+                textTransform: 'uppercase', fontFamily: 'Georgia, serif',
+                marginBottom: -1,
+              }}>
+                {t}
+              </button>
+            ))}
+          </div>
+
+          <div style={{ padding: isMobile ? '16px 16px 20px' : '24px 32px 28px', overflowY: 'auto', height: isMobile ? '48vh' : '36vh' }}>
+            {tab === 'territory' && <TerritoryPanel />}
+            {tab === 'buildings' && <BuildingsPanel />}
+            {tab === 'military'  && <MilitaryPanel />}
+          </div>
+        </>
+      )}
     </div>
   )
 }

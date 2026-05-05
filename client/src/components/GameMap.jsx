@@ -10,6 +10,7 @@ import EventFeed from './EventFeed'
 import BattlePanel from './BattlePanel'
 import BattleParticles from './BattleParticles'
 import { useResourceTicker } from '../hooks/useResourceTicker'
+import { useIsMobile } from '../hooks/useIsMobile'
 import { api } from '../api/client'
 import { GoldIcon } from './Icons'
 
@@ -159,7 +160,69 @@ function HarvestCountdown({ nextTickAt, onExpire }) {
   )
 }
 
-export default function GameMap({ player, onLoginRequired, onPlayerUpdate }) {
+function GoldIncomeTooltip({ hexCount, mines, incomeByCountry }) {
+  const [hover, setHover] = useState(false)
+  const total = hexCount + mines * 3
+  return (
+    <span
+      style={{ fontSize: 11, color: '#6a5848', marginLeft: 2, cursor: 'default', position: 'relative' }}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+    >
+      +{total}g
+      {hover && (
+        <div style={{
+          position: 'absolute', top: '100%', left: '50%', transform: 'translateX(-50%)',
+          marginTop: 6,
+          background: 'rgba(10,7,2,0.97)', border: '1px solid rgba(160,110,30,0.45)',
+          borderRadius: 6, padding: '10px 14px',
+          fontSize: 12, color: '#c4b498', fontFamily: 'Georgia, serif',
+          boxShadow: '0 4px 20px rgba(0,0,0,0.6)',
+          zIndex: 100, minWidth: 200, maxWidth: 280,
+        }}>
+          <div style={{ color: '#9a8060', fontSize: 10, letterSpacing: 2, textTransform: 'uppercase', marginBottom: 8 }}>Income per harvest</div>
+
+          {incomeByCountry?.length > 0 ? (
+            <>
+              {incomeByCountry.map(e => (
+                <div key={e.country} style={{ display: 'flex', justifyContent: 'space-between', gap: 16, marginBottom: 4, lineHeight: 1.6 }}>
+                  <span style={{ color: '#a09070' }}>
+                    {e.country}
+                    {e.mines > 0 && <span style={{ color: '#6a5838', fontSize: 10 }}> ({e.hexes}h+{e.mines}m)</span>}
+                    {e.mines === 0 && <span style={{ color: '#6a5838', fontSize: 10 }}> ({e.hexes}h)</span>}
+                  </span>
+                  <span style={{ color: '#d4b870', flexShrink: 0 }}>+{e.income}g</span>
+                </div>
+              ))}
+              <div style={{ borderTop: '1px solid rgba(160,110,30,0.2)', marginTop: 6, paddingTop: 6, display: 'flex', justifyContent: 'space-between', color: '#e0c070' }}>
+                <span>Total</span>
+                <span>+{total}g</span>
+              </div>
+            </>
+          ) : (
+            <>
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 16, marginBottom: 3 }}>
+                <span>{hexCount} hexes × 1g</span>
+                <span style={{ color: '#d4b870' }}>{hexCount}g</span>
+              </div>
+              {mines > 0 && (
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 16, marginBottom: 3 }}>
+                  <span>{mines} mine{mines !== 1 ? 's' : ''} × 3g</span>
+                  <span style={{ color: '#d4b870' }}>{mines * 3}g</span>
+                </div>
+              )}
+              <div style={{ borderTop: '1px solid rgba(160,110,30,0.2)', marginTop: 4, paddingTop: 4, display: 'flex', justifyContent: 'space-between', color: '#e0c070' }}>
+                <span>Total</span><span>+{total}g</span>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+    </span>
+  )
+}
+
+export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onShowHelp }) {
   const mapContainer = useRef(null)
   const map = useRef(null)
   const claimedRef = useRef({})
@@ -174,6 +237,7 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate }) {
   const ownedHexCount = Object.values(claimedRef.current).filter(h => h.owner_id === player?.id).length
 
   const { display: resources } = useResourceTicker(player, ownedHexCount)
+  const isMobile = useIsMobile()
 
   // Load all claimed hexes from server
   const loadClaimed = useCallback(async () => {
@@ -594,18 +658,20 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate }) {
         display: 'flex', alignItems: 'center', gap: 0,
         fontFamily: 'Georgia, serif', zIndex: 20, padding: '0 16px',
       }}>
-        {/* Title */}
-        <span style={{ fontSize: 13, letterSpacing: 5, color: '#7a6890', textTransform: 'uppercase', marginRight: 20, userSelect: 'none' }}>
-          Realm War
-        </span>
+        {/* Title — hidden on mobile */}
+        {!isMobile && (
+          <span style={{ fontSize: 13, letterSpacing: 5, color: '#7a6890', textTransform: 'uppercase', marginRight: 20, userSelect: 'none' }}>
+            Realm War
+          </span>
+        )}
 
         {/* Search */}
         {searchOpen ? (
           <form onSubmit={handleSearch} style={{ display: 'flex', gap: 5 }}>
             <input autoFocus value={searchQuery} onChange={e => setSearchQuery(e.target.value)}
-              placeholder="City, country or hex ID…"
+              placeholder={isMobile ? 'City or hex…' : 'City, country or hex ID…'}
               style={{
-                padding: '4px 10px', width: 200,
+                padding: '4px 10px', width: isMobile ? 140 : 200,
                 background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.12)',
                 borderRadius: 4, color: '#c4b498', fontFamily: 'Georgia, serif', fontSize: 13, outline: 'none',
               }}
@@ -623,7 +689,7 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate }) {
 
         {/* Resources */}
         {player && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 20, marginRight: 20 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: isMobile ? 10 : 20, marginRight: isMobile ? 8 : 20 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
               <GoldIcon size={14} />
               <span style={{ fontSize: 15, color: goldOverCap ? '#e8a020' : '#c9902a', fontWeight: 'bold' }}>
@@ -631,18 +697,20 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate }) {
               </span>
               {goldCap !== null && (
                 <span style={{ fontSize: 11, color: goldOverCap ? '#8a5818' : '#7a6890' }}>
-                  {goldOverCap ? '⚠ FULL' : `/ ${goldCap}`}
+                  {goldOverCap ? '⚠' : `/ ${goldCap}`}
                 </span>
               )}
-              {stats && <span style={{ fontSize: 11, color: '#6a5878', marginLeft: 2 }}>+{(stats.hex_count || 0) + (stats.mines || 0) * 3}</span>}
+              {stats && !isMobile && <GoldIncomeTooltip hexCount={stats.hex_count || 0} mines={stats.mines || 0} incomeByCountry={stats.income_by_country} />}
             </div>
             {stats?.next_tick_at && <HarvestCountdown nextTickAt={stats.next_tick_at} onExpire={loadStats} />}
-            <span style={{ fontSize: 13, color: '#7a6890' }}>▲ {stats?.hex_count ?? ownedHexCount}</span>
-            <button
-              onClick={async () => { try { const r = await api.devRefill(); onPlayerUpdate?.({ ...player, gold: r.gold }) } catch {} }}
-              style={{ padding: '3px 10px', background: 'rgba(30,60,30,0.4)', border: '1px solid rgba(50,100,50,0.4)', borderRadius: 4, color: '#70a870', cursor: 'pointer', fontSize: 11, letterSpacing: 1, fontFamily: 'Georgia, serif' }}>
-              Refill
-            </button>
+            {!isMobile && <span style={{ fontSize: 13, color: '#7a6890' }}>▲ {stats?.hex_count ?? ownedHexCount}</span>}
+            {!isMobile && (
+              <button
+                onClick={async () => { try { const r = await api.devRefill(); onPlayerUpdate?.({ ...player, gold: r.gold }) } catch {} }}
+                style={{ padding: '3px 10px', background: 'rgba(30,60,30,0.4)', border: '1px solid rgba(50,100,50,0.4)', borderRadius: 4, color: '#70a870', cursor: 'pointer', fontSize: 11, letterSpacing: 1, fontFamily: 'Georgia, serif' }}>
+                Refill
+              </button>
+            )}
           </div>
         )}
 
@@ -650,18 +718,34 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate }) {
         {player ? (
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <EventFeed />
-            <span style={{ fontSize: 13, color: '#c4b498' }}>{player.username}</span>
+            {!isMobile && <span style={{ fontSize: 13, color: '#c4b498' }}>{player.username}</span>}
             <span style={{ width: 10, height: 10, borderRadius: '50%', background: player.color, display: 'inline-block' }} />
           </div>
         ) : (
           <button onClick={onLoginRequired} style={{
-            padding: '6px 16px', background: 'rgba(80,50,160,0.3)', border: '1px solid rgba(120,80,200,0.4)',
-            borderRadius: 4, color: '#c4b498', cursor: 'pointer', fontSize: 12, letterSpacing: 2,
+            padding: isMobile ? '6px 10px' : '6px 16px',
+            background: 'rgba(80,50,160,0.3)', border: '1px solid rgba(120,80,200,0.4)',
+            borderRadius: 4, color: '#c4b498', cursor: 'pointer',
+            fontSize: isMobile ? 11 : 12, letterSpacing: isMobile ? 1 : 2,
             textTransform: 'uppercase', fontFamily: 'Georgia, serif',
           }}>
-            Login / Register
+            {isMobile ? 'Login' : 'Login / Register'}
           </button>
         )}
+
+        {/* Help button */}
+        <button
+          onClick={onShowHelp}
+          title="How to Play"
+          style={{
+            marginLeft: 8, width: isMobile ? 34 : 28, height: isMobile ? 34 : 28,
+            background: 'rgba(80,40,160,0.25)', border: '1px solid #4a3a7a',
+            borderRadius: '50%', color: '#7a6a9a', cursor: 'pointer',
+            fontSize: 14, fontFamily: 'Georgia, serif', lineHeight: 1,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+          }}>
+          ?
+        </button>
       </div>
 
       {/* ── Armies HUD (below top bar) ──────────────────────────── */}
@@ -676,7 +760,10 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate }) {
       )}
 
       {/* ── Leaderboard ─────────────────────────────────────────── */}
-      <LeaderboardPanel player={player} />
+      <LeaderboardPanel
+        player={player}
+        onFlyTo={(lng, lat) => map.current?.flyTo({ center: [lng, lat], zoom: 9, speed: 1.5 })}
+      />
 
       {/* ── Zoom hint ───────────────────────────────────────────── */}
       {zoom < 5 && (
@@ -691,11 +778,15 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate }) {
       {/* ── March mode banner ───────────────────────────────────── */}
       {marchMode && (
         <div style={{
-          position: 'absolute', top: 56, left: '50%', transform: 'translateX(-50%)',
+          position: 'absolute', top: 56,
+          left: isMobile ? 8 : '50%',
+          right: isMobile ? 8 : 'auto',
+          transform: isMobile ? 'none' : 'translateX(-50%)',
           background: 'rgba(80,20,20,0.94)', border: '1px solid rgba(180,50,50,0.5)',
-          borderRadius: 6, padding: '9px 22px',
-          color: '#d49090', fontFamily: 'Georgia, serif', fontSize: 13, letterSpacing: 2,
+          borderRadius: 6, padding: isMobile ? '10px 16px' : '9px 22px',
+          color: '#d49090', fontFamily: 'Georgia, serif', fontSize: isMobile ? 12 : 13, letterSpacing: 2,
           textTransform: 'uppercase', display: 'flex', alignItems: 'center', gap: 16,
+          justifyContent: isMobile ? 'space-between' : 'flex-start',
         }}>
           <span>
             {marchMode.battleMode && !marchMode.fromHex

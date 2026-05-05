@@ -84,13 +84,13 @@ export default function EventFeed() {
 
       {open && (
         <div style={{
-          position: 'absolute',
-          top: 'calc(100% + 6px)',
-          right: 0,
+          position: 'fixed',
+          top: 54,
+          right: 8,
           background: 'rgba(8,6,20,0.97)',
           border: '1px solid rgba(255,255,255,0.1)',
           borderRadius: 6,
-          width: 300,
+          width: 'min(300px, calc(100vw - 16px))',
           maxHeight: 380,
           display: 'flex',
           flexDirection: 'column',
