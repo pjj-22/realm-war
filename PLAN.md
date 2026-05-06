@@ -1,147 +1,88 @@
-# Realm War — Build Plan
+# Realm War — Plan
 
-## Tech Stack
+## Stack
 
-| Layer | Technology | Why |
-|-------|-----------|-----|
-| Frontend | React (web) | Runs in browser locally, wrappable for all platforms |
-| Map | Mapbox GL JS | Web-native map rendering, hex grid support |
-| Backend | Node.js + WebSockets | Real-time army movements and combat |
-| Database | PostgreSQL + PostGIS | Geospatial queries for hex lookups |
-| Real-time | Socket.io | Player notifications, live map updates |
-| Hosting | AWS / GCP | Scale as player base grows |
-
----
-
-## Platform Targets
-
-| Platform | How | When |
-|----------|-----|------|
-| Browser | React app directly | From day one |
-| PC / Mac / Linux | Electron or Tauri wrapper | Pre-launch |
-| Steam | Distribute the Electron/Tauri build | Launch |
-| Mobile (iOS/Android) | Capacitor wrapper or React Native port | Post-launch |
-
-One codebase. Wrap differently per platform. No rewrites.
+| Layer | Technology |
+|-------|-----------|
+| Frontend | React + Mapbox GL JS |
+| Backend | Node.js + Express |
+| Real-time | Socket.io |
+| Database | PostgreSQL + PostGIS |
+| Hex grid | H3 (Uber) |
 
 ---
 
-## Phases
+## What's Built
 
-### Phase 1 — Map & World (Week 1-2)
-Get the world on screen with a playable hex grid.
+### Core game loop (complete)
+- Real-world Mapbox map with H3 hex grid overlay (viewport culling — only loads visible hexes)
+- Ocean hexes blocked from capture and cost 10x march time
+- JWT auth (register/login, 7-day token)
+- Territory claiming (adjacent hexes only, or march troops there first)
+- First claimed hex becomes capital
+- Gold economy: 1g/hex + 3g/mine per tick (30s dev / 10min prod)
+- Gold cap: 500 + 100/hex + 50/mine
+- Buildings: Mine (+3g/harvest, 5g), Barracks (halves training, 10g), Fort (+40% defense, 10g) — one per hex
+- Hex upgrades: in DB and queue, but upgrade_level has no gameplay effect yet
+- Single troop type trained per hex; Barracks halves training time
+- March system: troops move hex-by-hex in real time, ocean costs 10x
+- Deterministic combat: 15% damage per round, forts add 40% defender multiplier, winner takes hex
+- Capital capture resets capital_hex and fires alert
+- 6 bots (BOT_Iron, BOT_Storm, etc.) that expand, build, train, and attack
+- Events feed (battle results, hex losses, training complete)
+- Leaderboard (top 10 by hex count + troops)
+- Player stats broken down by country via countries.js + topojson
+- HelpModal, mobile-responsive layout (useIsMobile hook)
+- Full dev mode (fast ticks, cheap units, 9999 gold)
 
-- [ ] Project setup (React + Mapbox GL JS)
-- [ ] Render real-world map
-- [ ] Overlay ~10km hex grid on world map
-- [ ] Mark ocean hexes as uncapturable
-- [ ] Basic hex selection and info panel
-- [ ] Apply terrain flavor (mountains, desert, coastline) cosmetically
-
----
-
-### Phase 2 — Player & Territory (Week 2-3)
-Players exist and can own hexes.
-
-- [ ] Auth (sign up / login)
-- [ ] Player profile (name, faction color, capital)
-- [ ] Starting hex selection with location suggestion
-- [ ] Home region bonus zone (25 hex radius)
-- [ ] Claim adjacent wildland hexes
-- [ ] Hex ownership displayed on map
-- [ ] Basic resource generation (gold + mana per hex per hour)
-
----
-
-### Phase 3 — Economy & Buildings (Week 3-4)
-Players can build and generate resources.
-
-- [ ] Resource tick system (passive generation over time)
-- [ ] Build Mines and Mana Wells on hexes
-- [ ] Build Barracks (troop training speed)
-- [ ] Build Watch Towers (early army detection)
-- [ ] Overextension tax (diminishing returns past threshold)
-- [ ] Rebellion mechanic (unattended hexes decay to Wildlands)
+### Real-time (partial)
+- Socket.io emits: `tick`, `hexes:update`, `armies:update`, `battle:update`
+- Client hook registers listeners but map doesn't auto-refresh on socket events — mostly manual polling
 
 ---
 
-### Phase 4 — Military (Week 4-5)
-Armies exist and can move.
+## What's Left
 
-- [ ] Recruit Knights, Archers, Trebuchets
-- [ ] Global troop upgrades with Mana
-- [ ] Army marching (1hr/hex knights/archers, 2hr/hex trebuchets)
-- [ ] Cancel march before arrival
-- [ ] Reinforce a hex mid-march
-- [ ] Build Walls, Archer Towers, Mage Towers (defenses)
-- [ ] Combat resolution on arrival
-- [ ] Defenses destroyed on capture
-- [ ] Capital cannot be destroyed, only captured
+### Must-have for v1 (playable multiplayer)
 
----
+- [ ] **Fix real-time map refresh** — hex ownership and army positions should update live on socket events without manual polling
+- [ ] **Alliances** — invite system, shared map color border, shared vision, resource sending, joint attacks, 24hr dissolution grace period
+- [ ] **Hex upgrade effect** — upgrade_level is tracked but does nothing; give it a gameplay effect (e.g. +1g/tick, +10% defense)
+- [ ] **Schema setup script** — no migrations file; new devs/deploys have no way to initialize the DB
 
-### Phase 5 — Alliances (Week 5-6)
-Players can form and break political relationships.
+### Nice-to-have for v1
 
-- [ ] Send / accept alliance invitations
-- [ ] Named alliance with shared map color border
-- [ ] Shared map vision between allies
-- [ ] Resource sending between allies
-- [ ] Joint attack stacking on same hex
-- [ ] Formal alliance dissolution with 24hr grace period
-- [ ] Non-aggression pacts (lighter truce)
+- [ ] **Terrain flavor** — visual-only cosmetic (mountains, desert, coastline coloring based on lat/lng)
+- [ ] **Home region bonus** — 25-hex radius around capital generates slightly more gold
+- [ ] **Push notifications** — capital under attack (always on), border crossings (opt-in)
+- [ ] **Rebellion mechanic** — hexes far from capital slowly decay to wildlands if unattended
 
----
+### Post-v1
 
-### Phase 6 — Notifications & Polish (Week 6-7)
-Game feels alive and responsive.
-
-- [ ] Push notifications (capital attack always on)
-- [ ] Opt-in notifications: Watch Tower alerts, border crossings, alliance alerts
+- [ ] Multiple troop types (Knights, Archers, Trebuchets) with a combat triangle
+- [ ] Mana resource and global troop upgrades
 - [ ] Alliance leaderboard (combined territory)
-- [ ] Player progression (level based on total territory held over time)
-- [ ] Titles at milestones
-- [ ] Historical map (greatest extent timeline)
-
----
-
-### Phase 7 — Seasons & Balance (Week 7-8)
-Long-term health of the game.
-
-- [ ] Season system (3 month cycles, partial map reset)
-- [ ] Season snapshot and cosmetic rewards
-- [ ] Balance pass on resource rates, march speeds, combat math
-- [ ] Stress test real-time with multiple simultaneous attacks
-
----
-
-### Phase 8 — Monetization & Launch Prep
-- [ ] Cosmetic shop (colors, banners, troop skins, map themes)
-- [ ] Supporter tier (badge only, no gameplay advantage)
+- [ ] Player progression (level, titles based on territory held over time)
+- [ ] Season system (3-month cycles, partial reset, cosmetic rewards)
+- [ ] Historical map (greatest extent timeline per player)
+- [ ] Cosmetic shop (colors, banners, troop skins)
 - [ ] Electron/Tauri desktop build
-- [ ] Steam store page and submission
-- [ ] App Store / Play Store submission (post-launch)
-- [ ] Basic onboarding flow for new players
+- [ ] Steam / App Store
 
 ---
 
-## Key Technical Challenges
+## v1 Definition
 
-1. **Hex grid on real map** — mapping ~1.5M land hexes onto Mapbox, only rendering visible ones (viewport culling)
-2. **Real-time sync** — army positions updating live for all players without hammering the server
-3. **Geospatial queries** — "find all hexes adjacent to this one", "find all hexes within 25 hex radius" — PostGIS handles this but needs careful indexing
-4. **GPS spoofing** — if home region bonus matters, players may fake location. Detect and flag suspicious patterns.
-5. **Scale** — start small, design DB schema to shard by region if needed
+Playable with real human players and bots. Win condition is owning the most territory. Core loop: expand, build economy, train troops, attack enemies, form alliances.
+
+Blocking: real-time map refresh + alliances. Everything else can ship after.
 
 ---
 
-## MVP Definition
+## Dev Mode
 
-A shippable MVP needs Phases 1-5. That's the core game loop:
-- See the world map
-- Own territory
-- Build economy
-- Command armies
-- Form alliances
-
-Phases 6-8 make it polished and sustainable but are not blocking for a first playable version.
+`DEV_MODE = true` in `server/config.js`:
+- Resource tick: 30s (prod: 10min)
+- Training time: 0.1 min/troop (prod: 3min)
+- March speed: 0.25 min/hex (prod: 60min)
+- Starting gold: 9999 (prod: 100)
