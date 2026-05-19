@@ -1,7 +1,9 @@
 import { pool } from './db.js'
-import { TICK_INTERVAL_MS, BATTLE_ROUND_DAMAGE_RATE, FORT_DEFENSE_BONUS, GOLD_CAP_BASE, GOLD_CAP_PER_HEX, GOLD_CAP_PER_MINE } from './config.js'
+import { TICK_INTERVAL_MS, BATTLE_ROUND_DAMAGE_RATE, FORT_DEFENSE_BONUS, GOLD_CAP_BASE, GOLD_CAP_PER_HEX, GOLD_CAP_PER_MINE, BUILDING_TIME_SECONDS, OCEAN_MARCH_MULTIPLIER, TROOP_STATS } from './config.js'
 import { getIO } from './socket.js'
 import { ensureBots, processBots } from './bots.js'
+import { gridDistance } from 'h3-js'
+import { isOcean } from './terrain.js'
 
 async function insertEvent(playerId, type, message, hexIndex = null) {
   try {
@@ -9,6 +11,7 @@ async function insertEvent(playerId, type, message, hexIndex = null) {
       'INSERT INTO events (player_id, type, message, hex_index) VALUES ($1,$2,$3,$4)',
       [playerId, type, message, hexIndex]
     )
+    getIO()?.emit('events:new')
   } catch (err) {
     console.error('[event] Failed to insert event:', err.message)
   }
@@ -26,12 +29,12 @@ export async function runTick() {
       SELECT
         p.id,
         COUNT(DISTINCT h.h3_index) AS hex_count,
-        COALESCE(SUM(CASE WHEN b.type = 'mine' THEN 3 ELSE 0 END), 0) AS gold_from_buildings
+        COALESCE(SUM(CASE WHEN b.type = 'mine' AND EXTRACT(EPOCH FROM (NOW() - b.created_at)) >= $1 THEN 3 ELSE 0 END), 0) AS gold_from_buildings
       FROM players p
       LEFT JOIN hexes h ON h.owner_id = p.id
       LEFT JOIN buildings b ON b.h3_index = h.h3_index
       GROUP BY p.id
-    `)
+    `, [BUILDING_TIME_SECONDS])
     for (const row of result.rows) {
       const goldGain = (Number(row.hex_count) * BASE_RATE.gold) + Number(row.gold_from_buildings)
       if (goldGain === 0) continue
@@ -64,15 +67,34 @@ export async function processTraining() {
   try {
     const done = await pool.query('SELECT * FROM training_queue WHERE completes_at <= NOW()')
     for (const job of done.rows) {
-      await pool.query(`
-        INSERT INTO troops (owner_id, h3_index, type, quantity)
-        VALUES ($1, $2, $3, $4)
-        ON CONFLICT (owner_id, h3_index, type)
-        DO UPDATE SET quantity = troops.quantity + EXCLUDED.quantity
-      `, [job.owner_id, job.h3_index, job.type, job.quantity])
       await pool.query('DELETE FROM training_queue WHERE id=$1', [job.id])
-      await insertEvent(job.owner_id, 'training_complete', `✅ ${job.quantity} troops finished training at ${job.h3_index}`, job.h3_index)
-      console.log(`[training] ${job.quantity} troops ready at ${job.h3_index}`)
+
+      const hexInfo = await pool.query('SELECT rally_hex FROM hexes WHERE h3_index=$1', [job.h3_index])
+      const rallyHex = hexInfo.rows[0]?.rally_hex
+
+      if (rallyHex && rallyHex !== job.h3_index) {
+        // Auto-dispatch to rally point
+        const stats = TROOP_STATS[job.type] || TROOP_STATS.troop
+        const dist = Math.max(1, gridDistance(job.h3_index, rallyHex))
+        const multiplier = isOcean(rallyHex) ? OCEAN_MARCH_MULTIPLIER : 1
+        const arrivesAt = new Date(Date.now() + dist * stats.marchMinutesPerHex * multiplier * 60 * 1000)
+        await pool.query(
+          'INSERT INTO armies (owner_id, from_hex, to_hex, type, quantity, arrives_at, departed_at) VALUES ($1,$2,$3,$4,$5,$6,NOW())',
+          [job.owner_id, job.h3_index, rallyHex, job.type, job.quantity, arrivesAt]
+        )
+        getIO()?.emit('armies:update')
+        await insertEvent(job.owner_id, 'training_complete', `✅ ${job.quantity} troops marching to rally point`, job.h3_index)
+        console.log(`[training] ${job.quantity} troops auto-marching to rally ${rallyHex}`)
+      } else {
+        await pool.query(`
+          INSERT INTO troops (owner_id, h3_index, type, quantity)
+          VALUES ($1, $2, $3, $4)
+          ON CONFLICT (owner_id, h3_index, type)
+          DO UPDATE SET quantity = troops.quantity + EXCLUDED.quantity
+        `, [job.owner_id, job.h3_index, job.type, job.quantity])
+        await insertEvent(job.owner_id, 'training_complete', `✅ ${job.quantity} troops finished training at ${job.h3_index}`, job.h3_index)
+        console.log(`[training] ${job.quantity} troops ready at ${job.h3_index}`)
+      }
     }
   } catch (err) {
     console.error('[training] Error:', err.message)
@@ -105,10 +127,17 @@ export async function processCombat() {
         console.log(`[combat] ${army.owner_id} reinforced own hex ${army.to_hex}`)
 
       } else if (!targetHex || !targetHex.owner_id) {
-        // Unclaimed hex — deposit troops, player must manually claim
+        // Unclaimed hex — deposit troops and auto-claim if it's land
         await depositTroops(army.owner_id, army.to_hex, army.type, army.quantity)
+        if (!isOcean(army.to_hex)) {
+          await pool.query(
+            'INSERT INTO hexes (h3_index, owner_id, claimed_at) VALUES ($1,$2,NOW()) ON CONFLICT (h3_index) DO UPDATE SET owner_id=$2, claimed_at=NOW()',
+            [army.to_hex, army.owner_id]
+          )
+          getIO()?.emit('hexes:update')
+          console.log(`[combat] ${army.owner_id} auto-claimed ${army.to_hex}`)
+        }
         await pool.query("UPDATE armies SET status='arrived' WHERE id=$1", [army.id])
-        console.log(`[combat] troops stationed at unclaimed ${army.to_hex} — awaiting claim`)
 
       } else {
         // Enemy hex — attack strength is simply troop count
@@ -140,7 +169,8 @@ export async function processCombat() {
             'SELECT type, quantity FROM troops WHERE h3_index=$1', [army.to_hex]
           )
           const fortsRes = await pool.query(
-            "SELECT COUNT(*) AS cnt FROM buildings WHERE h3_index=$1 AND type='fort'", [army.to_hex]
+            "SELECT COUNT(*) AS cnt FROM buildings WHERE h3_index=$1 AND type='fort' AND EXTRACT(EPOCH FROM (NOW() - created_at)) >= $2",
+            [army.to_hex, BUILDING_TIME_SECONDS]
           )
           const forts = Number(fortsRes.rows[0]?.cnt || 0)
           const defMultiplier = 1 + forts * FORT_DEFENSE_BONUS

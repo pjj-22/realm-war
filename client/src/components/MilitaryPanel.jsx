@@ -1,5 +1,7 @@
 import { useState, useEffect } from 'react'
 import { api } from '../api/client'
+import { useSocket } from '../hooks/useSocket'
+import { toast } from './Toast'
 
 function TrainingBar({ job }) {
   const [progress, setProgress] = useState(0)
@@ -36,16 +38,13 @@ function TrainingBar({ job }) {
   )
 }
 
-export default function MilitaryPanel({ hex, player, onPlayerUpdate, onMarchStart, onClose }) {
+export default function MilitaryPanel({ hex, player, onPlayerUpdate, onMarchStart, onSetRallyMode, onClose }) {
   const [military, setMilitary] = useState(null)
   const [quantity, setQuantity] = useState(10)
   const [loading, setLoading] = useState(false)
 
-  useEffect(() => {
-    load()
-    const interval = setInterval(load, 5000)
-    return () => clearInterval(interval)
-  }, [hex.h3])
+  useEffect(() => { load() }, [hex.h3])
+  useSocket({ 'armies:update': load, tick: load })
 
   async function load() {
     try {
@@ -56,7 +55,7 @@ export default function MilitaryPanel({ hex, player, onPlayerUpdate, onMarchStar
 
   async function handleRecall(id) {
     setLoading(true)
-    try { await api.recallArmy(id); await load() } catch (err) { alert(err.message) } finally { setLoading(false) }
+    try { await api.recallArmy(id); await load() } catch (err) { toast(err.message) } finally { setLoading(false) }
   }
 
   async function handleTrain() {
@@ -66,7 +65,19 @@ export default function MilitaryPanel({ hex, player, onPlayerUpdate, onMarchStar
       onPlayerUpdate?.(result.player)
       await load()
     } catch (err) {
-      alert(err.message)
+      toast(err.message)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function handleClearRally() {
+    setLoading(true)
+    try {
+      await api.clearRally(hex.h3)
+      await load()
+    } catch (err) {
+      toast(err.message)
     } finally {
       setLoading(false)
     }
@@ -75,6 +86,7 @@ export default function MilitaryPanel({ hex, player, onPlayerUpdate, onMarchStar
   const troopMap = {}
   military?.troops?.forEach(t => { troopMap[t.type] = t.quantity })
   const ready = troopMap.troop || 0
+  const rallyHex = military?.rally_hex || null
 
   return (
     <div style={{
@@ -126,7 +138,7 @@ export default function MilitaryPanel({ hex, player, onPlayerUpdate, onMarchStar
             color: '#c9b99a', cursor: 'pointer', fontSize: 13,
             letterSpacing: 1, fontFamily: 'Georgia, serif',
           }}>
-          Train (1g each)
+          Train {quantity} ({quantity}g)
         </button>
       </div>
 
@@ -144,9 +156,42 @@ export default function MilitaryPanel({ hex, player, onPlayerUpdate, onMarchStar
         </button>
       )}
 
+      {/* Rally point */}
+      <div style={{ borderTop: '1px solid #2a1a4a', margin: '10px 0 12px' }} />
+      <div style={{ fontSize: 13, color: '#7a6a9a', letterSpacing: 2, marginBottom: 8, textTransform: 'uppercase' }}>Rally Point</div>
+      {rallyHex ? (
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+          <span style={{ fontSize: 12, color: '#a090c0', fontFamily: 'monospace' }}>{rallyHex}</span>
+          <button
+            onClick={handleClearRally}
+            disabled={loading}
+            style={{
+              padding: '2px 8px', background: 'rgba(100,30,30,0.3)',
+              border: '1px solid #7a3a3a', borderRadius: 3,
+              color: '#c07070', cursor: 'pointer', fontSize: 11,
+              fontFamily: 'Georgia, serif',
+            }}>
+            Clear
+          </button>
+        </div>
+      ) : (
+        <div style={{ fontSize: 12, color: '#5a4a7a', marginBottom: 8 }}>Not set — trained troops stay here</div>
+      )}
+      <button
+        onClick={() => onSetRallyMode?.(hex.h3)}
+        disabled={loading}
+        style={{
+          width: '100%', padding: '7px 0',
+          background: 'rgba(40,80,40,0.25)', border: '1px solid #3a6a3a', borderRadius: 4,
+          color: '#90c090', cursor: 'pointer', fontSize: 12,
+          letterSpacing: 1, fontFamily: 'Georgia, serif',
+        }}>
+        {rallyHex ? 'Change Rally Point' : 'Set Rally Point'} ⌖
+      </button>
+
       {/* Marching armies */}
       {military?.armies?.length > 0 && (
-        <div style={{ marginTop: 4 }}>
+        <div style={{ marginTop: 14 }}>
           <div style={{ fontSize: 13, color: '#7a6a9a', letterSpacing: 2, marginBottom: 8, textTransform: 'uppercase' }}>Marching</div>
           {military.armies.map(a => {
             const total = new Date(a.arrives_at) - new Date(a.departed_at)

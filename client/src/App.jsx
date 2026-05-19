@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import GameMap from './components/GameMap'
 import AuthModal from './components/AuthModal'
 import HelpModal from './components/HelpModal'
+import { ToastContainer } from './components/Toast'
 import { api } from './api/client'
 
 export default function App() {
@@ -39,6 +40,7 @@ export default function App() {
         <AuthModal onAuth={handleAuth} onDismiss={() => setShowAuth(false)} />
       )}
       {showHelp && <HelpModal onClose={() => setShowHelp(false)} />}
+      <ToastContainer />
     </>
   )
 }

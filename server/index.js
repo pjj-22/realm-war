@@ -9,7 +9,7 @@ import militaryRoutes from './routes/military.js'
 import battleRoutes from './routes/battles.js'
 import eventRoutes from './routes/events.js'
 import { startTick } from './tick.js'
-import { DEV_MODE, STARTING_GOLD, STARTING_MANA } from './config.js'
+import { DEV_MODE, STARTING_GOLD, STARTING_MANA, TICK_INTERVAL_MS, BUILDING_TIME_SECONDS } from './config.js'
 import { pool } from './db.js'
 import { requireAuth } from './auth.js'
 import { initSocket } from './socket.js'
@@ -27,7 +27,12 @@ app.use('/api/military', militaryRoutes)
 app.use('/api/battles', battleRoutes)
 app.use('/api/events', eventRoutes)
 
-app.get('/api/health', (_, res) => res.json({ ok: true, devMode: DEV_MODE }))
+app.get('/api/health', (_, res) => res.json({
+  ok: true,
+  devMode: DEV_MODE,
+  tick_interval_ms: TICK_INTERVAL_MS,
+  building_time_seconds: BUILDING_TIME_SECONDS,
+}))
 
 if (DEV_MODE) {
   // Top up resources without re-registering
@@ -40,8 +45,14 @@ if (DEV_MODE) {
 const httpServer = http.createServer(app)
 initSocket(httpServer)
 
+async function runMigrations() {
+  await pool.query('ALTER TABLE hexes ADD COLUMN IF NOT EXISTS rally_hex TEXT')
+  console.log('[db] Migrations complete')
+}
+
 const PORT = process.env.PORT || 3001
-httpServer.listen(PORT, () => {
+httpServer.listen(PORT, async () => {
   console.log(`Server running on port ${PORT}`)
+  await runMigrations()
   startTick()
 })

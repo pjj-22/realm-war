@@ -45,6 +45,9 @@ export const MAX_BARRACKS_PER_HEX = 1
 export const UPGRADE_COST    = { gold: DEV_MODE ? 20 : 300 }
 export const UPGRADE_MINUTES = DEV_MODE ? 0.5 : 45
 
+// ─── Building construction time ───────────────────────────────────────────────
+export const BUILDING_TIME_SECONDS = DEV_MODE ? 30 : 300  // 30s dev, 5 min prod
+
 // ─── Resource caps ────────────────────────────────────────────────────────────
 export const GOLD_CAP_BASE     = DEV_MODE ? 99999 :  500
 export const GOLD_CAP_PER_HEX  = DEV_MODE ?  9999 :  100

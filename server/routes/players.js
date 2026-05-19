@@ -2,7 +2,7 @@ import { Router } from 'express'
 import bcrypt from 'bcryptjs'
 import { pool } from '../db.js'
 import { signToken, requireAuth } from '../auth.js'
-import { STARTING_GOLD, STARTING_MANA } from '../config.js'
+import { STARTING_GOLD, STARTING_MANA, TICK_INTERVAL_MS, BUILDING_TIME_SECONDS } from '../config.js'
 import { nextTickAt } from '../tick.js'
 import { getCountry } from '../countries.js'
 
@@ -77,29 +77,30 @@ router.get('/stats', requireAuth, async (req, res) => {
     const result = await pool.query(`
       SELECT
         COUNT(DISTINCT h.h3_index)::integer AS hex_count,
-        COALESCE(SUM(CASE WHEN b.type='mine' THEN 1 ELSE 0 END), 0)::integer AS mines,
-        COALESCE(SUM(CASE WHEN b.type='barracks' THEN 1 ELSE 0 END), 0)::integer AS barracks,
-        COALESCE(SUM(CASE WHEN b.type='fort' THEN 1 ELSE 0 END), 0)::integer AS forts
+        COALESCE(SUM(CASE WHEN b.type='mine'     AND EXTRACT(EPOCH FROM (NOW() - b.created_at)) >= $2 THEN 1 ELSE 0 END), 0)::integer AS mines,
+        COALESCE(SUM(CASE WHEN b.type='barracks' AND EXTRACT(EPOCH FROM (NOW() - b.created_at)) >= $2 THEN 1 ELSE 0 END), 0)::integer AS barracks,
+        COALESCE(SUM(CASE WHEN b.type='fort'     AND EXTRACT(EPOCH FROM (NOW() - b.created_at)) >= $2 THEN 1 ELSE 0 END), 0)::integer AS forts
       FROM players p
       LEFT JOIN hexes h ON h.owner_id = p.id
       LEFT JOIN buildings b ON b.h3_index = h.h3_index
       WHERE p.id = $1
       GROUP BY p.id
-    `, [req.player.id])
+    `, [req.player.id, BUILDING_TIME_SECONDS])
     const row = result.rows[0] || { hex_count: 0, mines: 0, barracks: 0, forts: 0 }
     const { GOLD_CAP_BASE, GOLD_CAP_PER_HEX, GOLD_CAP_PER_MINE } = await import('../config.js')
     row.gold_cap = GOLD_CAP_BASE + row.hex_count * GOLD_CAP_PER_HEX + row.mines * GOLD_CAP_PER_MINE
     row.next_tick_at = new Date(nextTickAt).toISOString()
+    row.tick_interval_ms = TICK_INTERVAL_MS
 
     // Income breakdown by country — group owned hexes + their mines by country
     const hexRows = await pool.query(`
       SELECT h.h3_index,
-        COALESCE(SUM(CASE WHEN b.type='mine' THEN 1 ELSE 0 END), 0)::integer AS mines
+        COALESCE(SUM(CASE WHEN b.type='mine' AND EXTRACT(EPOCH FROM (NOW() - b.created_at)) >= $2 THEN 1 ELSE 0 END), 0)::integer AS mines
       FROM hexes h
       LEFT JOIN buildings b ON b.h3_index = h.h3_index
       WHERE h.owner_id = $1
       GROUP BY h.h3_index
-    `, [req.player.id])
+    `, [req.player.id, BUILDING_TIME_SECONDS])
 
     const byCountry = new Map()
     for (const { h3_index, mines } of hexRows.rows) {

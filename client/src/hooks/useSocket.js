@@ -1,7 +1,7 @@
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 import { io } from 'socket.io-client'
 
-const SOCKET_URL = 'http://localhost:3001'
+const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || 'http://localhost:3001'
 
 let socket = null
 
@@ -12,13 +12,24 @@ export function getSocket() {
   return socket
 }
 
-// useSocket(handlers) — registers socket event listeners, cleans up on unmount
-// handlers: { 'event': callbackFn, ... }
+// useSocket(handlers) — registers socket event listeners, cleans up on unmount.
+// handlers object may change each render; we keep a ref so the stable effect
+// always calls the latest version without re-subscribing.
 export function useSocket(handlers) {
+  const handlersRef = useRef(handlers)
+  handlersRef.current = handlers
+
   useEffect(() => {
     const s = getSocket()
-    const entries = Object.entries(handlers)
-    entries.forEach(([event, fn]) => s.on(event, fn))
-    return () => entries.forEach(([event, fn]) => s.off(event, fn))
-  })
+    const wrapped = {}
+    for (const event of Object.keys(handlersRef.current)) {
+      wrapped[event] = (...args) => handlersRef.current[event]?.(...args)
+      s.on(event, wrapped[event])
+    }
+    return () => {
+      for (const [event, fn] of Object.entries(wrapped)) {
+        s.off(event, fn)
+      }
+    }
+  }, [])
 }

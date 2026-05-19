@@ -1,8 +1,30 @@
 import { useState, useEffect, useRef } from 'react'
 import { api } from '../api/client'
+import { useSocket } from '../hooks/useSocket'
 
 const ROUND_MS = 15000
 const DAMAGE_RATE = 0.15
+
+function RoundTimer({ lastRoundAt }) {
+  const [secsLeft, setSecsLeft] = useState(0)
+
+  useEffect(() => {
+    function update() {
+      const base = lastRoundAt ? new Date(lastRoundAt).getTime() : Date.now()
+      const next = base + ROUND_MS
+      setSecsLeft(Math.max(0, Math.ceil((next - Date.now()) / 1000)))
+    }
+    update()
+    const id = setInterval(update, 500)
+    return () => clearInterval(id)
+  }, [lastRoundAt])
+
+  return (
+    <span style={{ fontSize: 11, color: secsLeft <= 3 ? '#ff8080' : '#7a6a9a' }}>
+      next round in {secsLeft}s
+    </span>
+  )
+}
 
 function StrengthBar({ strength, maxStrength, color, losses, side }) {
   const pct = maxStrength > 0 ? Math.min(100, (strength / maxStrength) * 100) : 0
@@ -32,11 +54,8 @@ export default function BattlePanel({ hex, player, onMarchStart, onClose }) {
   const [display, setDisplay] = useState(null)
   const lastFetchRef = useRef(null)
 
-  useEffect(() => {
-    load()
-    const interval = setInterval(load, 3000)
-    return () => clearInterval(interval)
-  }, [hex.h3])
+  useEffect(() => { load() }, [hex.h3])
+  useSocket({ 'battle:update': load })
 
   async function load() {
     try {
@@ -141,8 +160,9 @@ export default function BattlePanel({ hex, player, onMarchStart, onClose }) {
       )}
 
       {/* Round info */}
-      <div style={{ fontSize: 11, color: '#7a6a9a', marginBottom: 12, textAlign: 'center' }}>
-        Round {battle.round_number} · ~{Math.max(0, roundsLeft)} rounds remaining
+      <div style={{ fontSize: 11, color: '#7a6a9a', marginBottom: 12, textAlign: 'center', display: 'flex', justifyContent: 'center', gap: 10 }}>
+        <span>Round {battle.round_number} · ~{Math.max(0, roundsLeft)} rounds remaining</span>
+        <RoundTimer lastRoundAt={battle.last_round_at} />
       </div>
 
       <div style={{ borderTop: '1px solid #2a1a3a', marginBottom: 10 }} />

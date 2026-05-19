@@ -2,6 +2,8 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { api } from '../api/client'
 import { GoldIcon } from './Icons'
 import { useIsMobile } from '../hooks/useIsMobile'
+import { useSocket } from '../hooks/useSocket'
+import { toast } from './Toast'
 
 // ── constants ─────────────────────────────────────────────────────────────────
 
@@ -119,6 +121,49 @@ function TrainBar({ job }) {
   )
 }
 
+function BuildBar({ building, buildTimeSecs, onExpire }) {
+  const barRef   = useRef(null)
+  const labelRef = useRef(null)
+
+  useEffect(() => {
+    const start = new Date(building.created_at).getTime()
+    const end   = start + buildTimeSecs * 1000
+
+    function tick() {
+      const now       = Date.now()
+      const pct       = Math.min(100, ((now - start) / (end - start)) * 100)
+      const remaining = Math.max(0, Math.ceil((end - now) / 1000))
+      if (barRef.current)   barRef.current.style.width = `${pct}%`
+      if (labelRef.current) {
+        const m = Math.floor(remaining / 60), s = remaining % 60
+        labelRef.current.textContent = m > 0 ? `${m}m ${String(s).padStart(2,'0')}s` : `${s}s`
+      }
+      if (remaining === 0) onExpire?.()
+    }
+
+    let raf
+    function loop() { tick(); raf = requestAnimationFrame(loop) }
+    loop()
+    return () => cancelAnimationFrame(raf)
+  }, [building.created_at, buildTimeSecs, onExpire])
+
+  const def = BUILDING_DEFS.find(d => d.type === building.type)
+  return (
+    <div style={{ marginBottom: 10 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 4 }}>
+        <span style={{ color: '#a090c0' }}>
+          {def?.label || building.type}
+          <span style={{ color: '#6a5878', marginLeft: 6 }}>under construction</span>
+        </span>
+        <span style={{ color: '#8070a0' }} ref={labelRef} />
+      </div>
+      <div style={{ height: 3, background: 'rgba(255,255,255,0.07)', borderRadius: 2, overflow: 'hidden' }}>
+        <div ref={barRef} style={{ width: '0%', height: '100%', borderRadius: 2, background: 'linear-gradient(90deg, #304070, #5080c0)' }} />
+      </div>
+    </div>
+  )
+}
+
 function UpgradeBar({ completes_at, onExpire }) {
   const [pct, setPct] = useState(0)
   const [secs, setSecs] = useState(0)
@@ -148,10 +193,11 @@ function UpgradeBar({ completes_at, onExpire }) {
 
 // ── main component ────────────────────────────────────────────────────────────
 
-export default function BottomDrawer({ hex, player, onClaim, onLoginRequired, onBuild, onPlayerUpdate, onMarchStart, onClose }) {
+export default function BottomDrawer({ hex, player, onClaim, onLoginRequired, onBuild, onPlayerUpdate, onMarchStart, onSetRallyMode, onClose }) {
   const isMobile = useIsMobile()
   const isOwn    = !!(player && hex?.username === player.username)
   const isClaimed = !!hex?.owner
+  const isFogged = !isOwn && !!hex?.fog
   const tabs = isOwn ? ['territory', 'buildings', 'military'] : ['territory']
 
   const [tab, setTab] = useState('territory')
@@ -164,9 +210,9 @@ export default function BottomDrawer({ hex, player, onClaim, onLoginRequired, on
   useEffect(() => { setTab('territory') }, [hex?.h3])
 
   const loadBuildings = useCallback(() => {
-    if (!isClaimed || !hex?.h3) return
+    if (!isClaimed || !hex?.h3 || isFogged) return
     api.getBuildings(hex.h3).then(setBuildingData).catch(() => {})
-  }, [hex?.h3, isClaimed])
+  }, [hex?.h3, isClaimed, isFogged])
 
   const loadMilitary = useCallback(() => {
     if (!hex?.h3) return
@@ -179,9 +225,8 @@ export default function BottomDrawer({ hex, player, onClaim, onLoginRequired, on
     if (!hex) return
     loadBuildings()
     loadMilitary()
-    const id = setInterval(loadMilitary, 5000)
-    return () => clearInterval(id)
   }, [hex?.h3, loadBuildings, loadMilitary])
+  useSocket({ 'armies:update': loadMilitary, tick: loadMilitary })
 
   // Auto-refresh when upgrade timer expires
   useEffect(() => {
@@ -236,14 +281,14 @@ export default function BottomDrawer({ hex, player, onClaim, onLoginRequired, on
         buildings: prev.buildings.filter(b => b.id !== '__pending__'),
         usedSlots: prev.usedSlots - 1,
       } : prev)
-      alert(err.message)
+      toast(err.message)
     } finally { setBusy(false) }
   }
 
   async function handleDemolish(id) {
     setBusy(true)
     try { await api.demolish(id); loadBuildings() }
-    catch (err) { alert(err.message) }
+    catch (err) { toast(err.message) }
     finally { setBusy(false) }
   }
 
@@ -253,7 +298,7 @@ export default function BottomDrawer({ hex, player, onClaim, onLoginRequired, on
       const r = await api.upgradeHex(hex.h3)
       onPlayerUpdate?.(r.player)
       loadBuildings()
-    } catch (err) { alert(err.message) }
+    } catch (err) { toast(err.message) }
     finally { setBusy(false) }
   }
 
@@ -264,7 +309,7 @@ export default function BottomDrawer({ hex, player, onClaim, onLoginRequired, on
       const r = await api.trainTroops(hex.h3, type, qty)
       onPlayerUpdate?.(r.player)
       loadMilitary()
-    } catch (err) { alert(err.message) }
+    } catch (err) { toast(err.message) }
     finally { setBusy(false) }
   }
 
@@ -281,7 +326,23 @@ export default function BottomDrawer({ hex, player, onClaim, onLoginRequired, on
     return (
       <div style={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', gap: isMobile ? 20 : 48 }}>
         <div style={{ flex: 1 }}>
-          {isClaimed ? (
+          {isClaimed && isFogged ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              <div style={{ fontSize: 13, color: '#6a5838', letterSpacing: 1 }}>
+                Outside your field of vision — send scouts or expand your territory to reveal this hex.
+              </div>
+              <div style={{ display: 'flex', gap: 20, fontSize: 15 }}>
+                <div>
+                  <div style={{ fontSize: 10, color: '#6a5838', letterSpacing: 2, textTransform: 'uppercase', marginBottom: 4 }}>Troops</div>
+                  <span style={{ color: '#6a5848' }}>?</span>
+                </div>
+                <div>
+                  <div style={{ fontSize: 10, color: '#6a5838', letterSpacing: 2, textTransform: 'uppercase', marginBottom: 4 }}>Income</div>
+                  <span style={{ color: '#6a5848' }}>?</span>
+                </div>
+              </div>
+            </div>
+          ) : isClaimed ? (
             <>
               <Label>Income</Label>
               <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 18, color: '#c9902a', marginBottom: 16 }}>
@@ -309,7 +370,7 @@ export default function BottomDrawer({ hex, player, onClaim, onLoginRequired, on
           )}
         </div>
         <div style={{ flex: 1 }}>
-          {isClaimed && buildingData?.buildings?.length > 0 && (
+          {isClaimed && !isFogged && buildingData?.buildings?.length > 0 && (
             <>
               <Label>Building</Label>
               {buildingData.buildings.map(b => {
@@ -346,24 +407,31 @@ export default function BottomDrawer({ hex, player, onClaim, onLoginRequired, on
           )}
           {builtGroups.map(g => {
             const def = BUILDING_DEFS.find(d => d.type === g.type)
+            const building = buildingData.buildings.find(b => b.type === g.type)
+            const isBuilding = building && !building.is_complete
             return (
               <div key={g.type} style={{ marginBottom: 12 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <Dot color={def?.color || '#888'} />
-                  <span style={{ fontSize: 14, color: '#c4b498', flex: 1 }}>
-                    {def?.label}
-                    {g.pending && <span style={{ color: '#7a6890', marginLeft: 6, fontSize: 12 }}>building…</span>}
-                  </span>
-                  <span style={{ fontSize: 11, color: '#8070a0' }}>{def?.effect}</span>
-                  {!g.pending && (
-                    <button onClick={() => handleDemolish(g.ids[0])} disabled={busy}
-                      style={{ background: 'none', border: 'none', color: '#7a4848', cursor: 'pointer', fontSize: 16, lineHeight: 1, padding: '0 4px' }}>
-                      ×
-                    </button>
-                  )}
-                </div>
-                {def?.desc && (
-                  <div style={{ fontSize: 11, color: '#6a5878', marginTop: 3, marginLeft: 16, lineHeight: 1.5 }}>{def.desc}</div>
+                {isBuilding ? (
+                  <BuildBar
+                    building={building}
+                    buildTimeSecs={buildingData.build_time_seconds || 30}
+                    onExpire={loadBuildings}
+                  />
+                ) : (
+                  <>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <Dot color={def?.color || '#888'} />
+                      <span style={{ fontSize: 14, color: '#c4b498', flex: 1 }}>{def?.label}</span>
+                      <span style={{ fontSize: 11, color: '#8070a0' }}>{def?.effect}</span>
+                      <button onClick={() => handleDemolish(g.ids[0])} disabled={busy}
+                        style={{ background: 'none', border: 'none', color: '#7a4848', cursor: 'pointer', fontSize: 16, lineHeight: 1, padding: '0 4px' }}>
+                        ×
+                      </button>
+                    </div>
+                    {def?.desc && (
+                      <div style={{ fontSize: 11, color: '#6a5878', marginTop: 3, marginLeft: 16, lineHeight: 1.5 }}>{def.desc}</div>
+                    )}
+                  </>
                 )}
               </div>
             )
@@ -413,10 +481,18 @@ export default function BottomDrawer({ hex, player, onClaim, onLoginRequired, on
   const TRAIN_PRESETS = [1, 2, 5, 10, 25, 50, 100]
   const DISPATCH_PRESETS = [1, 5, 10, 25, 50, 100]
 
+  async function handleClearRally() {
+    setBusy(true)
+    try { await api.clearRally(hex.h3); loadMilitary() }
+    catch (err) { toast(err.message) }
+    finally { setBusy(false) }
+  }
+
   function MilitaryPanel() {
     if (!isOwn) return null
     const ready = troopMap.troop || 0
     const sendQty = Math.min(dispatchQty.troop || ready, ready)
+    const rallyHex = military?.rally_hex || null
 
     return (
       <div style={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', gap: isMobile ? 20 : 48 }}>
@@ -513,6 +589,26 @@ export default function BottomDrawer({ hex, player, onClaim, onLoginRequired, on
               {military.training.map(j => <TrainBar key={j.id} job={j} />)}
             </div>
           )}
+
+          <div style={{ marginTop: 16 }}>
+            <Label>Rally Point</Label>
+            {rallyHex ? (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+                <span style={{ fontSize: 11, color: '#90b890', fontFamily: 'monospace', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {rallyHex}
+                </span>
+                <button onClick={handleClearRally} disabled={busy}
+                  style={{ background: 'none', border: 'none', color: '#8a5848', cursor: 'pointer', fontSize: 14, padding: 0, lineHeight: 1 }}>×</button>
+              </div>
+            ) : (
+              <div style={{ fontSize: 11, color: '#6a5848', marginBottom: 8 }}>
+                Troops stay here after training
+              </div>
+            )}
+            <Btn onClick={() => onSetRallyMode?.(hex.h3)} muted>
+              {rallyHex ? 'Change Rally ⌖' : 'Set Rally Point ⌖'}
+            </Btn>
+          </div>
         </div>
       </div>
     )
@@ -550,9 +646,16 @@ export default function BottomDrawer({ hex, player, onClaim, onLoginRequired, on
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           {isClaimed && <Dot color={hex.color} />}
-          <span style={{ fontSize: 16, color: isClaimed ? '#e8d090' : '#5a4a28', letterSpacing: 2 }}>
-            {ownerLabel}
-          </span>
+          <div>
+            <span style={{ fontSize: 16, color: isClaimed ? '#e8d090' : '#5a4a28', letterSpacing: 2 }}>
+              {ownerLabel}
+            </span>
+            {hex.country_name && (
+              <div style={{ fontSize: 10, color: '#8a7850', marginTop: 1 }}>
+                {hex.country_name}{hex.country_continent ? ` · ${hex.country_continent}` : ''}
+              </div>
+            )}
+          </div>
           {hex.capital_hex === hex.h3 && (
             <span style={{ fontSize: 10, color: '#b08030', letterSpacing: 2, textTransform: 'uppercase', border: '1px solid rgba(160,110,30,0.4)', borderRadius: 3, padding: '1px 6px' }}>Capital</span>
           )}

@@ -1,5 +1,6 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useRef } from 'react'
 import { api } from '../api/client.js'
+import { useSocket } from '../hooks/useSocket'
 
 const TYPE_ICON = {
   battle_won:        '🏆',
@@ -21,20 +22,18 @@ export default function EventFeed() {
   const [open, setOpen]     = useState(false)
   const [count, setCount]   = useState(0)
   const [events, setEvents] = useState([])
-  const pollRef             = useRef(null)
+  const openRef             = useRef(false)
+  openRef.current = open
 
-  // Poll unread count every 10s
-  useEffect(() => {
-    const fetchCount = async () => {
-      try {
-        const data = await api.getEventCount()
-        setCount(data.count)
-      } catch { /* ignore */ }
-    }
-    fetchCount()
-    pollRef.current = setInterval(fetchCount, 10_000)
-    return () => clearInterval(pollRef.current)
-  }, [])
+  useSocket({
+    'events:new': async () => {
+      if (openRef.current) {
+        try { setEvents(await api.getEvents()) } catch {}
+      } else {
+        try { setCount(c => c + 1) } catch {}
+      }
+    },
+  })
 
   const openFeed = async () => {
     setOpen(true)
@@ -42,7 +41,7 @@ export default function EventFeed() {
       const data = await api.getEvents()
       setEvents(data)
       setCount(0)
-    } catch { /* ignore */ }
+    } catch {}
   }
 
   return (

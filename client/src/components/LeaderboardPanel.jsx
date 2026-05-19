@@ -2,17 +2,15 @@ import { useState, useEffect } from 'react'
 import { cellToLatLng } from 'h3-js'
 import { api } from '../api/client'
 import { useIsMobile } from '../hooks/useIsMobile'
+import { useSocket } from '../hooks/useSocket'
 
 export default function LeaderboardPanel({ player, onFlyTo }) {
   const isMobile = useIsMobile()
   const [board, setBoard] = useState([])
   const [open, setOpen] = useState(false)
 
-  useEffect(() => {
-    load()
-    const interval = setInterval(load, 30000)
-    return () => clearInterval(interval)
-  }, [])
+  useEffect(() => { load() }, [])
+  useSocket({ tick: load, 'hexes:update': load })
 
   async function load() {
     try { setBoard(await api.getLeaderboard()) } catch {}

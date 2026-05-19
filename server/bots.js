@@ -1,7 +1,7 @@
 import { pool } from './db.js'
 import { latLngToCell, gridDisk, gridDistance } from 'h3-js'
 import { getIO } from './socket.js'
-import { STARTING_GOLD, STARTING_MANA, STARTING_TROOPS, TROOP_STATS, BUILDING_COSTS, OCEAN_MARCH_MULTIPLIER } from './config.js'
+import { STARTING_GOLD, STARTING_MANA, STARTING_TROOPS, TROOP_STATS, BUILDING_COSTS, OCEAN_MARCH_MULTIPLIER, BUILDING_TIME_SECONDS } from './config.js'
 import { isOcean } from './terrain.js'
 
 const HEX_RES = 7
@@ -17,11 +17,11 @@ const BOT_DEFS = [
 ]
 
 // Decision thresholds
-const TRAIN_BATCH     = 20  // troops queued per training action
-const GOLD_TRAIN_MIN  = 30  // minimum gold before training
-const MARCH_THRESHOLD = 15  // troops on a hex before considering a march
-const MARCH_SEND      = 10  // troops sent per march action
-const ATTACK_MIN      = 25  // troops required before attacking an enemy hex
+const TRAIN_BATCH     = 30  // troops queued per training action
+const GOLD_TRAIN_MIN  = 20  // minimum gold before training
+const MARCH_THRESHOLD = 8   // troops on a hex before considering a march
+const MARCH_SEND_PCT  = 0.6 // fraction of available troops to send
+const ATTACK_MIN      = 8   // troops required before attacking an enemy hex
 
 async function depositTroops(ownerId, hexIndex, type, quantity) {
   await pool.query(`
@@ -47,6 +47,16 @@ async function findFreeHex(centerHex) {
 
 // Create all bot players and claim their starting hexes if not already done
 export async function ensureBots() {
+  // Remove any duplicate buildings (keep only the oldest per hex)
+  await pool.query(`
+    DELETE FROM buildings WHERE id IN (
+      SELECT id FROM (
+        SELECT id, ROW_NUMBER() OVER (PARTITION BY h3_index ORDER BY created_at ASC) AS rn
+        FROM buildings
+      ) sub WHERE rn > 1
+    )
+  `)
+
   for (const def of BOT_DEFS) {
     try {
       const existing = await pool.query('SELECT id, capital_hex FROM players WHERE username=$1', [def.username])
@@ -82,9 +92,12 @@ async function botClaim(bot) {
     'SELECT DISTINCT h3_index FROM troops WHERE owner_id=$1 AND quantity > 0',
     [bot.id]
   )
-  for (const { h3_index } of stationed.rows) {
-    const hex = await pool.query('SELECT owner_id FROM hexes WHERE h3_index=$1', [h3_index])
-    if (!hex.rows[0]) {
+  if (stationed.rows.length === 0) return
+  const hexIndexes = stationed.rows.map(r => r.h3_index)
+  const existing = await pool.query('SELECT h3_index FROM hexes WHERE h3_index = ANY($1)', [hexIndexes])
+  const claimed = new Set(existing.rows.map(r => r.h3_index))
+  for (const h3_index of hexIndexes) {
+    if (!claimed.has(h3_index)) {
       await pool.query(
         'INSERT INTO hexes (h3_index, owner_id, claimed_at) VALUES ($1,$2,NOW()) ON CONFLICT DO NOTHING',
         [h3_index, bot.id]
@@ -102,25 +115,29 @@ async function botBuild(bot) {
   let { gold } = player.rows[0]
 
   const ownedHexes = await pool.query('SELECT h3_index FROM hexes WHERE owner_id=$1', [bot.id])
+  if (ownedHexes.rows.length === 0) return
+
+  const hexIndexes = ownedHexes.rows.map(r => r.h3_index)
+  const buildingsRes = await pool.query('SELECT h3_index FROM buildings WHERE h3_index = ANY($1)', [hexIndexes])
+  const builtHexes = new Set(buildingsRes.rows.map(r => r.h3_index))
 
   for (const { h3_index } of ownedHexes.rows) {
     if (gold < 5) break
+    if (builtHexes.has(h3_index)) continue
 
     const isCapital = h3_index === bot.capital_hex
-
-    // One building per hex — skip if already built
-    const existing = await pool.query('SELECT type FROM buildings WHERE h3_index=$1', [h3_index])
-    if (existing.rows.length >= 1) continue
-
-    // Priority: barracks on capital first, then mines on every hex, then forts
     const buildOrder = isCapital ? ['barracks', 'mine', 'fort'] : ['mine', 'fort']
 
     for (const type of buildOrder) {
       const cost = BUILDING_COSTS[type]
       if (gold < cost.gold) continue
 
+      const inserted = await pool.query(
+        'INSERT INTO buildings (h3_index, type) SELECT $1,$2 WHERE NOT EXISTS (SELECT 1 FROM buildings WHERE h3_index=$1) RETURNING id',
+        [h3_index, type]
+      )
+      if (!inserted.rows[0]) break  // another process beat us — skip this hex
       await pool.query('UPDATE players SET gold=gold-$1 WHERE id=$2', [cost.gold, bot.id])
-      await pool.query('INSERT INTO buildings (h3_index, type) VALUES ($1,$2)', [h3_index, type])
       gold -= cost.gold
       console.log(`[bot] ${bot.username} built ${type} at ${h3_index}`)
       break
@@ -137,8 +154,8 @@ async function botTrain(bot) {
   if (gold < GOLD_TRAIN_MIN) return
 
   const barracks = await pool.query(
-    "SELECT id FROM buildings WHERE h3_index=$1 AND type='barracks'",
-    [bot.capital_hex]
+    "SELECT id FROM buildings WHERE h3_index=$1 AND type='barracks' AND EXTRACT(EPOCH FROM (NOW() - created_at)) >= $2",
+    [bot.capital_hex, BUILDING_TIME_SECONDS]
   )
   if (!barracks.rows[0]) return
 
@@ -149,7 +166,7 @@ async function botTrain(bot) {
   if (inQueue.rows.length > 0) return
 
   const stats = TROOP_STATS.troop
-  const qty = Math.min(TRAIN_BATCH, Math.floor(gold / stats.gold))
+  const qty = Math.min(TRAIN_BATCH, Math.floor((gold - 5) / stats.gold))
   if (qty <= 0) return
 
   const completesAt = new Date(Date.now() + stats.trainMinutes * 60 * 1000 * qty)
@@ -165,7 +182,6 @@ async function botTrain(bot) {
 async function botMarch(bot) {
   if (!bot.capital_hex) return
 
-  // Find owned hexes sorted by troop count descending
   const hexTroops = await pool.query(`
     SELECT h.h3_index, COALESCE(SUM(t.quantity), 0)::integer AS troops
     FROM hexes h
@@ -175,46 +191,88 @@ async function botMarch(bot) {
     ORDER BY troops DESC
   `, [bot.id])
 
-  for (const source of hexTroops.rows) {
-    if (source.troops < MARCH_THRESHOLD) continue
+  const sources = hexTroops.rows.filter(s => s.troops >= MARCH_THRESHOLD)
+  if (sources.length === 0) return
 
-    // Skip if already marching from this hex
-    const marching = await pool.query(
-      "SELECT id FROM armies WHERE owner_id=$1 AND from_hex=$2 AND status='marching'",
-      [bot.id, source.h3_index]
-    )
-    if (marching.rows.length > 0) continue
+  // Batch: which sources already have armies marching
+  const sourceHexes = sources.map(s => s.h3_index)
+  const marchingRes = await pool.query(
+    "SELECT from_hex FROM armies WHERE owner_id=$1 AND from_hex = ANY($2) AND status='marching'",
+    [bot.id, sourceHexes]
+  )
+  const alreadyMarching = new Set(marchingRes.rows.map(r => r.from_hex))
 
-    // Find a target — prefer unclaimed adjacent, then enemy adjacent
+  // Batch: get ownership of all neighbors across all active sources
+  const allNeighborSet = new Set()
+  for (const source of sources) {
+    if (alreadyMarching.has(source.h3_index)) continue
+    gridDisk(source.h3_index, 1).filter(h => h !== source.h3_index).forEach(h => allNeighborSet.add(h))
+  }
+  const allNeighbors = Array.from(allNeighborSet)
+  const neighborRes = await pool.query(
+    'SELECT h3_index, owner_id FROM hexes WHERE h3_index = ANY($1)',
+    [allNeighbors]
+  )
+  const neighborOwner = new Map(neighborRes.rows.map(r => [r.h3_index, r.owner_id]))
+
+  for (const source of sources) {
+    if (alreadyMarching.has(source.h3_index)) continue
+
     const neighbors = gridDisk(source.h3_index, 1).filter(h => h !== source.h3_index)
     let target = null
 
+    // 1. Adjacent unclaimed
     for (const h of neighbors) {
-      const row = await pool.query('SELECT owner_id FROM hexes WHERE h3_index=$1', [h])
-      if (!row.rows[0]) { target = h; break } // unclaimed — grab it
+      if (!neighborOwner.has(h) && !isOcean(h)) { target = h; break }
     }
 
+    // 2. Adjacent enemy
     if (!target && source.troops >= ATTACK_MIN) {
+      // prefer weakly-held hexes — pick the enemy neighbor with fewest troops
+      let bestTroops = Infinity
       for (const h of neighbors) {
-        const row = await pool.query('SELECT owner_id FROM hexes WHERE h3_index=$1', [h])
-        if (row.rows[0] && row.rows[0].owner_id !== bot.id) { target = h; break }
+        const owner = neighborOwner.get(h)
+        if (owner && owner !== bot.id) {
+          // rough proxy: we don't have troop counts here, just pick first
+          if (!target) { target = h; bestTroops = 0 }
+        }
       }
     }
 
-    // If no adjacent targets, find nearest unclaimed hex within 3 rings
-    // and march toward it one step at a time
+    // 3. Wider search (ring 2-3): unclaimed, then enemy
     if (!target) {
       const ring3 = gridDisk(source.h3_index, 3)
+      const ring3Res = await pool.query(
+        'SELECT h3_index, owner_id FROM hexes WHERE h3_index = ANY($1)',
+        [ring3]
+      )
+      const ring3Map = new Map(ring3Res.rows.map(r => [r.h3_index, r.owner_id]))
+
+      // unclaimed in ring 2-3
       for (const h of ring3) {
-        const row = await pool.query('SELECT owner_id FROM hexes WHERE h3_index=$1', [h])
-        if (!row.rows[0]) {
-          // March to the neighbor that gets us closest
+        if (!ring3Map.has(h) && !isOcean(h)) {
+          // step toward it via best neighbor
           let best = null, bestDist = Infinity
           for (const n of neighbors) {
             const d = gridDistance(n, h)
             if (d < bestDist) { bestDist = d; best = n }
           }
           if (best) { target = best; break }
+        }
+      }
+
+      // enemy in ring 2-3 if still no target
+      if (!target && source.troops >= ATTACK_MIN) {
+        for (const h of ring3) {
+          const owner = ring3Map.get(h)
+          if (owner && owner !== bot.id) {
+            let best = null, bestDist = Infinity
+            for (const n of neighbors) {
+              const d = gridDistance(n, h)
+              if (d < bestDist) { bestDist = d; best = n }
+            }
+            if (best) { target = best; break }
+          }
         }
       }
     }
@@ -226,8 +284,8 @@ async function botMarch(bot) {
       [bot.id, source.h3_index]
     )
     const available = troopRow.rows[0]?.quantity || 0
-    const sendQty = Math.min(available, Math.min(source.troops - 5, MARCH_SEND))
-    if (sendQty <= 0) continue
+    const sendQty = Math.max(1, Math.floor(available * MARCH_SEND_PCT))
+    if (available < 2) continue
 
     await pool.query(
       "UPDATE troops SET quantity=quantity-$1 WHERE owner_id=$2 AND h3_index=$3 AND type='troop'",
@@ -251,7 +309,6 @@ export async function processBots() {
     if (bots.rows.length === 0) return
 
     for (const bot of bots.rows) {
-      await botClaim(bot)
       await botBuild(bot)
       await botTrain(bot)
       await botMarch(bot)

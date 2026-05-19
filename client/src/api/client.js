@@ -1,4 +1,4 @@
-const BASE = 'http://localhost:3001/api'
+const BASE = (import.meta.env.VITE_API_URL || 'http://localhost:3001') + '/api'
 
 async function request(method, path, body, { allowNull } = {}) {
   const token = localStorage.getItem('rw_token')
@@ -41,4 +41,7 @@ export const api = {
   getEvents: () => request('GET', '/events'),
   getEventCount: () => request('GET', '/events/count'),
   devRefill: () => request('POST', '/dev/refill'),
+  getConfig: () => request('GET', '/health'),
+  setRally: (fromHex, rallyHex) => request('POST', '/military/rally', { fromHex, rallyHex }),
+  clearRally: (h3Index) => request('DELETE', `/military/rally/${h3Index}`),
 }

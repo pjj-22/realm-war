@@ -1,53 +1,72 @@
 import { useState, useEffect } from 'react'
+import { cellToLatLng, gridDistance } from 'h3-js'
 import { api } from '../api/client'
 import { useIsMobile } from '../hooks/useIsMobile'
+import { toast } from './Toast'
 
-const ICONS = { troop: '⚔' }
+const BUILDING_ICON = { mine: '⛏', barracks: '🏰', fort: '🛡' }
 
-function groupKey(army) {
-  const etaBucket = Math.round(new Date(army.arrives_at).getTime() / 10000)
-  return `${army.to_hex}::${etaBucket}`
+function parseTypes(types) {
+  if (!types) return []
+  if (Array.isArray(types)) return types
+  return types.replace(/[{}"]/g, '').split(',').filter(Boolean)
 }
 
-function groupArmies(armies) {
-  const map = new Map()
-  for (const a of armies) {
-    const k = groupKey(a)
-    if (!map.has(k)) {
-      map.set(k, { key: k, to_hex: a.to_hex, armies: [], arrives_at: a.arrives_at, departed_at: a.departed_at })
-    }
-    map.get(k).armies.push(a)
-  }
-  return Array.from(map.values())
+// ── Hex row ──────────────────────────────────────────────────────────────────
+function HexRow({ hex, isCapital, onFlyTo }) {
+  return (
+    <div
+      onClick={() => onFlyTo?.(hex.h3_index)}
+      style={{
+        display: 'flex', alignItems: 'center', gap: 6,
+        padding: '4px 6px', borderRadius: 3,
+        background: isCapital ? 'rgba(80,60,20,0.25)' : 'transparent',
+        border: `1px solid ${isCapital ? 'rgba(200,160,40,0.2)' : 'transparent'}`,
+        cursor: onFlyTo ? 'pointer' : 'default',
+        transition: 'background 0.1s',
+      }}
+      onMouseEnter={e => { if (onFlyTo) e.currentTarget.style.background = 'rgba(80,40,160,0.18)' }}
+      onMouseLeave={e => { e.currentTarget.style.background = isCapital ? 'rgba(80,60,20,0.25)' : 'transparent' }}
+    >
+      {isCapital
+        ? <span style={{ fontSize: 10, color: '#c9a020', width: 12, flexShrink: 0 }}>★</span>
+        : <span style={{ width: 12, flexShrink: 0 }} />
+      }
+      <span style={{ fontSize: 13, color: '#c9b99a', minWidth: 28, textAlign: 'right', flexShrink: 0 }}>
+        {hex.troop_count}
+      </span>
+      <span style={{ fontSize: 11, color: '#5a4a7a', marginLeft: 1, flexShrink: 0 }}>⚔</span>
+      <span style={{ fontSize: 9, color: '#4a3a6a', flex: 1, fontFamily: hex.country_name ? 'Georgia, serif' : 'monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', letterSpacing: 0 }}>
+        {hex.country_name || hex.h3_index}
+      </span>
+      {onFlyTo && <span style={{ fontSize: 9, color: '#3a2a5a', flexShrink: 0 }}>⌖</span>}
+    </div>
+  )
 }
 
-function compositionStr(armies) {
-  const totals = {}
-  for (const a of armies) totals[a.type] = (totals[a.type] || 0) + a.quantity
-  return Object.entries(totals)
-    .filter(([, q]) => q > 0)
-    .map(([t, q]) => `${ICONS[t] || t}${q}`)
-    .join(' ')
-}
-
-function ArmyGroupRow({ group, isOwn, onRecall, color, username }) {
+// ── Marching army row ─────────────────────────────────────────────────────────
+function MarchRow({ army, isOwn, canRecall, onRecall, showDistance }) {
   const [progress, setProgress] = useState(0)
   const [remaining, setRemaining] = useState(0)
+  const [hexesAway, setHexesAway] = useState(0)
 
-  const departedAt = group.departed_at || group.armies[0]?.departed_at
-  const arrivesAt  = group.arrives_at  || group.armies[0]?.arrives_at
+  const totalHexes = (() => {
+    try { return Math.max(1, gridDistance(army.from_hex, army.to_hex)) } catch { return 1 }
+  })()
 
   useEffect(() => {
     function update() {
-      const total   = new Date(arrivesAt) - new Date(departedAt)
-      const elapsed = Date.now() - new Date(departedAt)
-      setProgress(Math.min(100, (elapsed / total) * 100))
-      setRemaining(Math.max(0, Math.ceil((new Date(arrivesAt) - Date.now()) / 1000)))
+      const total   = new Date(army.arrives_at) - new Date(army.departed_at)
+      const elapsed = Date.now() - new Date(army.departed_at)
+      const pct     = Math.min(1, elapsed / total)
+      setProgress(pct * 100)
+      setRemaining(Math.max(0, Math.ceil((new Date(army.arrives_at) - Date.now()) / 1000)))
+      setHexesAway(Math.max(0, Math.ceil(totalHexes * (1 - pct))))
     }
     update()
     const interval = setInterval(update, 1000)
     return () => clearInterval(interval)
-  }, [arrivesAt, departedAt])
+  }, [army.arrives_at, army.departed_at, totalHexes])
 
   const mins = Math.floor(remaining / 60)
   const secs = remaining % 60
@@ -55,39 +74,38 @@ function ArmyGroupRow({ group, isOwn, onRecall, color, username }) {
 
   return (
     <div style={{
-      marginBottom: 10, padding: '8px 10px',
-      background: isOwn ? 'rgba(80,40,160,0.15)' : 'rgba(160,20,20,0.15)',
-      border: `1px solid ${isOwn ? '#4a3a7a' : '#7a2a2a'}`,
-      borderRadius: 4,
+      padding: '6px 8px', borderRadius: 3, marginBottom: 4,
+      background: isOwn ? 'rgba(80,40,160,0.15)' : 'rgba(160,30,30,0.12)',
+      border: `1px solid ${isOwn ? '#3a2a6a' : '#5a2a2a'}`,
     }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
-        <span style={{ fontSize: 14 }}>
-          {color && (
-            <span style={{ width: 9, height: 9, borderRadius: '50%', background: color, display: 'inline-block', marginRight: 5 }} />
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 3 }}>
+        <span style={{ fontSize: 12, color: '#c9b99a' }}>
+          {!isOwn && army.color && (
+            <span style={{ width: 7, height: 7, borderRadius: '50%', background: army.color, display: 'inline-block', marginRight: 5 }} />
           )}
-          {username && <>{username} · </>}
-          {compositionStr(group.armies)}
+          {!isOwn && <span style={{ color: '#9a8aaa', marginRight: 4 }}>{army.username}</span>}
+          {army.quantity}⚔
         </span>
         <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-          <span style={{ fontSize: 13, color: '#7a6a9a' }}>{eta}</span>
-          {isOwn && (
-            <button
-              onClick={() => group.armies.forEach(a => onRecall(a.id))}
-              style={{
-                padding: '1px 6px', background: 'rgba(100,30,30,0.4)',
-                border: '1px solid #6a2a2a', borderRadius: 3,
-                color: '#c09090', cursor: 'pointer', fontSize: 10, fontFamily: 'Georgia, serif',
-              }}>Recall</button>
+          {showDistance && (
+            <span style={{ fontSize: 11, color: hexesAway <= 1 ? '#ff6060' : '#9a6a4a' }}>
+              {hexesAway} hex{hexesAway !== 1 ? 'es' : ''} away
+            </span>
+          )}
+          <span style={{ fontSize: 11, color: '#7a6a9a' }}>{eta}</span>
+          {canRecall && (
+            <button onClick={() => onRecall(army.id)} style={{
+              padding: '1px 6px', background: 'rgba(100,30,30,0.4)',
+              border: '1px solid #6a2a2a', borderRadius: 3,
+              color: '#c09090', cursor: 'pointer', fontSize: 10, fontFamily: 'Georgia, serif',
+            }}>Recall</button>
           )}
         </div>
       </div>
-      <div style={{ fontSize: 12, color: '#7a6a9a', marginBottom: 4 }}>
-        → {group.to_hex}
-      </div>
-      <div style={{ height: 3, background: 'rgba(255,255,255,0.1)', borderRadius: 2 }}>
+      <div style={{ height: 2, background: 'rgba(255,255,255,0.07)', borderRadius: 1 }}>
         <div style={{
-          height: '100%', borderRadius: 2,
-          background: isOwn ? 'linear-gradient(90deg, #4a3a9a, #8060d0)' : 'linear-gradient(90deg, #9a3a3a, #d06060)',
+          height: '100%', borderRadius: 1,
+          background: isOwn ? '#6050b0' : '#903030',
           width: `${progress}%`, transition: 'width 1s linear',
         }} />
       </div>
@@ -95,7 +113,8 @@ function ArmyGroupRow({ group, isOwn, onRecall, color, username }) {
   )
 }
 
-export default function ArmiesHUD({ armies, activeBattles = [], player, claimedRef, onRefresh }) {
+// ── Main component ────────────────────────────────────────────────────────────
+export default function ArmiesHUD({ armies, activeBattles = [], player, claimedRef, onRefresh, onFlyTo }) {
   const isMobile = useIsMobile()
   const [open, setOpen] = useState(false)
 
@@ -103,102 +122,109 @@ export default function ArmiesHUD({ armies, activeBattles = [], player, claimedR
   const threats  = armies.filter(a =>
     player && a.owner_id !== player.id && claimedRef.current[a.to_hex]?.owner_id === player.id
   )
-  const totalCount = myArmies.length + threats.length
 
-  const myGroups      = groupArmies(myArmies)
-  const threatGroups  = groupArmies(threats)
+  const ownedHexes = Object.values(claimedRef.current)
+    .filter(h => h.owner_id === player?.id)
+    .sort((a, b) => b.troop_count - a.troop_count)
+
+  const alertCount = myArmies.length + threats.length
 
   async function handleRecall(id) {
     try {
       await api.recallArmy(id)
       onRefresh?.()
     } catch (err) {
-      alert(err.message)
+      toast(err.message)
     }
   }
 
   if (!player) return null
 
   return (
-    <div style={{
-      position: 'absolute', top: 56, left: 16,
-      fontFamily: 'Georgia, serif', zIndex: 10,
-    }}>
+    <div style={{ position: 'absolute', top: 56, left: 16, fontFamily: 'Georgia, serif', zIndex: 10 }}>
       {/* Toggle button */}
       <button onClick={() => setOpen(o => !o)} style={{
-        display: 'flex', alignItems: 'center', gap: 8,
-        padding: '8px 14px',
-        background: 'rgba(10,8,25,0.85)', border: `1px solid ${threats.length > 0 ? '#7a2a2a' : '#4a3a7a'}`,
-        borderRadius: 6, color: '#c9b99a', cursor: 'pointer',
-        fontSize: 14, letterSpacing: 1,
+        display: 'flex', alignItems: 'center', gap: 8, padding: '8px 14px',
+        background: 'rgba(10,8,25,0.85)',
+        border: `1px solid ${threats.length > 0 ? '#7a2a2a' : '#4a3a7a'}`,
+        borderRadius: 6, color: '#c9b99a', cursor: 'pointer', fontSize: 14, letterSpacing: 1,
         boxShadow: threats.length > 0 ? '0 0 12px rgba(180,40,40,0.4)' : '0 0 12px rgba(80,40,160,0.3)',
       }}>
-        <span>⚔ Armies</span>
-        {totalCount > 0 && (
-          <span style={{
-            background: threats.length > 0 ? '#7a2a2a' : '#4a3a7a',
-            borderRadius: 10, padding: '2px 8px', fontSize: 13,
-          }}>{totalCount}</span>
+        <span>⚔ Forces</span>
+        {ownedHexes.length > 0 && (
+          <span style={{ background: '#3a2a6a', borderRadius: 10, padding: '2px 8px', fontSize: 12 }}>
+            {ownedHexes.length}▲
+          </span>
         )}
-        {threats.length > 0 && (
-          <span style={{ color: '#ff6060', fontSize: 13 }}>⚠ {threats.length}</span>
-        )}
-        {activeBattles.length > 0 && (
-          <span style={{ color: '#ff4444', fontSize: 13 }}>⚔ {activeBattles.length}</span>
-        )}
+        {threats.length > 0 && <span style={{ color: '#ff6060', fontSize: 12 }}>⚠{threats.length}</span>}
+        {activeBattles.length > 0 && <span style={{ color: '#ff4444', fontSize: 12 }}>⚔{activeBattles.length}</span>}
       </button>
 
       {/* Panel */}
       {open && (
         <div style={{
           marginTop: 4,
-          background: 'rgba(10,8,25,0.92)', border: '1px solid #4a3a7a',
-          borderRadius: 6, padding: '14px 16px',
-          width: isMobile ? 'calc(100vw - 32px)' : 300,
+          background: 'rgba(10,8,25,0.93)', border: '1px solid #4a3a7a',
+          borderRadius: 6, padding: '12px 14px',
+          width: isMobile ? 'calc(100vw - 32px)' : 210,
           boxShadow: '0 0 30px rgba(80,40,160,0.4)',
-          maxHeight: '60vh', overflowY: 'auto',
+          maxHeight: '65vh', overflowY: 'auto',
         }}>
-          {myGroups.length > 0 && (
+
+          {/* Threats */}
+          {threats.length > 0 && (
             <>
-              <div style={{ fontSize: 11, color: '#7a6a9a', letterSpacing: 2, marginBottom: 8, textTransform: 'uppercase' }}>
-                Your Armies ({myArmies.length})
-              </div>
-              {myGroups.map(g => (
-                <ArmyGroupRow
-                  key={g.key}
-                  group={g}
-                  isOwn
-                  onRecall={handleRecall}
-                />
+              <SectionLabel color="#c06060">⚠ Incoming ({threats.length})</SectionLabel>
+              {threats.map(a => (
+                <MarchRow key={a.id} army={a} isOwn={false} canRecall={false} showDistance />
               ))}
+              <Divider />
             </>
           )}
 
-          {threatGroups.length > 0 && (
+          {/* Your marching armies */}
+          {myArmies.length > 0 && (
             <>
-              <div style={{ fontSize: 11, color: '#c06060', letterSpacing: 2, marginBottom: 8, marginTop: myGroups.length > 0 ? 10 : 0, textTransform: 'uppercase' }}>
-                ⚠ Incoming Threats ({threats.length})
-              </div>
-              {threatGroups.map(g => (
-                <ArmyGroupRow
-                  key={g.key}
-                  group={g}
-                  isOwn={false}
-                  onRecall={handleRecall}
-                  color={g.armies[0]?.color}
-                  username={g.armies[0]?.username}
-                />
+              <SectionLabel color="#8a7aaa">Marching ({myArmies.length})</SectionLabel>
+              {myArmies.map(a => (
+                <MarchRow key={a.id} army={a} isOwn canRecall onRecall={handleRecall} />
               ))}
+              <Divider />
             </>
           )}
 
-          {totalCount === 0 && (
+          {/* Hex list */}
+          {ownedHexes.length > 0 ? (
+            <>
+              <SectionLabel color="#6a5a8a">Territory ({ownedHexes.length})</SectionLabel>
+              {ownedHexes.map(h => (
+                <HexRow
+                  key={h.h3_index}
+                  hex={h}
+                  isCapital={h.h3_index === h.capital_hex}
+                  onFlyTo={onFlyTo}
+                />
+              ))}
+            </>
+          ) : (
             <div style={{ fontSize: 12, color: '#5a4a7a', textAlign: 'center', padding: '10px 0' }}>
-              No active armies
+              No territory — claim a hex to start
             </div>
           )}
         </div>
       )}
     </div>
   )
+}
+
+function SectionLabel({ color, children }) {
+  return (
+    <div style={{ fontSize: 10, color, letterSpacing: 2, marginBottom: 5, textTransform: 'uppercase' }}>
+      {children}
+    </div>
+  )
+}
+
+function Divider() {
+  return <div style={{ borderTop: '1px solid #2a1a4a', margin: '8px 0' }} />
 }

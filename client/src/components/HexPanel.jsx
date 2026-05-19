@@ -1,18 +1,14 @@
 import { useState, useEffect, useCallback } from 'react'
 import { api } from '../api/client'
+import { toast } from './Toast'
 
 const BUILDINGS = [
-  { type: 'mine',         label: 'Mine',         icon: '⛏',  cost: '5g',  effect: '+3 gold/income' },
-  { type: 'mana_well',    label: 'Mana Well',    icon: '💧',  cost: '5g',  effect: '+3 mana/income' },
-  { type: 'barracks',     label: 'Barracks',     icon: '🏰',  cost: '10g', effect: 'Train troops faster' },
-  { type: 'watch_tower',  label: 'Watch Tower',  icon: '🗼',  cost: '5g',  effect: '+1 ring vision' },
-  { type: 'archer_tower', label: 'Archer Tower', icon: '🏹',  cost: '10g', effect: '+30% defense' },
+  { type: 'mine',     label: 'Mine',     icon: '⛏',  cost: '5g',  effect: '+3 gold/income' },
+  { type: 'barracks', label: 'Barracks', icon: '🏰',  cost: '10g', effect: 'Train troops faster' },
+  { type: 'fort',     label: 'Fort',     icon: '🛡',  cost: '10g', effect: '+40% defense' },
 ]
 
-const COMBAT_STRENGTH = { knight: 1, archer: 1.2, trebuchet: 3 }
-
-const UPGRADE_COST = { gold: 20, mana: 5 }
-const UPGRADE_MINUTES = 0.5
+const UPGRADE_COST = { gold: 20 }
 
 export default function HexPanel({ hex, player, onClaim, onLoginRequired, onBuild, onClose }) {
   const [buildingData, setBuildingData] = useState(null) // { buildings[], slots, usedSlots, upgradeLevel, upgrading }
@@ -31,7 +27,7 @@ export default function HexPanel({ hex, player, onClaim, onLoginRequired, onBuil
 
     if (player) {
       api.getMilitary(hex.h3).then(data => {
-        const str = (data.troops || []).reduce((s, t) => s + t.quantity * (COMBAT_STRENGTH[t.type] || 1), 0)
+        const str = (data.troops || []).reduce((s, t) => s + t.quantity, 0)
         setDefStrength(str > 0 ? str : null)
       }).catch(() => setDefStrength(null))
     } else {
@@ -67,7 +63,7 @@ export default function HexPanel({ hex, player, onClaim, onLoginRequired, onBuil
         buildings: prev.buildings.filter(b => b.id !== '__pending__'),
         usedSlots: prev.usedSlots - 1,
       } : prev)
-      alert(err.message)
+      toast(err.message)
     } finally {
       setLoading(false)
     }
@@ -79,7 +75,7 @@ export default function HexPanel({ hex, player, onClaim, onLoginRequired, onBuil
       await api.demolish(buildingId)
       loadBuildings()
     } catch (err) {
-      alert(err.message)
+      toast(err.message)
     } finally {
       setLoading(false)
     }
@@ -92,7 +88,7 @@ export default function HexPanel({ hex, player, onClaim, onLoginRequired, onBuil
       loadBuildings()
       onBuild?.(result.player)
     } catch (err) {
-      alert(err.message)
+      toast(err.message)
     } finally {
       setLoading(false)
     }
@@ -100,13 +96,12 @@ export default function HexPanel({ hex, player, onClaim, onLoginRequired, onBuil
 
   // Compute income from current buildings
   const income = (() => {
-    if (!buildingData?.buildings) return { gold: 1, mana: 0 }
-    let gold = 1, mana = 0
+    if (!buildingData?.buildings) return { gold: 1 }
+    let gold = 1
     for (const b of buildingData.buildings) {
       if (b.type === 'mine') gold += 3
-      else if (b.type === 'mana_well') mana += 3
     }
-    return { gold, mana }
+    return { gold }
   })()
 
   // Grouped building counts for the "Built" section
@@ -121,15 +116,7 @@ export default function HexPanel({ hex, player, onClaim, onLoginRequired, onBuil
     return Object.values(counts)
   })()
 
-  const upgradeProgress = (() => {
-    if (!buildingData?.upgrading) return null
-    const now = Date.now()
-    const end = new Date(buildingData.upgrading.completes_at).getTime()
-    const start = end - UPGRADE_MINUTES * 60 * 1000
-    const pct = Math.min(100, Math.max(0, ((now - start) / (end - start)) * 100))
-    const secsLeft = Math.max(0, Math.round((end - now) / 1000))
-    return { pct, secsLeft }
-  })()
+  const upgradeInProgress = !!buildingData?.upgrading && new Date(buildingData.upgrading.completes_at) > Date.now()
 
   return (
     <div style={{
@@ -141,10 +128,17 @@ export default function HexPanel({ hex, player, onClaim, onLoginRequired, onBuil
       maxHeight: '80vh', overflowY: 'auto',
     }}>
       {/* Header */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
-        <span style={{ fontSize: 15, letterSpacing: 3, color: '#7a6a9a', textTransform: 'uppercase' }}>
-          {isClaimed ? 'Territory' : 'Wildlands'}
-        </span>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+        <div>
+          <span style={{ fontSize: 15, letterSpacing: 3, color: '#7a6a9a', textTransform: 'uppercase' }}>
+            {isClaimed ? 'Territory' : 'Wildlands'}
+          </span>
+          {hex.country_name && (
+            <div style={{ fontSize: 12, color: '#9a8a6a', marginTop: 2 }}>
+              {hex.country_name}{hex.country_continent ? ` · ${hex.country_continent}` : ''}
+            </div>
+          )}
+        </div>
         <button onClick={onClose} style={{ background: 'none', border: 'none', color: '#7a6a9a', cursor: 'pointer', fontSize: 22 }}>×</button>
       </div>
 
@@ -170,7 +164,7 @@ export default function HexPanel({ hex, player, onClaim, onLoginRequired, onBuil
         )}
         {isClaimed && defStrength !== null && <Row label="Defense" value={`${Math.round(defStrength)} str`} color="#c0a0e0" />}
         {isClaimed && (
-          <Row label="Income" value={`+${income.gold} gold${income.mana > 0 ? `  +${income.mana} mana` : ''}/harvest`} color="#d0b060" />
+          <Row label="Income" value={`+${income.gold} gold/harvest`} color="#d0b060" />
         )}
       </div>
 
@@ -237,10 +231,7 @@ export default function HexPanel({ hex, player, onClaim, onLoginRequired, onBuil
                 Build
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 14 }}>
-                {BUILDINGS.filter(b => {
-                  if (b.type === 'barracks') return !buildingData.buildings.some(x => x.type === 'barracks')
-                  return true
-                }).map(b => (
+                {BUILDINGS.map(b => (
                   <button
                     key={b.type}
                     onClick={() => handleBuild(b.type)}
@@ -267,12 +258,12 @@ export default function HexPanel({ hex, player, onClaim, onLoginRequired, onBuil
               <div style={{ fontSize: 13, color: '#7a6a9a', letterSpacing: 2, marginBottom: 10, textTransform: 'uppercase' }}>
                 Hex Upgrade — Level {buildingData.upgradeLevel} / {buildingData.maxUpgradeLevel}
               </div>
-              {upgradeProgress ? (
-                <UpgradeTimer completes_at={buildingData.upgrading.completes_at} onExpire={loadBuildings} />
+              {upgradeInProgress ? (
+                <UpgradeTimer completes_at={buildingData.upgrading.completes_at} upgradeMinutes={buildingData.upgrade_minutes || 0.5} onExpire={loadBuildings} />
               ) : buildingData.upgradeLevel < buildingData.maxUpgradeLevel ? (
                 <>
                   <div style={{ fontSize: 13, color: '#8a7a9a', marginBottom: 8 }}>
-                    +2 building slots · costs {UPGRADE_COST.gold}g {UPGRADE_COST.mana}m
+                    +2 building slots · costs {UPGRADE_COST.gold}g
                   </div>
                   <PanelButton onClick={handleUpgrade} disabled={loading}>
                     Upgrade Hex
@@ -289,16 +280,15 @@ export default function HexPanel({ hex, player, onClaim, onLoginRequired, onBuil
   )
 }
 
-function UpgradeTimer({ completes_at, onExpire }) {
+function UpgradeTimer({ completes_at, upgradeMinutes, onExpire }) {
   const [pct, setPct] = useState(0)
   const [secsLeft, setSecsLeft] = useState(0)
-  const UPGRADE_MINUTES = 0.5
 
   useEffect(() => {
     function update() {
       const now = Date.now()
       const end = new Date(completes_at).getTime()
-      const start = end - UPGRADE_MINUTES * 60 * 1000
+      const start = end - upgradeMinutes * 60 * 1000
       const newPct = Math.min(100, Math.max(0, ((now - start) / (end - start)) * 100))
       const secs = Math.max(0, Math.round((end - now) / 1000))
       setPct(newPct)

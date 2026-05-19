@@ -1,7 +1,7 @@
 import { Router } from 'express'
 import { pool } from '../db.js'
 import { requireAuth } from '../auth.js'
-import { BUILDING_COSTS, UPGRADE_COST, UPGRADE_MINUTES, MAX_UPGRADE_LEVEL } from '../config.js'
+import { BUILDING_COSTS, UPGRADE_COST, UPGRADE_MINUTES, MAX_UPGRADE_LEVEL, BUILDING_TIME_SECONDS, TICK_INTERVAL_MS } from '../config.js'
 
 const router = Router()
 const VALID_TYPES = Object.keys(BUILDING_COSTS)
@@ -17,8 +17,14 @@ router.get('/:h3Index', async (req, res) => {
       pool.query('SELECT * FROM upgrade_queue WHERE h3_index=$1', [h3Index]),
     ])
     const hex = hexRow.rows[0] || { upgrade_level: 0, capital_hex: null }
+    const enriched = buildings.rows.map(b => ({
+      ...b,
+      is_complete: !b.created_at || (Date.now() - new Date(b.created_at).getTime() >= BUILDING_TIME_SECONDS * 1000),
+    }))
     res.json({
-      buildings: buildings.rows,
+      buildings: enriched,
+      build_time_seconds: BUILDING_TIME_SECONDS,
+      upgrade_minutes: UPGRADE_MINUTES,
       slots: MAX_BUILDINGS_PER_HEX,
       usedSlots: buildings.rows.length,
       upgradeLevel: hex.upgrade_level || 0,
@@ -44,9 +50,6 @@ router.post('/', requireAuth, async (req, res) => {
     if (!hexRow.rows[0] || hexRow.rows[0].owner_id !== req.player.id) {
       return res.status(403).json({ error: 'You do not own this hex' })
     }
-    const hex = hexRow.rows[0]
-    const slots = slotCount({ ...hex, h3_index: h3Index })
-
     // One building per hex
     const existing = await pool.query('SELECT type FROM buildings WHERE h3_index=$1', [h3Index])
     if (existing.rows.length >= MAX_BUILDINGS_PER_HEX) {

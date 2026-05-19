@@ -2,7 +2,7 @@ import { Router } from 'express'
 import { pool } from '../db.js'
 import { requireAuth } from '../auth.js'
 import { gridDistance } from 'h3-js'
-import { TROOP_STATS, OCEAN_MARCH_MULTIPLIER } from '../config.js'
+import { TROOP_STATS, OCEAN_MARCH_MULTIPLIER, BUILDING_TIME_SECONDS } from '../config.js'
 import { getIO } from '../socket.js'
 import { isOcean } from '../terrain.js'
 
@@ -12,12 +12,13 @@ const router = Router()
 router.get('/hex/:h3Index', requireAuth, async (req, res) => {
   const { h3Index } = req.params
   try {
-    const [troops, training, armies] = await Promise.all([
+    const [troops, training, armies, hexRow] = await Promise.all([
       pool.query('SELECT type, quantity FROM troops WHERE owner_id=$1 AND h3_index=$2', [req.player.id, h3Index]),
       pool.query('SELECT * FROM training_queue WHERE owner_id=$1 AND h3_index=$2 ORDER BY completes_at ASC', [req.player.id, h3Index]),
       pool.query('SELECT * FROM armies WHERE owner_id=$1 AND from_hex=$2 AND status=$3', [req.player.id, h3Index, 'marching']),
+      pool.query('SELECT rally_hex FROM hexes WHERE h3_index=$1 AND owner_id=$2', [h3Index, req.player.id]),
     ])
-    res.json({ troops: troops.rows, training: training.rows, armies: armies.rows })
+    res.json({ troops: troops.rows, training: training.rows, armies: armies.rows, rally_hex: hexRow.rows[0]?.rally_hex || null })
   } catch {
     res.status(500).json({ error: 'Server error' })
   }
@@ -45,8 +46,12 @@ router.post('/train', requireAuth, async (req, res) => {
     }
 
     // Check for barracks (halves train time)
-    const building = await pool.query('SELECT type FROM buildings WHERE h3_index=$1', [h3Index])
-    const hasBarracks = building.rows.some(b => b.type === 'barracks')
+    const building = await pool.query(
+      'SELECT type, created_at FROM buildings WHERE h3_index=$1', [h3Index]
+    )
+    const hasBarracks = building.rows.some(b =>
+      b.type === 'barracks' && (Date.now() - new Date(b.created_at).getTime() >= BUILDING_TIME_SECONDS * 1000)
+    )
     const trainMinutes = hasBarracks ? stats.trainMinutes / 2 : stats.trainMinutes
 
     // Chain after the last queued job on this hex so jobs don't overlap
@@ -133,6 +138,33 @@ router.delete('/armies/:id', requireAuth, async (req, res) => {
     )
     await pool.query('DELETE FROM armies WHERE id=$1', [id])
     getIO()?.emit('armies:update')
+    res.json({ success: true })
+  } catch {
+    res.status(500).json({ error: 'Server error' })
+  }
+})
+
+// Set rally point for a hex
+router.post('/rally', requireAuth, async (req, res) => {
+  const { fromHex, rallyHex } = req.body
+  if (!fromHex || !rallyHex) return res.status(400).json({ error: 'fromHex and rallyHex required' })
+  try {
+    const own = await pool.query('SELECT owner_id FROM hexes WHERE h3_index=$1 AND owner_id=$2', [fromHex, req.player.id])
+    if (!own.rows[0]) return res.status(403).json({ error: 'You do not own this hex' })
+    const dest = await pool.query('SELECT owner_id FROM hexes WHERE h3_index=$1 AND owner_id=$2', [rallyHex, req.player.id])
+    if (!dest.rows[0]) return res.status(400).json({ error: 'Rally destination must be one of your own hexes' })
+    await pool.query('UPDATE hexes SET rally_hex=$1 WHERE h3_index=$2', [rallyHex, fromHex])
+    res.json({ success: true, rally_hex: rallyHex })
+  } catch {
+    res.status(500).json({ error: 'Server error' })
+  }
+})
+
+// Clear rally point for a hex
+router.delete('/rally/:h3Index', requireAuth, async (req, res) => {
+  const { h3Index } = req.params
+  try {
+    await pool.query('UPDATE hexes SET rally_hex=NULL WHERE h3_index=$1 AND owner_id=$2', [h3Index, req.player.id])
     res.json({ success: true })
   } catch {
     res.status(500).json({ error: 'Server error' })

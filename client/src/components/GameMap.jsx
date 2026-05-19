@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { useSocket } from '../hooks/useSocket'
+import { toast } from './Toast'
 import maplibregl from 'maplibre-gl'
 import { latLngToCell, cellToBoundary, cellToLatLng, gridDisk, gridPathCells } from 'h3-js'
 import 'maplibre-gl/dist/maplibre-gl.css'
@@ -40,10 +41,12 @@ function getViewportHexes(map) {
   return Array.from(cellSet).slice(0, MAX_HEXES)
 }
 
-function hexToGeoJSONFeature(cell, claimed) {
+function hexToGeoJSONFeature(cell, claimed, visibleSet) {
   const boundary = cellToBoundary(cell)
   const coords = boundary.map(([lat, lng]) => [lng, lat])
   coords.push(coords[0])
+  // fog = claimed enemy hex outside the visible ring
+  const fog = !!claimed?.owner_id && !!visibleSet && !visibleSet.has(cell)
   return {
     type: 'Feature',
     properties: {
@@ -51,15 +54,18 @@ function hexToGeoJSONFeature(cell, claimed) {
       owner: claimed?.owner_id || null,
       color: claimed?.color || null,
       username: claimed?.username || null,
-      troop_count: claimed?.troop_count || 0,
+      troop_count: fog ? -1 : (claimed?.troop_count || 0),
       upgrade_level: claimed?.upgrade_level || 0,
+      country_name: claimed?.country_name || null,
+      country_continent: claimed?.country_continent || null,
+      fog,
     },
     geometry: { type: 'Polygon', coordinates: [coords] },
   }
 }
 
-function buildGeoJSON(cells, claimedHexes) {
-  const features = cells.map(cell => hexToGeoJSONFeature(cell, claimedHexes[cell]))
+function buildGeoJSON(cells, claimedHexes, visibleSet) {
+  const features = cells.map(cell => hexToGeoJSONFeature(cell, claimedHexes[cell], visibleSet))
   return { type: 'FeatureCollection', features }
 }
 
@@ -69,9 +75,9 @@ function parseTypes(types) {
   return types.replace(/[{}"]/g, '').split(',').filter(Boolean)
 }
 
-function buildClaimedGeoJSON(claimedHexes) {
+function buildClaimedGeoJSON(claimedHexes, visibleSet) {
   const features = Object.entries(claimedHexes).map(([cell, claimed]) =>
-    hexToGeoJSONFeature(cell, claimed)
+    hexToGeoJSONFeature(cell, claimed, visibleSet)
   )
   return { type: 'FeatureCollection', features }
 }
@@ -229,14 +235,16 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
   const [selectedHex, setSelectedHex] = useState(null)
   const [zoom, setZoom] = useState(3)
   const [marchMode, setMarchMode] = useState(null) // { fromHex, type, quantity }
+  const [rallyMode, setRallyMode] = useState(null) // fromHex string or null
   const [armies, setArmies] = useState([])
   const [activeBattles, setActiveBattles] = useState([])
   const [stats, setStats] = useState(null)
   const [activeBattle, setActiveBattle] = useState(null)
 
   const ownedHexCount = Object.values(claimedRef.current).filter(h => h.owner_id === player?.id).length
+  const totalTroops = Object.values(claimedRef.current).filter(h => h.owner_id === player?.id).reduce((s, h) => s + (h.troop_count || 0), 0)
 
-  const { display: resources } = useResourceTicker(player, ownedHexCount)
+  const { display: resources } = useResourceTicker(player, ownedHexCount, [], stats?.tick_interval_ms)
   const isMobile = useIsMobile()
 
   // Load all claimed hexes from server
@@ -315,7 +323,10 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
         id: 'claimed-fill',
         type: 'fill',
         source: 'claimed',
-        paint: { 'fill-color': ['get', 'color'], 'fill-opacity': 0.35 },
+        paint: {
+          'fill-color': ['get', 'color'],
+          'fill-opacity': ['case', ['boolean', ['get', 'fog'], false], 0.1, 0.35],
+        },
       })
 
       // Point source for labels — avoids polygon-tile duplication at high zoom
@@ -335,7 +346,7 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
         source: 'hexes',
         paint: {
           'fill-color': ['case', ['!=', ['get', 'color'], null], ['get', 'color'], 'rgba(30,20,60,0.35)'],
-          'fill-opacity': 0.35,
+          'fill-opacity': ['case', ['boolean', ['get', 'fog'], false], 0.1, 0.35],
         },
       })
       map.current.addLayer({
@@ -445,6 +456,17 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
     map.current.on('click', 'hex-fill', (e) => {
       const hex = e.features[0]?.properties
       if (!hex) return
+
+      // Rally mode: set rally destination
+      if (rallyModeRef.current) {
+        const fromHex = rallyModeRef.current
+        api.setRally(fromHex, hex.h3)
+          .then(() => loadClaimed())
+          .catch(err => toast(err.message))
+        setRallyMode(null)
+        return
+      }
+
       setMarchMode(prev => {
         if (prev) {
           if (prev.battleMode && !prev.fromHex) {
@@ -458,13 +480,13 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
             const entries = Object.entries(prev.troops).filter(([, qty]) => qty > 0)
             Promise.all(entries.map(([type, qty]) => api.marchArmy(prev.fromHex, hex.h3, type, qty)))
               .then(() => loadClaimed())
-              .catch(err => alert(err.message))
+              .catch(err => toast(err.message))
             return null
           }
           // Single-type march
           api.marchArmy(prev.fromHex, hex.h3, prev.type, prev.quantity)
             .then(() => loadClaimed())
-            .catch(err => alert(err.message))
+            .catch(err => toast(err.message))
           return null
         }
         // Normal click — select hex
@@ -475,7 +497,7 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
     })
 
     map.current.on('mouseenter', 'hex-fill', () => {
-      map.current.getCanvas().style.cursor = marchMode ? 'crosshair' : 'pointer'
+      map.current.getCanvas().style.cursor = (marchModeRef.current || rallyModeRef.current) ? 'crosshair' : 'pointer'
     })
     map.current.on('mouseleave', 'hex-fill', () => { map.current.getCanvas().style.cursor = '' })
 
@@ -516,17 +538,23 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
   function updateHexes() {
     if (!map.current?.getSource('hexes')) return
     const cells = getViewportHexes(map.current)
-    map.current.getSource('hexes').setData(buildGeoJSON(cells, claimedRef.current))
+    map.current.getSource('hexes').setData(buildGeoJSON(cells, claimedRef.current, visibleSetRef.current))
   }
 
   function updateClaimed() {
     if (!map.current?.getSource('claimed')) return
-    map.current.getSource('claimed').setData(buildClaimedGeoJSON(claimedRef.current))
     const visibleSet = player ? buildVisibleSet(claimedRef.current, player.id) : null
+    visibleSetRef.current = visibleSet
+    map.current.getSource('claimed').setData(buildClaimedGeoJSON(claimedRef.current, visibleSet))
     map.current.getSource('claimed-points')?.setData(buildClaimedPoints(claimedRef.current, visibleSet))
     map.current.getSource('building-pips')?.setData(buildPipFeatures(claimedRef.current))
   }
 
+  const visibleSetRef = useRef(null)
+  const marchModeRef = useRef(marchMode)
+  marchModeRef.current = marchMode
+  const rallyModeRef = useRef(null)
+  rallyModeRef.current = rallyMode
   const armiesRef = useRef([])
   armiesRef.current = armies
   const playerRef = useRef(null)
@@ -603,7 +631,7 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
       updateClaimed()
       setSelectedHex(prev => ({ ...prev, color: player.color, username: player.username, owner: player.id }))
     } catch (err) {
-      alert(err.message)
+      toast(err.message)
     }
   }
 
@@ -621,7 +649,7 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
         map.current?.flyTo({ center: [lng, lat], zoom: 9 })
         setSearchOpen(false)
         setSearchQuery('')
-      } catch { alert('Invalid hex index') }
+      } catch { toast('Invalid hex index') }
       return
     }
     // Geocode with Nominatim
@@ -634,9 +662,9 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
         setSearchOpen(false)
         setSearchQuery('')
       } else {
-        alert('Location not found')
+        toast('Location not found')
       }
-    } catch { alert('Search failed') }
+    } catch { toast('Search failed') }
   }
 
   const goldCap = stats?.gold_cap ?? null
@@ -704,7 +732,8 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
             </div>
             {stats?.next_tick_at && <HarvestCountdown nextTickAt={stats.next_tick_at} onExpire={loadStats} />}
             {!isMobile && <span style={{ fontSize: 13, color: '#7a6890' }}>▲ {stats?.hex_count ?? ownedHexCount}</span>}
-            {!isMobile && (
+            {!isMobile && totalTroops > 0 && <span style={{ fontSize: 13, color: '#7a6890' }}>⚔ {totalTroops}</span>}
+            {!isMobile && import.meta.env.DEV && (
               <button
                 onClick={async () => { try { const r = await api.devRefill(); onPlayerUpdate?.({ ...player, gold: r.gold }) } catch {} }}
                 style={{ padding: '3px 10px', background: 'rgba(30,60,30,0.4)', border: '1px solid rgba(50,100,50,0.4)', borderRadius: 4, color: '#70a870', cursor: 'pointer', fontSize: 11, letterSpacing: 1, fontFamily: 'Georgia, serif' }}>
@@ -756,6 +785,12 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
           player={player}
           claimedRef={claimedRef}
           onRefresh={() => api.getArmies().then(setArmies).catch(() => {})}
+          onFlyTo={(h3) => {
+            try {
+              const [lat, lng] = cellToLatLng(h3)
+              map.current?.flyTo({ center: [lng, lat], zoom: 12, speed: 1.5 })
+            } catch {}
+          }}
         />
       )}
 
@@ -775,26 +810,36 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
         </div>
       )}
 
-      {/* ── March mode banner ───────────────────────────────────── */}
-      {marchMode && (
+      {/* ── Mode banners ─────────────────────────────────────────── */}
+      {(marchMode || rallyMode) && (
         <div style={{
           position: 'absolute', top: 56,
           left: isMobile ? 8 : '50%',
           right: isMobile ? 8 : 'auto',
           transform: isMobile ? 'none' : 'translateX(-50%)',
-          background: 'rgba(80,20,20,0.94)', border: '1px solid rgba(180,50,50,0.5)',
+          background: rallyMode ? 'rgba(20,60,20,0.94)' : 'rgba(80,20,20,0.94)',
+          border: `1px solid ${rallyMode ? 'rgba(50,150,50,0.5)' : 'rgba(180,50,50,0.5)'}`,
           borderRadius: 6, padding: isMobile ? '10px 16px' : '9px 22px',
-          color: '#d49090', fontFamily: 'Georgia, serif', fontSize: isMobile ? 12 : 13, letterSpacing: 2,
+          color: rallyMode ? '#90d490' : '#d49090',
+          fontFamily: 'Georgia, serif', fontSize: isMobile ? 12 : 13, letterSpacing: 2,
           textTransform: 'uppercase', display: 'flex', alignItems: 'center', gap: 16,
           justifyContent: isMobile ? 'space-between' : 'flex-start',
         }}>
           <span>
-            {marchMode.battleMode && !marchMode.fromHex
-              ? 'Select source hex to reinforce from'
-              : 'Select target hex'}
+            {rallyMode
+              ? 'Click an owned hex to set as rally point'
+              : marchMode?.battleMode && !marchMode.fromHex
+                ? 'Select source hex to reinforce from'
+                : 'Select target hex'}
           </span>
-          <button onClick={() => setMarchMode(null)}
-            style={{ background: 'none', border: '1px solid rgba(180,50,50,0.5)', borderRadius: 4, color: '#d49090', cursor: 'pointer', padding: '2px 10px', fontSize: 12 }}>
+          <button
+            onClick={() => { setMarchMode(null); setRallyMode(null) }}
+            style={{
+              background: 'none',
+              border: `1px solid ${rallyMode ? 'rgba(50,150,50,0.5)' : 'rgba(180,50,50,0.5)'}`,
+              borderRadius: 4, color: rallyMode ? '#90d490' : '#d49090',
+              cursor: 'pointer', padding: '2px 10px', fontSize: 12,
+            }}>
             Cancel
           </button>
         </div>
@@ -832,6 +877,7 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
             map.current?.setFilter('hex-selected', ['==', ['get', 'h3'], ''])
             setMarchMode({ fromHex, troops })
           }}
+          onSetRallyMode={fromHex => setRallyMode(fromHex)}
           onClose={() => {
             setSelectedHex(null)
             map.current?.setFilter('hex-selected', ['==', ['get', 'h3'], ''])

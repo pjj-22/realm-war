@@ -3,6 +3,7 @@ import { pool } from '../db.js'
 import { requireAuth } from '../auth.js'
 import { getIO } from '../socket.js'
 import { isOcean } from '../terrain.js'
+import { getCountry } from '../countries.js'
 import { STARTING_TROOPS } from '../config.js'
 
 const router = Router()
@@ -11,16 +12,20 @@ const router = Router()
 router.get('/', async (req, res) => {
   try {
     const result = await pool.query(`
-      SELECT h.h3_index, h.owner_id, h.upgrade_level, p.color, p.username, p.capital_hex,
+      SELECT h.h3_index, h.owner_id, h.upgrade_level, h.rally_hex, p.color, p.username, p.capital_hex,
         COALESCE(SUM(DISTINCT t.quantity), 0)::integer AS troop_count,
         COALESCE(array_agg(DISTINCT b.type) FILTER (WHERE b.type IS NOT NULL), '{}') AS building_types
       FROM hexes h
       JOIN players p ON p.id = h.owner_id
       LEFT JOIN troops t ON t.h3_index = h.h3_index
       LEFT JOIN buildings b ON b.h3_index = h.h3_index
-      GROUP BY h.h3_index, h.owner_id, h.upgrade_level, p.color, p.username, p.capital_hex
+      GROUP BY h.h3_index, h.owner_id, h.upgrade_level, h.rally_hex, p.color, p.username, p.capital_hex
     `)
-    res.json(result.rows)
+    const rows = result.rows.map(h => {
+      const info = getCountry(h.h3_index)
+      return { ...h, country_name: info?.name || null, country_continent: info?.continent || null }
+    })
+    res.json(rows)
   } catch {
     res.status(500).json({ error: 'Server error' })
   }

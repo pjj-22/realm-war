@@ -1,14 +1,11 @@
 import { useState, useEffect, useRef } from 'react'
 
-const TICK_MS = 10 * 60 * 1000 // 10 minutes
-
-// Smoothly interpolates gold between server ticks
-export function useResourceTicker(player, hexCount = 0, buildings = []) {
+export function useResourceTicker(player, hexCount = 0, buildings = [], tickIntervalMs = 10 * 60 * 1000) {
   const [display, setDisplay] = useState({ gold: player?.gold || 0 })
   const lastSyncRef = useRef(Date.now())
 
   const goldPerTick = hexCount + buildings.filter(b => b.type === 'mine').length * 3
-  const goldPerSec = goldPerTick / (TICK_MS / 1000)
+  const goldPerSec = goldPerTick / (tickIntervalMs / 1000)
 
   useEffect(() => {
     if (!player) return

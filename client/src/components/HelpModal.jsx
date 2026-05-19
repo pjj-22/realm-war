@@ -54,7 +54,20 @@ function Row({ icon, label, desc }) {
   )
 }
 
+import { useState, useEffect } from 'react'
+import { api } from '../api/client'
+
 export default function HelpModal({ onClose }) {
+  const [tickLabel, setTickLabel] = useState('10 minutes')
+
+  useEffect(() => {
+    api.getConfig().then(cfg => {
+      const ms = cfg.tick_interval_ms
+      if (!ms) return
+      setTickLabel(ms >= 60000 ? `${ms / 60000} minutes` : `${ms / 1000} seconds`)
+    }).catch(() => {})
+  }, [])
+
   return (
     <div style={S.overlay}>
       <div style={{ ...S.box, position: 'relative' }}>
@@ -87,7 +100,7 @@ export default function HelpModal({ onClose }) {
         <div style={S.section}>
           <div style={S.sectionTitle}>Gold</div>
           <Row icon="💰" label="Your only resource"
-            desc="Earned automatically every 10 minutes. You get 1 gold per hex you own. Each Mine adds +3 gold per tick." />
+            desc={`Earned automatically every ${tickLabel}. You get 1 gold per hex you own. Each Mine adds +3 gold per tick.`} />
         </div>
 
         <div style={S.section}>
