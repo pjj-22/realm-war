@@ -7,7 +7,7 @@
 | Frontend | React + Mapbox GL JS |
 | Backend | Node.js + Express |
 | Real-time | Socket.io |
-| Database | PostgreSQL + PostGIS |
+| Database | PostgreSQL |
 | Hex grid | H3 (Uber) |
 
 ---
@@ -35,23 +35,17 @@
 - HelpModal, mobile-responsive layout (useIsMobile hook)
 - Full dev mode (fast ticks, cheap units, 9999 gold)
 
-### Real-time (partial)
+### Real-time (complete)
 - Socket.io emits: `tick`, `hexes:update`, `armies:update`, `battle:update`
-- Client hook registers listeners but map doesn't auto-refresh on socket events — mostly manual polling
+- Client hook registers listeners; map auto-refreshes on socket events
 
 ---
 
 ## What's Left
 
-### Must-have for v1 (playable multiplayer)
+### Polish / next up
 
-- [ ] **Fix real-time map refresh** — hex ownership and army positions should update live on socket events without manual polling
-- [ ] **Alliances** — invite system, shared map color border, shared vision, resource sending, joint attacks, 24hr dissolution grace period
 - [ ] **Hex upgrade effect** — upgrade_level is tracked but does nothing; give it a gameplay effect (e.g. +1g/tick, +10% defense)
-- [ ] **Schema setup script** — no migrations file; new devs/deploys have no way to initialize the DB
-
-### Nice-to-have for v1
-
 - [ ] **Terrain flavor** — visual-only cosmetic (mountains, desert, coastline coloring based on lat/lng)
 - [ ] **Home region bonus** — 25-hex radius around capital generates slightly more gold
 - [ ] **Push notifications** — capital under attack (always on), border crossings (opt-in)
@@ -61,7 +55,7 @@
 
 - [ ] Multiple troop types (Knights, Archers, Trebuchets) with a combat triangle
 - [ ] Mana resource and global troop upgrades
-- [ ] Alliance leaderboard (combined territory)
+- [ ] Alliance system (invite, shared vision, joint attacks) + alliance leaderboard
 - [ ] Player progression (level, titles based on territory held over time)
 - [ ] Season system (3-month cycles, partial reset, cosmetic rewards)
 - [ ] Historical map (greatest extent timeline per player)
@@ -73,9 +67,9 @@
 
 ## v1 Definition
 
-Playable with real human players and bots. Win condition is owning the most territory. Core loop: expand, build economy, train troops, attack enemies, form alliances.
+Playable with real human players and bots. Win condition is owning the most territory. Core loop: expand, build economy, train troops, attack enemies.
 
-Blocking: real-time map refresh + alliances. Everything else can ship after.
+The core game loop is complete. Remaining items above are polish and future features.
 
 ---
 

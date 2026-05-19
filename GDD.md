@@ -109,38 +109,6 @@ Economy buildings are also **destroyed on capture**.
 
 ---
 
-## Alliance System
-
-Alliances are the political heart of the game.
-
-### Forming an Alliance
-- Any player can **invite** another to form an alliance
-- Both must **formally accept** — creates a named, visible alliance on the map
-- Alliance members' territories show a **shared color border**
-- Alliance members **cannot attack each other**
-- Alliances can have a **charter** (text field) — flavor, rules, goals
-
-### Alliance Benefits
-- Shared map vision (see each other's troop movements)
-- Can send resources to allies
-- Coordinate joint attacks on the same hex simultaneously (stacked forces)
-- Alliance leaderboard — combined territory size
-
-### Breaking an Alliance
-- Either party can **formally declare dissolution**
-- There is a **24-hour grace period** after declaration — both sides are notified, no attacks allowed between them during this window
-- After 24 hours the alliance is broken and war can begin
-- **Betrayal** (attacking an ally before formal dissolution) is technically impossible by design — the game enforces the grace period
-
-### Alliances as Protection
-- Since there are no offline shields, **allies are your only protection while you sleep**
-- A player in a strong alliance has allies in other time zones watching their borders
-- This makes alliances feel essential, not optional — real political dependency
-
-### Alliance Limits
-- A player can be in **one primary alliance** at a time
-- Smaller **non-aggression pacts** can be formed with others (no shared vision, just a truce)
-
 ---
 
 ## Power Balance — The Core Problem
@@ -191,7 +159,7 @@ Since the game is perpetual, progression is personal:
 - **Player Level** — based on total territory held over time (not current — prevents grief)
 - **Titles** — unlocked at milestones ("Warlord", "Archmage", "Emperor")
 - **Historical Map** — a timeline of your empire's greatest extent
-- **Alliance Hall of Fame** — top alliances by peak territory
+- **Alliance Hall of Fame** — top alliances by peak territory (alliances: future feature)
 
 ---
 
@@ -219,7 +187,7 @@ Every 3 months, a **Season** ends:
 ## Platform
 
 - Mobile first (iOS + Android)
-- Web client secondary (for map watching / alliance management)
+- Web client secondary (for map watching / diplomacy)
 - No AR camera required — the map IS the game
 
 ---
@@ -243,7 +211,7 @@ Every 3 months, a **Season** ends:
 - [ ] How many players per "server" — one global server or regional shards?
 - [x] ~~Combat resolution~~ **Time-based marching.** Armies travel in real time hex by hex. Combat resolves on arrival. Defenders can reinforce during the march window. Watch Towers reveal incoming armies early giving defenders response time.
 - [x] ~~Starting territories~~ **Suggested placement near player's real location with a home region bonus.** Bonus zone is a ~25 hex radius (~Colorado-sized) around the starting hex. Within this zone: +resource generation, +march speed, +defense. Players can ignore the suggestion and start elsewhere but forfeit the bonus.
-- [x] ~~Notifications~~ **Capital attack notifications always on. Everything else opt-in per type:** Watch Tower alerts, border crossing alerts, alliance-under-attack alerts. Lets players tune to their play style.
+- [x] ~~Notifications~~ **Capital attack notifications always on. Everything else opt-in per type:** Watch Tower alerts, border crossing alerts. Lets players tune to their play style.
 
 ---
 
