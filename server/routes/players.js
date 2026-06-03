@@ -2,7 +2,7 @@ import { Router } from 'express'
 import bcrypt from 'bcryptjs'
 import { pool } from '../db.js'
 import { signToken, requireAuth } from '../auth.js'
-import { STARTING_GOLD, STARTING_MANA, TICK_INTERVAL_MS, BUILDING_TIME_SECONDS } from '../config.js'
+import { STARTING_GOLD, STARTING_MANA, TICK_INTERVAL_MS, BUILDING_TIME_SECONDS, GOLD_CAP_BASE } from '../config.js'
 import { nextTickAt } from '../tick.js'
 import { getCountry } from '../countries.js'
 
@@ -37,7 +37,7 @@ router.post('/login', async (req, res) => {
 
   try {
     const result = await pool.query(
-      'SELECT id, username, color, gold, capital_hex, password_hash FROM players WHERE username = $1',
+      'SELECT id, username, color, gold, capital_hex, password_hash, last_login_date, login_streak FROM players WHERE username = $1',
       [username]
     )
     const player = result.rows[0]
@@ -46,8 +46,25 @@ router.post('/login', async (req, res) => {
     const valid = await bcrypt.compare(password, player.password_hash)
     if (!valid) return res.status(401).json({ error: 'Invalid credentials' })
 
-    const { password_hash, ...playerData } = player
-    res.json({ token: signToken(playerData), player: playerData })
+    const { password_hash, last_login_date, login_streak, ...playerData } = player
+
+    // Daily login bonus
+    let loginBonus = null
+    const today = new Date().toISOString().split('T')[0]
+    const lastDate = last_login_date ? last_login_date.toISOString().split('T')[0] : null
+    if (lastDate !== today) {
+      const yesterday = new Date(Date.now() - 86400000).toISOString().split('T')[0]
+      const newStreak = lastDate === yesterday ? (login_streak || 0) + 1 : 1
+      const bonusGold = newStreak >= 7 ? 100 : newStreak >= 3 ? 50 : 20
+      await pool.query(
+        'UPDATE players SET gold = LEAST(gold + $1, $2), last_login_date = $3::date, login_streak = $4 WHERE id = $5',
+        [bonusGold, GOLD_CAP_BASE, today, newStreak, playerData.id]
+      )
+      playerData.gold = Math.min(playerData.gold + bonusGold, GOLD_CAP_BASE)
+      loginBonus = { gold: bonusGold, streak: newStreak }
+    }
+
+    res.json({ token: signToken(playerData), player: playerData, loginBonus })
   } catch {
     res.status(500).json({ error: 'Server error' })
   }
@@ -132,6 +149,25 @@ router.get('/me', requireAuth, async (req, res) => {
   } catch {
     res.status(500).json({ error: 'Server error' })
   }
+})
+
+// Hex history — returns up to 120 datapoints over the last 30 days
+router.get('/history', requireAuth, async (req, res) => {
+  try {
+    const rows = await pool.query(
+      `SELECT hex_count, recorded_at FROM hex_history
+       WHERE player_id = $1 AND recorded_at > NOW() - INTERVAL '30 days'
+       ORDER BY recorded_at ASC`,
+      [req.player.id]
+    )
+    // Downsample to max 120 points so the client stays lean
+    const data = rows.rows
+    const MAX = 120
+    if (data.length <= MAX) return res.json(data)
+    const step = data.length / MAX
+    const sampled = Array.from({ length: MAX }, (_, i) => data[Math.floor(i * step)])
+    res.json(sampled)
+  } catch { res.status(500).json({ error: 'Server error' }) }
 })
 
 export default router

@@ -59,7 +59,7 @@ export default function AuthModal({ onAuth, onDismiss }) {
         ? await api.register(username, password, color)
         : await api.login(username, password)
       localStorage.setItem('rw_token', data.token)
-      onAuth(data.player, isNew)
+      onAuth(data.player, isNew, data.loginBonus || null)
     } catch (err) {
       setError(err.message)
     } finally {

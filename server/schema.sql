@@ -3,14 +3,16 @@
 -- Usage: psql -d realmwar -f schema.sql
 
 CREATE TABLE IF NOT EXISTS players (
-  id            SERIAL PRIMARY KEY,
-  username      TEXT        NOT NULL UNIQUE,
-  password_hash TEXT        NOT NULL,
-  color         TEXT        NOT NULL DEFAULT '#4a90d9',
-  gold          INTEGER     NOT NULL DEFAULT 100,
-  mana          INTEGER     NOT NULL DEFAULT 0,
-  capital_hex   TEXT,
-  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  id               SERIAL PRIMARY KEY,
+  username         TEXT        NOT NULL UNIQUE,
+  password_hash    TEXT        NOT NULL,
+  color            TEXT        NOT NULL DEFAULT '#4a90d9',
+  gold             INTEGER     NOT NULL DEFAULT 100,
+  mana             INTEGER     NOT NULL DEFAULT 0,
+  capital_hex      TEXT,
+  last_login_date  DATE,
+  login_streak     INTEGER     NOT NULL DEFAULT 0,
+  created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE TABLE IF NOT EXISTS hexes (

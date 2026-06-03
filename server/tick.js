@@ -4,6 +4,8 @@ import { getIO } from './socket.js'
 import { ensureBots, processBots } from './bots.js'
 import { gridDistance } from 'h3-js'
 import { isOcean } from './terrain.js'
+import { STRATEGIC_HEXES, STRATEGIC_BONUS_GOLD, STRATEGIC_DEFENSE_BONUS, CAPITAL_COUNTRY } from './strategic.js'
+import { getCountry } from './countries.js'
 
 async function insertEvent(playerId, type, message, hexIndex = null) {
   try {
@@ -35,12 +37,63 @@ export async function runTick() {
       LEFT JOIN buildings b ON b.h3_index = h.h3_index
       GROUP BY p.id
     `, [BUILDING_TIME_SECONDS])
+    const strategicIndexes = Array.from(STRATEGIC_HEXES.keys())
     for (const row of result.rows) {
-      const goldGain = (Number(row.hex_count) * BASE_RATE.gold) + Number(row.gold_from_buildings)
+      let goldGain = (Number(row.hex_count) * BASE_RATE.gold) + Number(row.gold_from_buildings)
       if (goldGain === 0) continue
+      // Strategic hex bonus — count how many strategic hexes this player owns
+      const sRes = await pool.query(
+        'SELECT COUNT(*) AS cnt FROM hexes WHERE owner_id=$1 AND h3_index = ANY($2)',
+        [row.id, strategicIndexes]
+      )
+      goldGain += Number(sRes.rows[0].cnt) * STRATEGIC_BONUS_GOLD
       await pool.query('UPDATE players SET gold=gold+$1 WHERE id=$2', [goldGain, row.id])
     }
     console.log(`[tick] Resources updated for ${result.rows.length} players.`)
+
+    // Record hex history — only when count changes, 30-day retention
+    const lastSnaps = await pool.query(
+      'SELECT DISTINCT ON (player_id) player_id, hex_count FROM hex_history ORDER BY player_id, recorded_at DESC'
+    )
+    const lastMap = new Map(lastSnaps.rows.map(r => [r.player_id, Number(r.hex_count)]))
+    const toRecord = result.rows.filter(r => lastMap.get(r.id) !== Number(r.hex_count))
+    if (toRecord.length > 0) {
+      const vals = toRecord.map((_, i) => `($${i * 2 + 1}, $${i * 2 + 2})`).join(',')
+      const params = toRecord.flatMap(r => [r.id, Number(r.hex_count)])
+      await pool.query(`INSERT INTO hex_history (player_id, hex_count) VALUES ${vals}`, params)
+    }
+    // Prune rows older than 30 days
+    await pool.query("DELETE FROM hex_history WHERE recorded_at < NOW() - INTERVAL '30 days'")
+
+    // Territory income — primary capitals pay 1.1^N bonus where N = owner's hex count in that country
+    if (CAPITAL_COUNTRY.size > 0) {
+      const allHexes = await pool.query('SELECT h3_index, owner_id FROM hexes')
+
+      // Build: playerId → Map<countryName, count>
+      const playerCountry = new Map()
+      for (const { h3_index, owner_id } of allHexes.rows) {
+        const country = getCountry(h3_index)?.name
+        if (!country) continue
+        if (!playerCountry.has(owner_id)) playerCountry.set(owner_id, new Map())
+        const m = playerCountry.get(owner_id)
+        m.set(country, (m.get(country) || 0) + 1)
+      }
+
+      // For each owned primary capital, award territory bonus
+      const capitalList = Array.from(CAPITAL_COUNTRY.keys())
+      const ownedCapitals = await pool.query(
+        'SELECT h3_index, owner_id FROM hexes WHERE h3_index = ANY($1)',
+        [capitalList]
+      )
+      for (const { h3_index, owner_id } of ownedCapitals.rows) {
+        const country = CAPITAL_COUNTRY.get(h3_index)
+        const total = playerCountry.get(owner_id)?.get(country) || 0
+        const N = Math.min(Math.max(0, total - 1), 60) // exclude capital, cap at 60 (1.1^60 = 304g)
+        const bonus = Math.floor(Math.pow(1.1, N))
+        await pool.query('UPDATE players SET gold = gold + $1 WHERE id = $2', [bonus, owner_id])
+        if (N > 0) console.log(`[tick] territory: +${bonus}g for ${h3_index} (${country}, N=${N})`)
+      }
+    }
 
     // Enforce gold cap
     await pool.query(`
@@ -173,7 +226,8 @@ export async function processCombat() {
             [army.to_hex, BUILDING_TIME_SECONDS]
           )
           const forts = Number(fortsRes.rows[0]?.cnt || 0)
-          const defMultiplier = 1 + forts * FORT_DEFENSE_BONUS
+          const strategicBonus = STRATEGIC_HEXES.has(army.to_hex) ? STRATEGIC_DEFENSE_BONUS : 0
+          const defMultiplier = 1 + forts * FORT_DEFENSE_BONUS + strategicBonus
           const defStr = defenders.rows.reduce((s, t) => s + t.quantity, 0) * defMultiplier
 
           if (defStr === 0) {

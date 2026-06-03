@@ -42,6 +42,8 @@ export const api = {
   getEventCount: () => request('GET', '/events/count'),
   devRefill: () => request('POST', '/dev/refill'),
   getConfig: () => request('GET', '/health'),
+  getStrategicHexes: () => request('GET', '/hexes/strategic'),
+  getHistory: () => request('GET', '/players/history'),
   setRally: (fromHex, rallyHex) => request('POST', '/military/rally', { fromHex, rallyHex }),
   clearRally: (h3Index) => request('DELETE', `/military/rally/${h3Index}`),
 }

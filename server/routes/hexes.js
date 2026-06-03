@@ -5,6 +5,7 @@ import { getIO } from '../socket.js'
 import { isOcean } from '../terrain.js'
 import { getCountry } from '../countries.js'
 import { STARTING_TROOPS } from '../config.js'
+import { STRATEGIC_HEXES, STRATEGIC_BONUS_GOLD } from '../strategic.js'
 
 const router = Router()
 
@@ -12,7 +13,7 @@ const router = Router()
 router.get('/', async (req, res) => {
   try {
     const result = await pool.query(`
-      SELECT h.h3_index, h.owner_id, h.upgrade_level, h.rally_hex, p.color, p.username, p.capital_hex,
+      SELECT h.h3_index, h.owner_id, h.upgrade_level, h.rally_hex, h.claimed_at, p.color, p.username, p.capital_hex,
         COALESCE(SUM(DISTINCT t.quantity), 0)::integer AS troop_count,
         COALESCE(array_agg(DISTINCT b.type) FILTER (WHERE b.type IS NOT NULL), '{}') AS building_types
       FROM hexes h
@@ -23,12 +24,38 @@ router.get('/', async (req, res) => {
     `)
     const rows = result.rows.map(h => {
       const info = getCountry(h.h3_index)
-      return { ...h, country_name: info?.name || null, country_continent: info?.continent || null }
+      const strategic = STRATEGIC_HEXES.get(h.h3_index)
+      return {
+        ...h,
+        country_name: info?.name || null,
+        country_continent: info?.continent || null,
+        strategic_name: strategic?.name || null,
+        strategic_bonus: strategic ? STRATEGIC_BONUS_GOLD : 0,
+        strategic_primary: strategic?.primary || false,
+      }
     })
     res.json(rows)
   } catch {
     res.status(500).json({ error: 'Server error' })
   }
+})
+
+// Strategic hexes — all locations with current ownership
+router.get('/strategic', async (req, res) => {
+  try {
+    const indexes = Array.from(STRATEGIC_HEXES.keys())
+    const owned = await pool.query(
+      'SELECT h.h3_index, p.username, p.color FROM hexes h JOIN players p ON p.id = h.owner_id WHERE h.h3_index = ANY($1)',
+      [indexes]
+    )
+    const ownerMap = new Map(owned.rows.map(r => [r.h3_index, { username: r.username, color: r.color }]))
+    const result = indexes.map(h3 => {
+      const def = STRATEGIC_HEXES.get(h3)
+      const owner = ownerMap.get(h3) || null
+      return { h3_index: h3, name: def.name, primary: def.primary, bonus_gold: STRATEGIC_BONUS_GOLD, owner }
+    })
+    res.json(result)
+  } catch { res.status(500).json({ error: 'Server error' }) }
 })
 
 // Batch terrain check — returns { h3Index: 'ocean' | 'land', ... }
@@ -80,6 +107,11 @@ router.post('/claim', requireAuth, async (req, res) => {
          VALUES ($1, $2, 'troop', $3)
          ON CONFLICT (owner_id, h3_index, type) DO UPDATE SET quantity = troops.quantity + EXCLUDED.quantity`,
         [req.player.id, h3Index, STARTING_TROOPS]
+      )
+      // Starter mine — free gift so new players immediately earn gold
+      await pool.query(
+        `INSERT INTO buildings (h3_index, type) VALUES ($1, 'mine') ON CONFLICT DO NOTHING`,
+        [h3Index]
       )
     }
 

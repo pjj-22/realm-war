@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, useCallback } from 'react'
 import { useSocket } from '../hooks/useSocket'
 import { toast } from './Toast'
 import maplibregl from 'maplibre-gl'
-import { latLngToCell, cellToBoundary, cellToLatLng, gridDisk, gridPathCells } from 'h3-js'
+import { polygonToCells, cellToBoundary, cellToLatLng, cellToParent, gridDisk, gridPathCells } from 'h3-js'
 import 'maplibre-gl/dist/maplibre-gl.css'
 import BottomDrawer from './BottomDrawer'
 import ArmiesHUD from './ArmiesHUD'
@@ -17,28 +17,58 @@ import { GoldIcon } from './Icons'
 
 
 const HEX_RESOLUTION = 7
-const MAX_HEXES = 10000
 
-function getViewportHexes(map) {
-  const zoom = map.getZoom()
-  if (zoom < 5) return []
-
+function getViewportPolygon(map) {
   const bounds = map.getBounds()
   const ne = bounds.getNorthEast()
   const sw = bounds.getSouthWest()
-  const cellSet = new Set()
-  const steps = 25
-  const latStep = (ne.lat - sw.lat) / steps
-  const lngStep = (ne.lng - sw.lng) / steps
+  return [[
+    [ne.lat, sw.lng],
+    [ne.lat, ne.lng],
+    [sw.lat, ne.lng],
+    [sw.lat, sw.lng],
+    [ne.lat, sw.lng],
+  ]]
+}
 
-  for (let lat = sw.lat; lat <= ne.lat + latStep; lat += latStep) {
-    for (let lng = sw.lng; lng <= ne.lng + lngStep; lng += lngStep) {
-      const cell = latLngToCell(lat, lng, HEX_RESOLUTION)
-      gridDisk(cell, 1).forEach(c => cellSet.add(c))
-    }
+function getViewportHexes(map) {
+  if (map.getZoom() < 8) return []
+  return polygonToCells(getViewportPolygon(map), HEX_RESOLUTION)
+}
+
+function getOverviewHexes(map) {
+  const zoom = map.getZoom()
+  if (zoom >= 8 || zoom < 3) return { cells: [], res: 4 }
+  const res = zoom < 5 ? 2 : zoom < 6 ? 3 : zoom < 7 ? 4 : 5
+  return { cells: polygonToCells(getViewportPolygon(map), res), res }
+}
+
+function buildOverviewGeoJSON(cells, res, claimedHexes) {
+  // Bottom-up: walk claimed hexes once, find their parent at overview res — O(claimed) not O(cells × children)
+  const ownerByParent = {}
+  for (const [cell, claimed] of Object.entries(claimedHexes)) {
+    if (!claimed.owner_id) continue
+    const parent = cellToParent(cell, res)
+    if (!ownerByParent[parent]) ownerByParent[parent] = {}
+    const entry = ownerByParent[parent][claimed.owner_id] ||= { count: 0, color: claimed.color }
+    entry.count++
   }
 
-  return Array.from(cellSet).slice(0, MAX_HEXES)
+  return {
+    type: 'FeatureCollection',
+    features: cells.map(cell => {
+      const boundary = cellToBoundary(cell)
+      const coords = boundary.map(([lat, lng]) => [lng, lat])
+      coords.push(coords[0])
+      const tally = ownerByParent[cell] || {}
+      const dominant = Object.values(tally).sort((a, b) => b.count - a.count)[0]
+      return {
+        type: 'Feature',
+        properties: { color: dominant?.color || null },
+        geometry: { type: 'Polygon', coordinates: [coords] },
+      }
+    }),
+  }
 }
 
 function hexToGeoJSONFeature(cell, claimed, visibleSet) {
@@ -259,6 +289,37 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
     } catch {}
   }, [])
 
+  const strategicRef = useRef({})
+
+  const loadStrategic = useCallback(async () => {
+    if (!map.current?.getSource('strategic')) return
+    try {
+      const hexes = await api.getStrategicHexes()
+      // Store for click enrichment
+      const byIndex = {}
+      hexes.forEach(h => { byIndex[h.h3_index] = h })
+      strategicRef.current = byIndex
+
+      const features = hexes.map(h => {
+        const boundary = cellToBoundary(h.h3_index)
+        const coords = boundary.map(([lat, lng]) => [lng, lat])
+        coords.push(coords[0])
+        return {
+          type: 'Feature',
+          properties: {
+            name: h.name,
+            primary: h.primary || false,
+            bonus_gold: h.bonus_gold,
+            owner_color: h.owner?.color || null,
+            owner_username: h.owner?.username || null,
+          },
+          geometry: { type: 'Polygon', coordinates: [coords] },
+        }
+      })
+      map.current.getSource('strategic').setData({ type: 'FeatureCollection', features })
+    } catch {}
+  }, [])
+
   const loadArmies = useCallback(async () => {
     try { setArmies(await api.getArmies()) } catch {}
   }, [])
@@ -276,10 +337,11 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
   useEffect(() => { loadArmies() }, [loadArmies])
   useEffect(() => { loadActiveBattles() }, [loadActiveBattles])
   useEffect(() => { if (player) loadStats() }, [player?.id, loadStats])
+  useEffect(() => { loadStrategic() }, [loadStrategic])
 
   // Socket-driven updates — replace polling intervals
   useSocket({
-    'hexes:update': loadClaimed,
+    'hexes:update': () => { loadClaimed(); loadStrategic() },
     'armies:update': loadArmies,
     'battle:update': loadActiveBattles,
     'tick': loadStats,
@@ -335,7 +397,28 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
         data: { type: 'FeatureCollection', features: [] },
       })
 
-      // Full hex grid (visible at zoom 5+)
+      // Overview hex grid — coarser resolution at low zoom (zoom 3–7)
+      map.current.addSource('overview-hexes', {
+        type: 'geojson',
+        data: { type: 'FeatureCollection', features: [] },
+      })
+      map.current.addLayer({
+        id: 'overview-hex-fill',
+        type: 'fill',
+        source: 'overview-hexes',
+        paint: {
+          'fill-color': ['case', ['!=', ['get', 'color'], null], ['get', 'color'], 'rgba(60,40,120,0.5)'],
+          'fill-opacity': 0.4,
+        },
+      })
+      map.current.addLayer({
+        id: 'overview-hex-border',
+        type: 'line',
+        source: 'overview-hexes',
+        paint: { 'line-color': '#4a3a7a', 'line-width': 0.8, 'line-opacity': 0.6 },
+      })
+
+      // Full hex grid (visible at zoom 7+)
       map.current.addSource('hexes', {
         type: 'geojson',
         data: { type: 'FeatureCollection', features: [] },
@@ -441,17 +524,74 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
         },
       })
 
+      // Strategic hex layer — always visible, shows name + gold bonus
+      map.current.addSource('strategic', {
+        type: 'geojson',
+        data: { type: 'FeatureCollection', features: [] },
+      })
+      map.current.addLayer({
+        id: 'strategic-fill',
+        type: 'fill',
+        source: 'strategic',
+        paint: {
+          'fill-color': ['case', ['!=', ['get', 'owner_color'], null], ['get', 'owner_color'], '#c9902a'],
+          'fill-opacity': ['case', ['!=', ['get', 'owner_color'], null], 0.55, 0.25],
+        },
+      })
+      map.current.addLayer({
+        id: 'strategic-border',
+        type: 'line',
+        source: 'strategic',
+        paint: { 'line-color': '#f0c040', 'line-width': 1.5, 'line-opacity': 0.9 },
+      })
+      map.current.addLayer({
+        id: 'strategic-label',
+        type: 'symbol',
+        source: 'strategic',
+        minzoom: 4,
+        layout: {
+          'text-field': ['concat',
+            ['get', 'name'],
+            '\n+', ['to-string', ['get', 'bonus_gold']], 'g',
+            ['case', ['boolean', ['get', 'primary'], false], ' +territory', ''],
+          ],
+          'text-size': ['interpolate', ['linear'], ['zoom'], 4, 9, 8, 13],
+          'text-allow-overlap': false,
+          'text-anchor': 'center',
+        },
+        paint: {
+          'text-color': '#f0d080',
+          'text-halo-color': 'rgba(0,0,0,0.85)',
+          'text-halo-width': 2,
+        },
+      })
+
       updateHexes()
+      updateOverview()
       updateClaimed()
+      loadStrategic()
       // armies state may already be loaded — force a sync
       map.current.once('idle', () => {
         setArmies(prev => [...prev])
       })
+
+      // New player with no capital — zoom to Europe at a playable level
+      if (!playerRef.current?.capital_hex) {
+        map.current.flyTo({ center: [10, 48], zoom: 8, speed: 0.6 })
+      }
     })
 
-    map.current.on('moveend', updateHexes)
-    map.current.on('zoomend', updateHexes)
-    map.current.on('zoom', () => setZoom(map.current.getZoom()))
+    map.current.on('moveend', () => { updateHexes(); updateOverview() })
+    map.current.on('zoomend', () => { updateHexes(); updateOverview() })
+    map.current.on('zoom', () => {
+      const z = map.current.getZoom()
+      setZoom(z)
+      if (z < 8 && !marchModeRef.current && !rallyModeRef.current) {
+        map.current.getCanvas().style.cursor = 'zoom-in'
+      } else if (z >= 8) {
+        map.current.getCanvas().style.cursor = ''
+      }
+    })
 
     map.current.on('click', 'hex-fill', (e) => {
       const hex = e.features[0]?.properties
@@ -489,8 +629,15 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
             .catch(err => toast(err.message))
           return null
         }
-        // Normal click — select hex
-        setSelectedHex(hex)
+        // Normal click — select hex, enrich with strategic info if applicable
+        const strategic = strategicRef.current[hex.h3]
+        const enriched = strategic ? {
+          ...hex,
+          strategic_name: strategic.name,
+          strategic_bonus: strategic.bonus_gold,
+          strategic_primary: strategic.primary,
+        } : hex
+        setSelectedHex(enriched)
         map.current.setFilter('hex-selected', ['==', ['get', 'h3'], hex.h3])
         return null
       })
@@ -500,6 +647,12 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
       map.current.getCanvas().style.cursor = (marchModeRef.current || rallyModeRef.current) ? 'crosshair' : 'pointer'
     })
     map.current.on('mouseleave', 'hex-fill', () => { map.current.getCanvas().style.cursor = '' })
+
+    // Clicking an overview hex zooms into that area
+    map.current.on('click', 'overview-hex-fill', (e) => {
+      const center = e.lngLat
+      map.current.flyTo({ center: [center.lng, center.lat], zoom: 7, speed: 0.8 })
+    })
 
     return () => {
       Object.values(battleMarkersRef.current).forEach(m => m.remove())
@@ -541,6 +694,12 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
     map.current.getSource('hexes').setData(buildGeoJSON(cells, claimedRef.current, visibleSetRef.current))
   }
 
+  function updateOverview() {
+    if (!map.current?.getSource('overview-hexes')) return
+    const { cells, res } = getOverviewHexes(map.current)
+    map.current.getSource('overview-hexes').setData(buildOverviewGeoJSON(cells, res, claimedRef.current))
+  }
+
   function updateClaimed() {
     if (!map.current?.getSource('claimed')) return
     const visibleSet = player ? buildVisibleSet(claimedRef.current, player.id) : null
@@ -548,6 +707,7 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
     map.current.getSource('claimed').setData(buildClaimedGeoJSON(claimedRef.current, visibleSet))
     map.current.getSource('claimed-points')?.setData(buildClaimedPoints(claimedRef.current, visibleSet))
     map.current.getSource('building-pips')?.setData(buildPipFeatures(claimedRef.current))
+    updateOverview()
   }
 
   const visibleSetRef = useRef(null)
@@ -626,7 +786,13 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
   async function handleClaim(h3Index) {
     if (!player) return
     try {
-      await api.claimHex(h3Index)
+      const result = await api.claimHex(h3Index)
+      if (result.isCapital) {
+        onPlayerUpdate?.({ capital_hex: h3Index })
+        toast('Capital founded! A free Mine has been built.', 'success')
+      } else {
+        toast('Territory claimed.', 'success')
+      }
       await loadClaimed()
       updateClaimed()
       setSelectedHex(prev => ({ ...prev, color: player.color, username: player.username, owner: player.id }))
@@ -801,7 +967,7 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
       />
 
       {/* ── Zoom hint ───────────────────────────────────────────── */}
-      {zoom < 5 && (
+      {zoom < 8 && (
         <div style={{
           position: 'absolute', bottom: 90, left: '50%', transform: 'translateX(-50%)',
           color: '#6a5878', fontSize: 12, letterSpacing: 3, pointerEvents: 'none', whiteSpace: 'nowrap',
@@ -860,6 +1026,7 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
         <BottomDrawer
           hex={selectedHex}
           player={player}
+          stats={stats}
           onClaim={handleClaim}
           onLoginRequired={onLoginRequired}
           onBuild={(updatedPlayer, h3Index, buildingType) => {

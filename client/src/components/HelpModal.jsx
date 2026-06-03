@@ -16,27 +16,27 @@ const S = {
     textAlign: 'center', marginBottom: 6, color: '#e0c070',
   },
   subtitle: {
-    fontSize: 12, color: '#9a8060', textAlign: 'center',
+    fontSize: 14, color: '#9a8060', textAlign: 'center',
     letterSpacing: 2, textTransform: 'uppercase', marginBottom: 24,
   },
   section: { marginBottom: 20 },
   sectionTitle: {
-    fontSize: 11, letterSpacing: 3, textTransform: 'uppercase',
+    fontSize: 14, letterSpacing: 3, textTransform: 'uppercase',
     color: '#b08040', marginBottom: 10, borderBottom: '1px solid rgba(160,110,30,0.2)',
     paddingBottom: 4,
   },
   row: { display: 'flex', alignItems: 'flex-start', gap: 10, marginBottom: 8 },
   icon: { fontSize: 16, width: 22, textAlign: 'center', flexShrink: 0, marginTop: 1 },
-  label: { fontSize: 13, color: '#e0c070', fontWeight: 'bold', marginBottom: 2 },
-  desc: { fontSize: 12, color: '#9a8a7a', lineHeight: 1.5 },
+  label: { fontSize: 14, color: '#e0c070', fontWeight: 'bold', marginBottom: 2 },
+  desc: { fontSize: 14, color: '#9a8a7a', lineHeight: 1.5 },
   tip: {
-    fontSize: 12, color: '#8a7860', lineHeight: 1.6, marginBottom: 6,
+    fontSize: 14, color: '#8a7860', lineHeight: 1.6, marginBottom: 6,
     paddingLeft: 12, borderLeft: '2px solid rgba(160,110,30,0.4)',
   },
   btn: {
     width: '100%', padding: '11px', marginTop: 8,
     background: 'rgba(150,100,20,0.3)', border: '1px solid rgba(200,150,40,0.5)',
-    borderRadius: 5, color: '#d4b870', fontSize: 13,
+    borderRadius: 5, color: '#d4b870', fontSize: 14,
     letterSpacing: 3, textTransform: 'uppercase',
     fontFamily: 'Georgia, serif', cursor: 'pointer',
   },
@@ -99,8 +99,10 @@ export default function HelpModal({ onClose }) {
 
         <div style={S.section}>
           <div style={S.sectionTitle}>Gold</div>
-          <Row icon="💰" label="Your only resource"
-            desc={`Earned automatically every ${tickLabel}. You get 1 gold per hex you own. Each Mine adds +3 gold per tick.`} />
+          <Row icon="💰" label="Earned every tick"
+            desc={`Gold arrives automatically every ${tickLabel}. You earn 1g per hex you own, +3g per Mine.`} />
+          <Row icon="★★" label="Strategic capitals"
+            desc="Gold and glowing-bordered hexes are strategic locations worth +5g per tick. Primary capitals (marked +territory) pay exponentially more based on how much of that country you control — own London and dominate Britain to earn serious income." />
         </div>
 
         <div style={S.section}>

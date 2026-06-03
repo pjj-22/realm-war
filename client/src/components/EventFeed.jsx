@@ -103,7 +103,7 @@ export default function EventFeed() {
             alignItems: 'center',
             padding: '8px 12px',
             borderBottom: '1px solid rgba(255,255,255,0.07)',
-            fontSize: 11,
+            fontSize: 14,
             letterSpacing: 2,
             textTransform: 'uppercase',
             color: '#7a6890',
@@ -116,7 +116,7 @@ export default function EventFeed() {
           </div>
           <div style={{ overflowY: 'auto', flex: 1 }}>
             {events.length === 0 ? (
-              <div style={{ padding: 16, color: '#6a5878', fontSize: 12, textAlign: 'center' }}>
+              <div style={{ padding: 16, color: '#6a5878', fontSize: 14, textAlign: 'center' }}>
                 No notifications
               </div>
             ) : events.map(ev => (
@@ -132,10 +132,10 @@ export default function EventFeed() {
                   {TYPE_ICON[ev.type] || '·'}
                 </span>
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 12, color: '#c4b498', wordBreak: 'break-word' }}>
+                  <div style={{ fontSize: 14, color: '#c4b498', wordBreak: 'break-word' }}>
                     {ev.message}
                   </div>
-                  <div style={{ fontSize: 10, color: '#6a5878', marginTop: 3 }}>
+                  <div style={{ fontSize: 14, color: '#6a5878', marginTop: 3 }}>
                     {relTime(ev.created_at)}
                   </div>
                 </div>

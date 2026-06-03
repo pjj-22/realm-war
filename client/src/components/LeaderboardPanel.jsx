@@ -3,11 +3,13 @@ import { cellToLatLng } from 'h3-js'
 import { api } from '../api/client'
 import { useIsMobile } from '../hooks/useIsMobile'
 import { useSocket } from '../hooks/useSocket'
+import HistoryChart from './HistoryChart'
 
 export default function LeaderboardPanel({ player, onFlyTo }) {
   const isMobile = useIsMobile()
   const [board, setBoard] = useState([])
   const [open, setOpen] = useState(false)
+  const [showHistory, setShowHistory] = useState(false)
 
   useEffect(() => { load() }, [])
   useSocket({ tick: load, 'hexes:update': load })
@@ -31,32 +33,42 @@ export default function LeaderboardPanel({ player, onFlyTo }) {
     onFlyTo(lng, lat)
   }
 
+  function displayName(username) {
+    return username.startsWith('BOT_') ? username.slice(4) : username
+  }
+
   function Entry({ p, rank }) {
     const isMe = p.username === player?.username
+    const isBot = p.username.startsWith('BOT_')
     const canFly = !!p.capital_hex && !!onFlyTo
     return (
       <div
-        onClick={() => flyToPlayer(p)}
+        onClick={() => isMe ? setShowHistory(h => !h) : flyToPlayer(p)}
         style={{
           display: 'flex', alignItems: 'center', gap: 8,
           padding: '6px 4px',
           opacity: isMe ? 1 : 0.85,
           fontWeight: isMe ? 'bold' : 'normal',
           borderBottom: '1px solid rgba(74,58,122,0.3)',
-          cursor: canFly ? 'pointer' : 'default',
+          cursor: 'pointer',
           borderRadius: 3,
           transition: 'background 0.1s',
+          background: isMe && showHistory ? 'rgba(80,40,160,0.12)' : '',
         }}
-        onMouseEnter={e => { if (canFly) e.currentTarget.style.background = 'rgba(80,40,160,0.15)' }}
-        onMouseLeave={e => { e.currentTarget.style.background = '' }}
-        title={canFly ? `Go to ${p.username}'s capital` : ''}
+        onMouseEnter={e => { e.currentTarget.style.background = 'rgba(80,40,160,0.15)' }}
+        onMouseLeave={e => { e.currentTarget.style.background = isMe && showHistory ? 'rgba(80,40,160,0.12)' : '' }}
+        title={isMe ? 'View your history' : canFly ? `Go to ${displayName(p.username)}'s capital` : ''}
       >
-        <span style={{ fontSize: 11, color: '#8a7a9a', minWidth: 18, textAlign: 'right' }}>{rank}.</span>
+        <span style={{ fontSize: 14, color: '#8a7a9a', minWidth: 18, textAlign: 'right' }}>{rank}.</span>
         <span style={{ width: 9, height: 9, borderRadius: '50%', background: p.color, display: 'inline-block', flexShrink: 0 }} />
-        <span style={{ fontSize: 13, flex: 1 }}>{p.username}</span>
-        <span style={{ fontSize: 12, color: '#9a8aaa' }}>{p.hex_count}▲</span>
-        <span style={{ fontSize: 12, color: '#8a7aaa' }}>{p.total_troops}⚔</span>
-        {canFly && <span style={{ fontSize: 10, color: '#5a4a7a' }}>⌖</span>}
+        <span style={{ fontSize: 14, flex: 1 }}>{displayName(p.username)}</span>
+        {isBot && <span style={{ fontSize: 9, color: '#4a3a6a', letterSpacing: 1 }}>AI</span>}
+        <span style={{ fontSize: 14, color: '#9a8aaa' }}>{p.hex_count}▲</span>
+        <span style={{ fontSize: 14, color: '#8a7aaa' }}>{p.total_troops}⚔</span>
+        {isMe
+          ? <span style={{ fontSize: 11, color: '#6a5a8a' }}>{showHistory ? '▲' : '📈'}</span>
+          : canFly && <span style={{ fontSize: 14, color: '#5a4a7a' }}>⌖</span>
+        }
       </div>
     )
   }
@@ -76,7 +88,7 @@ export default function LeaderboardPanel({ player, onFlyTo }) {
           width: '100%', padding: '8px 14px',
           background: 'none', border: 'none', cursor: 'pointer',
           display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-          color: '#9a8aaa', fontFamily: 'Georgia, serif', fontSize: 12,
+          color: '#9a8aaa', fontFamily: 'Georgia, serif', fontSize: 14,
           letterSpacing: 2, textTransform: 'uppercase',
         }}>
         <span>🏆 Leaderboard</span>
@@ -88,22 +100,34 @@ export default function LeaderboardPanel({ player, onFlyTo }) {
           {top5.map((p, i) => <Entry key={p.username} p={p} rank={i + 1} />)}
           {playerRow && (
             <>
-              <div style={{ fontSize: 11, color: '#6a5878', textAlign: 'center', padding: '3px 0' }}>···</div>
+              <div style={{ fontSize: 14, color: '#6a5878', textAlign: 'center', padding: '3px 0' }}>···</div>
               <Entry p={playerRow} rank={playerRank} />
             </>
           )}
           {player && !playerRow && !playerInTop5 && (
             <>
-              <div style={{ fontSize: 11, color: '#6a5878', textAlign: 'center', padding: '3px 0' }}>···</div>
+              <div style={{ fontSize: 14, color: '#6a5878', textAlign: 'center', padding: '3px 0' }}>···</div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 4px', fontWeight: 'bold' }}>
-                <span style={{ fontSize: 11, color: '#8a7a9a', minWidth: 18, textAlign: 'right' }}>?.</span>
+                <span style={{ fontSize: 14, color: '#8a7a9a', minWidth: 18, textAlign: 'right' }}>?.</span>
                 <span style={{ width: 9, height: 9, borderRadius: '50%', background: player.color, display: 'inline-block', flexShrink: 0 }} />
                 <span style={{ fontSize: 13 }}>{player.username}</span>
               </div>
             </>
           )}
-          <div style={{ fontSize: 10, color: '#4a3a6a', textAlign: 'center', marginTop: 6 }}>
-            Click a player to visit their capital
+
+          {/* History chart — expands when player clicks their own entry */}
+          {showHistory && player && (
+            <div style={{
+              marginTop: 8, paddingTop: 10,
+              borderTop: '1px solid rgba(255,255,255,0.07)',
+              width: 340,
+            }}>
+              <HistoryChart player={player} />
+            </div>
+          )}
+
+          <div style={{ fontSize: 11, color: '#4a3a6a', textAlign: 'center', marginTop: 8 }}>
+            {player ? 'Click your name for history · others to visit' : 'Click a player to visit their capital'}
           </div>
         </div>
       )}

@@ -29,13 +29,13 @@ function HexRow({ hex, isCapital, onFlyTo }) {
       onMouseLeave={e => { e.currentTarget.style.background = isCapital ? 'rgba(80,60,20,0.25)' : 'transparent' }}
     >
       {isCapital
-        ? <span style={{ fontSize: 10, color: '#c9a020', width: 12, flexShrink: 0 }}>★</span>
+        ? <span style={{ fontSize: 14, color: '#c9a020', width: 12, flexShrink: 0 }}>★</span>
         : <span style={{ width: 12, flexShrink: 0 }} />
       }
-      <span style={{ fontSize: 13, color: '#c9b99a', minWidth: 28, textAlign: 'right', flexShrink: 0 }}>
+      <span style={{ fontSize: 14, color: '#c9b99a', minWidth: 28, textAlign: 'right', flexShrink: 0 }}>
         {hex.troop_count}
       </span>
-      <span style={{ fontSize: 11, color: '#5a4a7a', marginLeft: 1, flexShrink: 0 }}>⚔</span>
+      <span style={{ fontSize: 14, color: '#5a4a7a', marginLeft: 1, flexShrink: 0 }}>⚔</span>
       <span style={{ fontSize: 9, color: '#4a3a6a', flex: 1, fontFamily: hex.country_name ? 'Georgia, serif' : 'monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', letterSpacing: 0 }}>
         {hex.country_name || hex.h3_index}
       </span>
@@ -79,7 +79,7 @@ function MarchRow({ army, isOwn, canRecall, onRecall, showDistance }) {
       border: `1px solid ${isOwn ? '#3a2a6a' : '#5a2a2a'}`,
     }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 3 }}>
-        <span style={{ fontSize: 12, color: '#c9b99a' }}>
+        <span style={{ fontSize: 14, color: '#c9b99a' }}>
           {!isOwn && army.color && (
             <span style={{ width: 7, height: 7, borderRadius: '50%', background: army.color, display: 'inline-block', marginRight: 5 }} />
           )}
@@ -88,16 +88,16 @@ function MarchRow({ army, isOwn, canRecall, onRecall, showDistance }) {
         </span>
         <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
           {showDistance && (
-            <span style={{ fontSize: 11, color: hexesAway <= 1 ? '#ff6060' : '#9a6a4a' }}>
+            <span style={{ fontSize: 14, color: hexesAway <= 1 ? '#ff6060' : '#9a6a4a' }}>
               {hexesAway} hex{hexesAway !== 1 ? 'es' : ''} away
             </span>
           )}
-          <span style={{ fontSize: 11, color: '#7a6a9a' }}>{eta}</span>
+          <span style={{ fontSize: 14, color: '#7a6a9a' }}>{eta}</span>
           {canRecall && (
             <button onClick={() => onRecall(army.id)} style={{
               padding: '1px 6px', background: 'rgba(100,30,30,0.4)',
               border: '1px solid #6a2a2a', borderRadius: 3,
-              color: '#c09090', cursor: 'pointer', fontSize: 10, fontFamily: 'Georgia, serif',
+              color: '#c09090', cursor: 'pointer', fontSize: 14, fontFamily: 'Georgia, serif',
             }}>Recall</button>
           )}
         </div>
@@ -150,7 +150,7 @@ export default function ArmiesHUD({ armies, activeBattles = [], player, claimedR
         borderRadius: 6, color: '#c9b99a', cursor: 'pointer', fontSize: 14, letterSpacing: 1,
         boxShadow: threats.length > 0 ? '0 0 12px rgba(180,40,40,0.4)' : '0 0 12px rgba(80,40,160,0.3)',
       }}>
-        <span>⚔ Forces</span>
+        <span>⚔ Armies</span>
         {ownedHexes.length > 0 && (
           <span style={{ background: '#3a2a6a', borderRadius: 10, padding: '2px 8px', fontSize: 12 }}>
             {ownedHexes.length}▲
@@ -207,7 +207,7 @@ export default function ArmiesHUD({ armies, activeBattles = [], player, claimedR
               ))}
             </>
           ) : (
-            <div style={{ fontSize: 12, color: '#5a4a7a', textAlign: 'center', padding: '10px 0' }}>
+            <div style={{ fontSize: 14, color: '#5a4a7a', textAlign: 'center', padding: '10px 0' }}>
               No territory — claim a hex to start
             </div>
           )}
@@ -219,7 +219,7 @@ export default function ArmiesHUD({ armies, activeBattles = [], player, claimedR
 
 function SectionLabel({ color, children }) {
   return (
-    <div style={{ fontSize: 10, color, letterSpacing: 2, marginBottom: 5, textTransform: 'uppercase' }}>
+    <div style={{ fontSize: 14, color, letterSpacing: 2, marginBottom: 5, textTransform: 'uppercase' }}>
       {children}
     </div>
   )
