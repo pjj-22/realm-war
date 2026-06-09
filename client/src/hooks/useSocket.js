@@ -12,7 +12,7 @@ export function getSocket() {
   return socket
 }
 
-// useSocket(handlers) — registers socket event listeners, cleans up on unmount.
+// useSocket(handlers) - registers socket event listeners, cleans up on unmount.
 // handlers object may change each render; we keep a ref so the stable effect
 // always calls the latest version without re-subscribing.
 export function useSocket(handlers) {

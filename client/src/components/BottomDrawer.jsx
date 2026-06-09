@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { api } from '../api/client'
 import { GoldIcon } from './Icons'
+import { MineArt, BarracksArt, FortArt, BuildingIcon } from './BuildingArt'
 import { useIsMobile } from '../hooks/useIsMobile'
 import { useSocket } from '../hooks/useSocket'
 import { toast } from './Toast'
@@ -196,7 +197,7 @@ function UpgradeBar({ completes_at, onExpire }) {
   return (
     <div>
       <div style={{ fontSize: 14, color: '#8070a8', marginBottom: 4 }}>
-        Upgrading — {secs > 0 ? `${secs}s remaining` : 'Complete…'}
+        Upgrading - {secs > 0 ? `${secs}s remaining` : 'Complete…'}
       </div>
       <ProgressBar pct={pct} color="linear-gradient(90deg, #5030c0, #9060f0)" />
     </div>
@@ -343,7 +344,7 @@ export default function BottomDrawer({ hex, player, stats, onClaim, onLoginRequi
     const defMult = 1 + forts * 0.4 + (hex.strategic_name ? 0.2 : 0)
     const hasBarracks = buildingData?.buildings?.some(b => b.type === 'barracks')
 
-    // Estimated total gold generated — segments by when each building was actually built
+    // Estimated total gold generated - segments by when each building was actually built
     const tickInterval = stats?.tick_interval_ms || 600000
     const buildTimeSecs = buildingData?.build_time_seconds || 300
     const totalGenerated = (() => {
@@ -392,7 +393,7 @@ export default function BottomDrawer({ hex, player, stats, onClaim, onLoginRequi
 
     if (isClaimed && isFogged) return (
       <div style={{ fontSize: 14, color: '#6a5838', lineHeight: 1.8 }}>
-        Outside your field of vision — expand your territory to reveal this hex.<br />
+        Outside your field of vision - expand your territory to reveal this hex.<br />
         <span style={{ color: '#5a4828' }}>Troops and income hidden.</span>
       </div>
     )
@@ -476,7 +477,7 @@ export default function BottomDrawer({ hex, player, stats, onClaim, onLoginRequi
             }}>
               <div style={{ fontSize: 11, color: '#9a7040', letterSpacing: 2, textTransform: 'uppercase', marginBottom: 6 }}>Garrison</div>
               <div style={{ fontSize: 26, color: totalTroops > 0 ? '#d4b870' : '#4a3828', fontVariantNumeric: 'tabular-nums' }}>
-                {totalTroops > 0 ? totalTroops : '—'}
+                {totalTroops > 0 ? totalTroops : '-'}
               </div>
               <div style={{ fontSize: 12, color: '#7a6040', marginTop: 2 }}>
                 {totalTroops > 0 ? 'troops ready' : 'undefended'}
@@ -499,7 +500,7 @@ export default function BottomDrawer({ hex, player, stats, onClaim, onLoginRequi
               </div>
             )}
 
-            {/* Defense card — only show if boosted */}
+            {/* Defense card - only show if boosted */}
             {hasFortBonus && (
               <div style={{
                 flex: 1, padding: '14px 16px',
@@ -554,13 +555,13 @@ export default function BottomDrawer({ hex, player, stats, onClaim, onLoginRequi
                 const def = BUILDING_DEFS.find(d => d.type === b.type)
                 return (
                   <div key={b.id} style={{
-                    display: 'flex', alignItems: 'center', gap: 6,
-                    padding: '5px 10px',
+                    display: 'flex', alignItems: 'center', gap: 8,
+                    padding: '5px 10px 5px 6px',
                     background: 'rgba(255,255,255,0.04)',
                     border: '1px solid rgba(255,255,255,0.08)',
-                    borderRadius: 4,
+                    borderRadius: 6,
                   }}>
-                    <span style={{ fontSize: 15 }}>{def?.icon}</span>
+                    <BuildingIcon type={b.type} size={20} />
                     <span style={{ fontSize: 13, color: '#c4b498' }}>{def?.label}</span>
                     <span style={{ fontSize: 12, color: '#7a6040' }}>{def?.effect}</span>
                   </div>
@@ -579,7 +580,15 @@ export default function BottomDrawer({ hex, player, stats, onClaim, onLoginRequi
                 <Btn onClick={() => setTab('military')}>⚔ Train Troops</Btn>
               )}
               {totalTroops > 0 && (
-                <Btn onClick={() => setTab('military')} danger>→ March</Btn>
+                <>
+                  <Btn onClick={() => onMarchStart?.(hex.h3, { troop: Math.max(1, Math.floor(totalTroops / 2)) })} danger>
+                    → March Half ({Math.max(1, Math.floor(totalTroops / 2))})
+                  </Btn>
+                  <Btn onClick={() => onMarchStart?.(hex.h3, { troop: totalTroops })} danger>
+                    → March All ({totalTroops})
+                  </Btn>
+                  <Btn onClick={() => setTab('military')} muted>⚙ More</Btn>
+                </>
               )}
             </div>
           )}
@@ -613,27 +622,43 @@ export default function BottomDrawer({ hex, player, stats, onClaim, onLoginRequi
             const def = BUILDING_DEFS.find(d => d.type === g.type)
             const building = buildingData.buildings.find(b => b.type === g.type)
             const isBuilding = building && !building.is_complete
+            const ArtComponent = g.type === 'mine' ? MineArt : g.type === 'barracks' ? BarracksArt : FortArt
             return (
               <div key={g.type} style={{ marginBottom: 10 }}>
                 {isBuilding ? (
-                  <BuildBar building={building} buildTimeSecs={buildingData.build_time_seconds || 30} onExpire={loadBuildings} />
+                  <div style={{
+                    display: 'flex', alignItems: 'center', gap: 12,
+                    padding: '8px 12px',
+                    background: 'rgba(255,255,255,0.02)',
+                    border: '1px solid rgba(255,255,255,0.06)',
+                    borderRadius: 6,
+                  }}>
+                    <div style={{ opacity: 0.4, flexShrink: 0 }}>
+                      <ArtComponent size={52} />
+                    </div>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: 13, color: '#8070a0', marginBottom: 6 }}>
+                        {def?.label} - <span style={{ color: '#6a5878' }}>under construction</span>
+                      </div>
+                      <BuildBar building={building} buildTimeSecs={buildingData.build_time_seconds || 30} onExpire={loadBuildings} />
+                    </div>
+                  </div>
                 ) : (
                   <div style={{
-                    display: 'flex', alignItems: 'center', gap: 10,
-                    padding: '8px 12px',
+                    display: 'flex', alignItems: 'center', gap: 14,
+                    padding: '10px 14px',
                     background: 'rgba(255,255,255,0.03)',
-                    border: '1px solid rgba(255,255,255,0.07)',
-                    borderRadius: 4,
+                    border: '1px solid rgba(255,255,255,0.08)',
+                    borderRadius: 8,
                   }}>
-                    <span style={{ fontSize: 18 }}>{def?.icon}</span>
+                    <ArtComponent size={64} />
                     <div style={{ flex: 1 }}>
-                      <div style={{ fontSize: 14, color: '#c4b498' }}>{def?.label}
-                        <span style={{ fontSize: 13, color: '#7a6040', marginLeft: 8 }}>{def?.effect}</span>
-                      </div>
-                      {def?.desc && <div style={{ fontSize: 12, color: '#6a5878', marginTop: 2, lineHeight: 1.4 }}>{def.desc}</div>}
+                      <div style={{ fontSize: 15, color: '#d4c4a0', marginBottom: 3 }}>{def?.label}</div>
+                      <div style={{ fontSize: 13, color: '#8a7050', marginBottom: 6 }}>{def?.effect}</div>
+                      {def?.desc && <div style={{ fontSize: 12, color: '#6a5868', lineHeight: 1.5 }}>{def.desc}</div>}
                     </div>
                     <button onClick={() => handleDemolish(g.ids[0])} disabled={busy}
-                      style={{ background: 'none', border: 'none', color: '#7a4848', cursor: 'pointer', fontSize: 18, lineHeight: 1, padding: '0 4px', flexShrink: 0 }}>
+                      style={{ background: 'none', border: 'none', color: '#7a4848', cursor: 'pointer', fontSize: 20, lineHeight: 1, padding: '0 4px', flexShrink: 0, alignSelf: 'flex-start' }}>
                       ×
                     </button>
                   </div>
@@ -643,30 +668,42 @@ export default function BottomDrawer({ hex, player, stats, onClaim, onLoginRequi
           })}
         </div>
 
-        {/* Build options — shown whenever slots remain */}
+        {/* Build options - shown whenever slots remain */}
         {canBuild && (
           <div>
             <Label>Build ({slotsLeft} slot{slotsLeft !== 1 ? 's' : ''} left)</Label>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-              {buildableTypes.map(b => (
-                <button key={b.type} onClick={() => handleBuild(b.type)} disabled={busy}
-                  style={{
-                    display: 'flex', alignItems: 'center', gap: 10, textAlign: 'left',
-                    padding: '8px 12px', background: 'rgba(255,255,255,0.04)',
-                    border: '1px solid rgba(255,255,255,0.09)', borderRadius: 4,
-                    color: '#b4a488', cursor: 'pointer', fontFamily: 'Georgia, serif',
-                  }}>
-                  <span style={{ fontSize: 18, flexShrink: 0 }}>{b.icon}</span>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: 14, display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <span>{b.label}</span>
-                      <span style={{ color: '#7a6890', fontSize: 13 }}><GoldIcon size={10} /> {b.goldCost}</span>
-                      <span style={{ color: '#8070a0', fontSize: 13, marginLeft: 'auto' }}>{b.effect}</span>
+              {buildableTypes.map(b => {
+                const ArtPreview = b.type === 'mine' ? MineArt : b.type === 'barracks' ? BarracksArt : FortArt
+                return (
+                  <button key={b.type} onClick={() => handleBuild(b.type)} disabled={busy}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 14, textAlign: 'left',
+                      padding: '10px 14px', background: 'rgba(255,255,255,0.04)',
+                      border: '1px solid rgba(255,255,255,0.09)', borderRadius: 8,
+                      color: '#b4a488', cursor: busy ? 'default' : 'pointer',
+                      fontFamily: 'Georgia, serif', width: '100%',
+                      transition: 'background 0.1s, border-color 0.1s',
+                    }}
+                    onMouseEnter={e => { if (!busy) { e.currentTarget.style.background = 'rgba(255,255,255,0.07)'; e.currentTarget.style.borderColor = 'rgba(255,255,255,0.16)' }}}
+                    onMouseLeave={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.04)'; e.currentTarget.style.borderColor = 'rgba(255,255,255,0.09)' }}
+                  >
+                    <div style={{ opacity: busy ? 0.5 : 1 }}>
+                      <ArtPreview size={56} />
                     </div>
-                    <div style={{ fontSize: 12, color: '#6a5878', marginTop: 2, lineHeight: 1.4 }}>{b.desc}</div>
-                  </div>
-                </button>
-              ))}
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: 15, color: '#d4c4a0', marginBottom: 3, display: 'flex', alignItems: 'center', gap: 10 }}>
+                        <span>{b.label}</span>
+                        <span style={{ fontSize: 12, color: '#8a7060', display: 'flex', alignItems: 'center', gap: 3 }}>
+                          <GoldIcon size={10} /> {b.goldCost}
+                        </span>
+                      </div>
+                      <div style={{ fontSize: 13, color: '#7a6840', marginBottom: 5 }}>{b.effect}</div>
+                      <div style={{ fontSize: 12, color: '#6a5868', lineHeight: 1.5 }}>{b.desc}</div>
+                    </div>
+                  </button>
+                )
+              })}
             </div>
           </div>
         )}
@@ -720,6 +757,14 @@ export default function BottomDrawer({ hex, player, stats, onClaim, onLoginRequi
                     }}>{n}</button>
                 ))}
                 <button
+                  onClick={() => setDispatchQty({ troop: Math.max(1, Math.floor(ready / 2)) })}
+                  style={{
+                    padding: '4px 10px', borderRadius: 3, fontSize: 14, fontFamily: 'Georgia, serif', cursor: 'pointer',
+                    background: sendQty === Math.max(1, Math.floor(ready / 2)) ? 'rgba(180,130,30,0.3)' : 'rgba(255,255,255,0.04)',
+                    border: `1px solid ${sendQty === Math.max(1, Math.floor(ready / 2)) ? 'rgba(200,150,40,0.6)' : 'rgba(255,255,255,0.09)'}`,
+                    color: '#d4b870',
+                  }}>Half</button>
+                <button
                   onClick={() => setDispatchQty({ troop: ready })}
                   style={{
                     padding: '4px 10px', borderRadius: 3, fontSize: 14, fontFamily: 'Georgia, serif', cursor: 'pointer',
@@ -729,7 +774,7 @@ export default function BottomDrawer({ hex, player, stats, onClaim, onLoginRequi
                   }}>All</button>
               </div>
               <Btn onClick={handleDispatch} danger>
-                March {sendQty} troops — select destination
+                March {sendQty} troops - select destination
               </Btn>
             </>
           )}
@@ -837,7 +882,7 @@ export default function BottomDrawer({ hex, player, stats, onClaim, onLoginRequi
       color: '#c4b498',
       zIndex: 20,
     }}>
-      {/* Header — always visible */}
+      {/* Header - always visible */}
       <div
         onClick={() => setCollapsed(c => !c)}
         style={{
@@ -866,7 +911,7 @@ export default function BottomDrawer({ hex, player, stats, onClaim, onLoginRequi
         <span style={{ fontSize: 14, color: '#5a4828', userSelect: 'none' }}>{collapsed ? '▲' : '▼'}</span>
       </div>
 
-      {/* Tabs + content — hidden when collapsed */}
+      {/* Tabs + content - hidden when collapsed */}
       {!collapsed && (
         <>
           <div style={{

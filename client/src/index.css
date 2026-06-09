@@ -40,6 +40,13 @@ body {
   pointer-events: none;
 }
 
+@keyframes rw-notif {
+  0%   { transform: translateX(60px); opacity: 0; }
+  6%   { transform: translateX(0);    opacity: 1; }
+  85%  { transform: translateX(0);    opacity: 1; }
+  100% { transform: translateX(0);    opacity: 0; }
+}
+
 @keyframes battle-pulse {
   0%   { transform: scale(1);   opacity: 0.9; }
   50%  { transform: scale(1.6); opacity: 0.4; }
@@ -47,10 +54,10 @@ body {
 }
 
 .battle-ring {
-  width: 28px;
-  height: 28px;
+  width: 48px;
+  height: 48px;
   border-radius: 50%;
-  border: 2.5px solid #ff3333;
+  border: 3px solid #ff3333;
   animation: battle-pulse 1.5s ease-out infinite;
   pointer-events: none;
   position: relative;
@@ -62,7 +69,8 @@ body {
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
-  font-size: 12px;
+  font-size: 22px;
+  text-shadow: 0 0 6px rgba(0,0,0,0.9), 0 0 12px rgba(255,60,60,0.8);
   animation: none;
   opacity: 1;
 }

@@ -1,4 +1,4 @@
--- RealmWar — database schema
+-- RealmWar - database schema
 -- Prerequisites: PostgreSQL 14+
 -- Usage: psql -d realmwar -f schema.sql
 
@@ -101,4 +101,57 @@ CREATE TABLE IF NOT EXISTS events (
   hex_index  TEXT,
   read       BOOLEAN     NOT NULL DEFAULT FALSE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS hex_history (
+  id          SERIAL      PRIMARY KEY,
+  player_id   INTEGER     NOT NULL REFERENCES players(id) ON DELETE CASCADE,
+  hex_count   INTEGER     NOT NULL,
+  recorded_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Web push subscriptions (one row per browser/device)
+CREATE TABLE IF NOT EXISTS push_subscriptions (
+  id         SERIAL      PRIMARY KEY,
+  player_id  INTEGER     NOT NULL REFERENCES players(id) ON DELETE CASCADE,
+  endpoint   TEXT        NOT NULL UNIQUE,
+  keys       JSONB       NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Global newspaper feed (public)
+CREATE TABLE IF NOT EXISTS world_events (
+  id         SERIAL      PRIMARY KEY,
+  type       TEXT        NOT NULL,
+  message    TEXT        NOT NULL,
+  hex_index  TEXT,
+  player_id  INTEGER     REFERENCES players(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Current ruler of each country (own its capital + enough hexes)
+CREATE TABLE IF NOT EXISTS country_crowns (
+  country    TEXT        PRIMARY KEY,
+  player_id  INTEGER     NOT NULL REFERENCES players(id) ON DELETE CASCADE,
+  crowned_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS alliances (
+  id         SERIAL      PRIMARY KEY,
+  name       TEXT        NOT NULL UNIQUE,
+  tag        TEXT        NOT NULL UNIQUE,
+  code       TEXT        NOT NULL UNIQUE,
+  created_by INTEGER     REFERENCES players(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+ALTER TABLE players ADD COLUMN IF NOT EXISTS alliance_id INTEGER REFERENCES alliances(id) ON DELETE SET NULL;
+
+-- Chat: alliance_id NULL = global channel
+CREATE TABLE IF NOT EXISTS chat_messages (
+  id          SERIAL      PRIMARY KEY,
+  player_id   INTEGER     NOT NULL REFERENCES players(id) ON DELETE CASCADE,
+  alliance_id INTEGER     REFERENCES alliances(id) ON DELETE CASCADE,
+  text        TEXT        NOT NULL,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );

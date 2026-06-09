@@ -45,7 +45,7 @@ export default function HexPanel({ hex, player, onClaim, onLoginRequired, onBuil
   }, [buildingData?.upgrading?.completes_at, loadBuildings])
 
   async function handleBuild(type) {
-    // Optimistic update — immediately show building as pending
+    // Optimistic update - immediately show building as pending
     setBuildingData(prev => prev ? {
       ...prev,
       buildings: [...prev.buildings, { id: '__pending__', type, pending: true }],
@@ -158,9 +158,9 @@ export default function HexPanel({ hex, player, onClaim, onLoginRequired, onBuil
         {isClaimed && buildingData && (
           <Row label="Slots" value={`${buildingData.usedSlots} / ${buildingData.slots}`} color="#b090e0" />
         )}
-        {isClaimed && <Row label="Troops" value={hex.troop_count ?? '—'} color="#a0c0e0" />}
+        {isClaimed && <Row label="Troops" value={hex.troop_count ?? '-'} color="#a0c0e0" />}
         {!isClaimed && defStrength !== null && defStrength > 0 && (
-          <Row label="Your Troops" value={`${Math.round(defStrength)} str — ready to claim`} color="#a0e0a0" />
+          <Row label="Your Troops" value={`${Math.round(defStrength)} str - ready to claim`} color="#a0e0a0" />
         )}
         {isClaimed && defStrength !== null && <Row label="Defense" value={`${Math.round(defStrength)} str`} color="#c0a0e0" />}
         {isClaimed && (
@@ -181,7 +181,7 @@ export default function HexPanel({ hex, player, onClaim, onLoginRequired, onBuil
         <>
           <div style={{ borderTop: '1px solid #2a1a4a', margin: '14px 0 12px' }} />
 
-          {/* Existing buildings — grouped by type with count */}
+          {/* Existing buildings - grouped by type with count */}
           {builtGroups.length > 0 && (
             <>
               <div style={{ fontSize: 13, color: '#7a6a9a', letterSpacing: 2, marginBottom: 10, textTransform: 'uppercase' }}>
@@ -256,7 +256,7 @@ export default function HexPanel({ hex, player, onClaim, onLoginRequired, onBuil
             <>
               <div style={{ borderTop: '1px solid #2a1a4a', marginBottom: 12 }} />
               <div style={{ fontSize: 13, color: '#7a6a9a', letterSpacing: 2, marginBottom: 10, textTransform: 'uppercase' }}>
-                Hex Upgrade — Level {buildingData.upgradeLevel} / {buildingData.maxUpgradeLevel}
+                Hex Upgrade - Level {buildingData.upgradeLevel} / {buildingData.maxUpgradeLevel}
               </div>
               {upgradeInProgress ? (
                 <UpgradeTimer completes_at={buildingData.upgrading.completes_at} upgradeMinutes={buildingData.upgrade_minutes || 0.5} onExpire={loadBuildings} />

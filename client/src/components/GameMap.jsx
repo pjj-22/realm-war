@@ -10,6 +10,8 @@ import LeaderboardPanel from './LeaderboardPanel'
 import EventFeed from './EventFeed'
 import BattlePanel from './BattlePanel'
 import BattleParticles from './BattleParticles'
+import ChatPanel from './ChatPanel'
+import AlliancePanel from './AlliancePanel'
 import { useResourceTicker } from '../hooks/useResourceTicker'
 import { useIsMobile } from '../hooks/useIsMobile'
 import { api } from '../api/client'
@@ -44,7 +46,7 @@ function getOverviewHexes(map) {
 }
 
 function buildOverviewGeoJSON(cells, res, claimedHexes) {
-  // Bottom-up: walk claimed hexes once, find their parent at overview res — O(claimed) not O(cells × children)
+  // Bottom-up: walk claimed hexes once, find their parent at overview res - O(claimed) not O(cells × children)
   const ownerByParent = {}
   for (const [cell, claimed] of Object.entries(claimedHexes)) {
     if (!claimed.owner_id) continue
@@ -112,11 +114,13 @@ function buildClaimedGeoJSON(claimedHexes, visibleSet) {
   return { type: 'FeatureCollection', features }
 }
 
-function buildVisibleSet(claimedHexes, playerId) {
+function buildVisibleSet(claimedHexes, playerId, allyIds) {
   const visible = new Set()
   for (const [cell, claimed] of Object.entries(claimedHexes)) {
-    if (claimed.owner_id !== playerId) continue
-    // Own hexes + 1-ring adjacency always visible
+    const isOwn = claimed.owner_id === playerId
+    const isAlly = !!allyIds && allyIds.has(claimed.owner_id)
+    if (!isOwn && !isAlly) continue
+    // Own + allied hexes + 1-ring adjacency always visible
     gridDisk(cell, 1).forEach(c => visible.add(c))
   }
   return visible
@@ -137,7 +141,7 @@ function buildClaimedPoints(claimedHexes, visibleSet) {
   return { type: 'FeatureCollection', features }
 }
 
-// Pip colors by building type — matches BottomDrawer dots
+// Pip colors by building type - matches BottomDrawer dots
 const PIP_COLORS = {
   mine:     '#c9902a',
   barracks: '#a84040',
@@ -270,6 +274,9 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
   const [activeBattles, setActiveBattles] = useState([])
   const [stats, setStats] = useState(null)
   const [activeBattle, setActiveBattle] = useState(null)
+  const [alliance, setAlliance] = useState(null)
+  const [showAlliance, setShowAlliance] = useState(false)
+  const allyIdsRef = useRef(null)
 
   const ownedHexCount = Object.values(claimedRef.current).filter(h => h.owner_id === player?.id).length
   const totalTroops = Object.values(claimedRef.current).filter(h => h.owner_id === player?.id).reduce((s, h) => s + (h.troop_count || 0), 0)
@@ -332,14 +339,38 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
     try { setStats(await api.getStats()) } catch {}
   }, [])
 
+  const loadAlliance = useCallback(async () => {
+    try {
+      const a = await api.getMyAlliance()
+      setAlliance(a)
+      allyIdsRef.current = a ? new Set(a.members.map(m => m.id)) : null
+    } catch { /* not logged in */ }
+  }, [])
+
   // Initial loads on mount
   useEffect(() => { loadClaimed() }, [loadClaimed])
   useEffect(() => { loadArmies() }, [loadArmies])
   useEffect(() => { loadActiveBattles() }, [loadActiveBattles])
   useEffect(() => { if (player) loadStats() }, [player?.id, loadStats])
   useEffect(() => { loadStrategic() }, [loadStrategic])
+  useEffect(() => {
+    // Recompute fog of war for the (possibly new) player and their allies
+    if (player) loadAlliance().then(() => updateClaimed())
+    else { setAlliance(null); allyIdsRef.current = null; updateClaimed() }
+  }, [player?.id, loadAlliance]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Socket-driven updates — replace polling intervals
+  // External fly-to requests (e.g. FTUE "take me to the front")
+  useEffect(() => {
+    const handler = (e) => {
+      const { lat, lng, zoom: z } = e.detail || {}
+      if (lat == null || lng == null) return
+      map.current?.flyTo({ center: [lng, lat], zoom: z || 9, speed: 1.2 })
+    }
+    window.addEventListener('rw:flyto', handler)
+    return () => window.removeEventListener('rw:flyto', handler)
+  }, [])
+
+  // Socket-driven updates - replace polling intervals
   useSocket({
     'hexes:update': () => { loadClaimed(); loadStrategic() },
     'armies:update': loadArmies,
@@ -354,7 +385,7 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
         const result = await api.getBattle(selectedHex.h3)
         const newBattle = result.battle || null
         setActiveBattle(prev => {
-          if (prev && !newBattle) loadClaimed() // battle just resolved — refresh map immediately
+          if (prev && !newBattle) loadClaimed() // battle just resolved - refresh map immediately
           return newBattle
         })
       } catch { setActiveBattle(null) }
@@ -391,13 +422,13 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
         },
       })
 
-      // Point source for labels — avoids polygon-tile duplication at high zoom
+      // Point source for labels - avoids polygon-tile duplication at high zoom
       map.current.addSource('claimed-points', {
         type: 'geojson',
         data: { type: 'FeatureCollection', features: [] },
       })
 
-      // Overview hex grid — coarser resolution at low zoom (zoom 3–7)
+      // Overview hex grid - coarser resolution at low zoom (zoom 3–7)
       map.current.addSource('overview-hexes', {
         type: 'geojson',
         data: { type: 'FeatureCollection', features: [] },
@@ -469,7 +500,7 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
         },
       })
 
-      // Building pips — one colored dot per building, arranged in a 3×2 grid inside each hex
+      // Building pips - one colored dot per building, arranged in a 3×2 grid inside each hex
       map.current.addSource('building-pips', {
         type: 'geojson',
         data: { type: 'FeatureCollection', features: [] },
@@ -485,6 +516,33 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
           'circle-stroke-width': 1,
           'circle-stroke-color': 'rgba(0,0,0,0.55)',
           'circle-opacity': 0.92,
+        },
+      })
+
+      // March beam paths - rendered below army dots
+      map.current.addSource('march-paths', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } })
+      map.current.addSource('march-dests', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } })
+      // Outer glow
+      map.current.addLayer({
+        id: 'march-path-glow', type: 'line', source: 'march-paths', minzoom: 5,
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+        paint: { 'line-color': ['get', 'color'], 'line-width': 14, 'line-blur': 10, 'line-opacity': 0.18 },
+      })
+      // Core beam line
+      map.current.addLayer({
+        id: 'march-path-core', type: 'line', source: 'march-paths', minzoom: 5,
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+        paint: { 'line-color': ['get', 'color'], 'line-width': 1.5, 'line-opacity': 0.55 },
+      })
+      // Destination ring
+      map.current.addLayer({
+        id: 'march-dest-ring', type: 'circle', source: 'march-dests', minzoom: 5,
+        paint: {
+          'circle-radius': 16,
+          'circle-color': 'rgba(0,0,0,0)',
+          'circle-stroke-width': 1.5,
+          'circle-stroke-color': ['get', 'color'],
+          'circle-stroke-opacity': 0.45,
         },
       })
 
@@ -524,7 +582,7 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
         },
       })
 
-      // Strategic hex layer — always visible, shows name + gold bonus
+      // Strategic hex layer - always visible, shows name + gold bonus
       map.current.addSource('strategic', {
         type: 'geojson',
         data: { type: 'FeatureCollection', features: [] },
@@ -566,16 +624,35 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
         },
       })
 
+      // Battle hexes - the whole contested hex burns red; scales with zoom
+      map.current.addSource('battle-hexes', {
+        type: 'geojson',
+        data: { type: 'FeatureCollection', features: [] },
+      })
+      map.current.addLayer({
+        id: 'battle-hex-fill',
+        type: 'fill',
+        source: 'battle-hexes',
+        paint: { 'fill-color': '#ff3030', 'fill-opacity': 0.25 },
+      })
+      map.current.addLayer({
+        id: 'battle-hex-border',
+        type: 'line',
+        source: 'battle-hexes',
+        layout: { 'line-join': 'round' },
+        paint: { 'line-color': '#ff4040', 'line-width': 3, 'line-opacity': 0.9 },
+      })
+
       updateHexes()
       updateOverview()
       updateClaimed()
       loadStrategic()
-      // armies state may already be loaded — force a sync
+      // armies state may already be loaded - force a sync
       map.current.once('idle', () => {
         setArmies(prev => [...prev])
       })
 
-      // New player with no capital — zoom to Europe at a playable level
+      // New player with no capital - zoom to Europe at a playable level
       if (!playerRef.current?.capital_hex) {
         map.current.flyTo({ center: [10, 48], zoom: 8, speed: 0.6 })
       }
@@ -601,19 +678,28 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
       if (rallyModeRef.current) {
         const fromHex = rallyModeRef.current
         api.setRally(fromHex, hex.h3)
-          .then(() => loadClaimed())
+          .then(() => { loadClaimed(); toast('Rally point set', 'success') })
           .catch(err => toast(err.message))
         setRallyMode(null)
+        map.current.getCanvas().style.cursor = ''
         return
       }
 
       setMarchMode(prev => {
         if (prev) {
-          if (prev.battleMode && !prev.fromHex) {
-            // Battle reinforce: user clicked source hex
-            setSelectedHex(hex)
-            map.current.setFilter('hex-selected', ['==', ['get', 'h3'], hex.h3])
-            return { ...prev, fromHex: hex.h3 }
+          if (prev.battleMode) {
+            // Battle reinforce: clicked hex is the source - send everything there at once
+            const src = claimedRef.current[hex.h3]
+            const qty = src?.owner_id === playerRef.current?.id ? (src?.troop_count || 0) : 0
+            if (qty <= 0) {
+              toast('Pick one of your hexes with troops stationed')
+              return prev
+            }
+            api.marchArmy(hex.h3, prev.targetHex, 'troop', qty)
+              .then(() => toast(`${qty} troops marching to the battle`, 'success'))
+              .catch(err => toast(err.message))
+            map.current.getCanvas().style.cursor = ''
+            return null
           }
           if (prev.troops) {
             // Multi-type dispatch from the drawer
@@ -621,15 +707,17 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
             Promise.all(entries.map(([type, qty]) => api.marchArmy(prev.fromHex, hex.h3, type, qty)))
               .then(() => loadClaimed())
               .catch(err => toast(err.message))
+            map.current.getCanvas().style.cursor = ''
             return null
           }
           // Single-type march
           api.marchArmy(prev.fromHex, hex.h3, prev.type, prev.quantity)
             .then(() => loadClaimed())
             .catch(err => toast(err.message))
+          map.current.getCanvas().style.cursor = ''
           return null
         }
-        // Normal click — select hex, enrich with strategic info if applicable
+        // Normal click - select hex, enrich with strategic info if applicable
         const strategic = strategicRef.current[hex.h3]
         const enriched = strategic ? {
           ...hex,
@@ -667,6 +755,19 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
     if (!map.current) return
     const activeIds = new Set(activeBattles.map(b => b.h3_index))
 
+    // Whole-hex battle overlay
+    if (map.current.getSource('battle-hexes')) {
+      const features = activeBattles.map(b => {
+        try {
+          const boundary = cellToBoundary(b.h3_index)
+          const coords = boundary.map(([lat, lng]) => [lng, lat])
+          coords.push(coords[0])
+          return { type: 'Feature', properties: {}, geometry: { type: 'Polygon', coordinates: [coords] } }
+        } catch { return null }
+      }).filter(Boolean)
+      map.current.getSource('battle-hexes').setData({ type: 'FeatureCollection', features })
+    }
+
     // Add new markers
     for (const battle of activeBattles) {
       if (battleMarkersRef.current[battle.h3_index]) continue
@@ -686,6 +787,20 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
         delete battleMarkersRef.current[id]
       }
     }
+
+    // Pulse the burning hex while battles rage
+    if (activeBattles.length === 0) return
+    let t = 0
+    const pulse = setInterval(() => {
+      if (!map.current?.getLayer('battle-hex-fill')) return
+      t += 0.15
+      const wave = 0.5 + 0.5 * Math.sin(t)
+      try {
+        map.current.setPaintProperty('battle-hex-fill', 'fill-opacity', 0.15 + 0.25 * wave)
+        map.current.setPaintProperty('battle-hex-border', 'line-opacity', 0.5 + 0.45 * wave)
+      } catch { /* layer mid-update */ }
+    }, 60)
+    return () => clearInterval(pulse)
   }, [activeBattles])
 
   function updateHexes() {
@@ -702,7 +817,8 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
 
   function updateClaimed() {
     if (!map.current?.getSource('claimed')) return
-    const visibleSet = player ? buildVisibleSet(claimedRef.current, player.id) : null
+    const p = playerRef.current
+    const visibleSet = p ? buildVisibleSet(claimedRef.current, p.id, allyIdsRef.current) : null
     visibleSetRef.current = visibleSet
     map.current.getSource('claimed').setData(buildClaimedGeoJSON(claimedRef.current, visibleSet))
     map.current.getSource('claimed-points')?.setData(buildClaimedPoints(claimedRef.current, visibleSet))
@@ -723,6 +839,30 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
 
   useEffect(() => {
 
+    // Hex paths don't change while an army marches - compute once per army
+    const pathCache = new Map()
+
+    // Continuous position along the army's hex path, so the dot glides
+    // instead of snapping hex-to-hex (and stays glued to the beam line)
+    function armyPathPos(a) {
+      let path = pathCache.get(a.id)
+      if (!path) {
+        try { path = gridPathCells(a.from_hex, a.to_hex).map(cellToLatLng) } catch { return null }
+        pathCache.set(a.id, path)
+      }
+      const total = new Date(a.arrives_at) - new Date(a.departed_at)
+      const elapsed = Date.now() - new Date(a.departed_at)
+      const progress = Math.min(1, Math.max(0, elapsed / total))
+      const segs = path.length - 1
+      if (segs <= 0) return { lat: path[0][0], lng: path[0][1] }
+      const t = progress * segs
+      const i = Math.min(Math.floor(t), segs - 1)
+      const frac = t - i
+      const [aLat, aLng] = path[i]
+      const [bLat, bLng] = path[i + 1]
+      return { lat: aLat + (bLat - aLat) * frac, lng: aLng + (bLng - aLng) * frac }
+    }
+
     function updateArmyPositions() {
       if (!map.current?.getSource('armies')) return
       const currentPlayer = playerRef.current
@@ -730,13 +870,9 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
       const activeIds = new Set()
 
       const features = armiesRef.current.map(a => {
-        let path
-        try { path = gridPathCells(a.from_hex, a.to_hex) } catch { return null }
-        const total = new Date(a.arrives_at) - new Date(a.departed_at)
-        const elapsed = Date.now() - new Date(a.departed_at)
-        const progress = Math.min(1, Math.max(0, elapsed / total))
-        const idx = Math.min(Math.floor(progress * (path.length - 1)), path.length - 1)
-        const [lat, lng] = cellToLatLng(path[idx])
+        const pos = armyPathPos(a)
+        if (!pos) return null
+        const { lat, lng } = pos
         const isEnemy = currentPlayer && a.owner_id !== currentPlayer.id
         const isThreat = isEnemy && currentClaimed[a.to_hex]?.owner_id === currentPlayer?.id
 
@@ -776,11 +912,53 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
       }
 
       map.current.getSource('armies').setData({ type: 'FeatureCollection', features })
+
+      // Beam paths: line from the marching dot → destination (shrinks as army travels)
+      if (map.current.getSource('march-paths')) {
+        const pathFeatures = armiesRef.current.map(a => {
+          try {
+            const pos = armyPathPos(a)
+            if (!pos) return null
+            const [tLat, tLng] = cellToLatLng(a.to_hex)
+            return {
+              type: 'Feature',
+              properties: { color: a.color || '#f0c040' },
+              geometry: { type: 'LineString', coordinates: [[pos.lng, pos.lat], [tLng, tLat]] },
+            }
+          } catch { return null }
+        }).filter(Boolean)
+        map.current.getSource('march-paths').setData({ type: 'FeatureCollection', features: pathFeatures })
+      }
+
+      // Destination rings
+      if (map.current.getSource('march-dests')) {
+        const destFeatures = armiesRef.current.map(a => {
+          try {
+            const [tLat, tLng] = cellToLatLng(a.to_hex)
+            return {
+              type: 'Feature',
+              properties: { color: a.color || '#f0c040' },
+              geometry: { type: 'Point', coordinates: [tLng, tLat] },
+            }
+          } catch { return null }
+        }).filter(Boolean)
+        map.current.getSource('march-dests').setData({ type: 'FeatureCollection', features: destFeatures })
+      }
     }
 
     updateArmyPositions()
-    const interval = setInterval(updateArmyPositions, 1000)
-    return () => clearInterval(interval)
+    const interval = setInterval(updateArmyPositions, 150)
+
+    // Pulse the destination ring opacity
+    let pulseT = 0
+    const pulseInterval = setInterval(() => {
+      if (!map.current?.getLayer('march-dest-ring')) return
+      pulseT += 0.12
+      const opacity = 0.2 + 0.35 * (0.5 + 0.5 * Math.sin(pulseT))
+      try { map.current.setPaintProperty('march-dest-ring', 'circle-stroke-opacity', opacity) } catch {}
+    }, 50)
+
+    return () => { clearInterval(interval); clearInterval(pulseInterval) }
   }, [armies])
 
   async function handleClaim(h3Index) {
@@ -852,7 +1030,7 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
         display: 'flex', alignItems: 'center', gap: 0,
         fontFamily: 'Georgia, serif', zIndex: 20, padding: '0 16px',
       }}>
-        {/* Title — hidden on mobile */}
+        {/* Title - hidden on mobile */}
         {!isMobile && (
           <span style={{ fontSize: 13, letterSpacing: 5, color: '#7a6890', textTransform: 'uppercase', marginRight: 20, userSelect: 'none' }}>
             Realm War
@@ -912,6 +1090,16 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
         {/* Player + events */}
         {player ? (
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <button
+              onClick={() => setShowAlliance(true)}
+              title={alliance ? `Alliance: ${alliance.name}` : 'Join or found an alliance'}
+              style={{
+                background: 'none', border: 'none', cursor: 'pointer',
+                color: alliance ? '#c0a0f0' : '#7a6890', fontSize: 15, padding: '4px 6px',
+                fontFamily: 'Georgia, serif',
+              }}>
+              🤝{alliance && !isMobile ? ` ${alliance.tag}` : ''}
+            </button>
             <EventFeed />
             {!isMobile && <span style={{ fontSize: 13, color: '#c4b498' }}>{player.username}</span>}
             <span style={{ width: 10, height: 10, borderRadius: '50%', background: player.color, display: 'inline-block' }} />
@@ -996,10 +1184,12 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
               ? 'Click an owned hex to set as rally point'
               : marchMode?.battleMode && !marchMode.fromHex
                 ? 'Select source hex to reinforce from'
-                : 'Select target hex'}
+                : marchMode?.troops
+                  ? `Marching ${Object.values(marchMode.troops).reduce((s, n) => s + n, 0)} troops - click destination`
+                  : 'Select target hex'}
           </span>
           <button
-            onClick={() => { setMarchMode(null); setRallyMode(null) }}
+            onClick={() => { setMarchMode(null); setRallyMode(null); map.current.getCanvas().style.cursor = '' }}
             style={{
               background: 'none',
               border: `1px solid ${rallyMode ? 'rgba(50,150,50,0.5)' : 'rgba(180,50,50,0.5)'}`,
@@ -1009,6 +1199,18 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
             Cancel
           </button>
         </div>
+      )}
+
+      {/* ── Chat (bottom-left) ──────────────────────────────────── */}
+      <ChatPanel player={player} alliance={alliance} />
+
+      {/* ── Alliance modal ──────────────────────────────────────── */}
+      {showAlliance && (
+        <AlliancePanel
+          alliance={alliance}
+          onChanged={loadAlliance}
+          onClose={() => setShowAlliance(false)}
+        />
       )}
 
       {/* ── Battle panel ────────────────────────────────────────── */}
@@ -1021,7 +1223,7 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
         />
       )}
 
-      {/* ── Bottom drawer — replaces all floating panels ────────── */}
+      {/* ── Bottom drawer - replaces all floating panels ────────── */}
       {selectedHex && !activeBattle && (
         <BottomDrawer
           hex={selectedHex}
@@ -1044,7 +1246,7 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
             map.current?.setFilter('hex-selected', ['==', ['get', 'h3'], ''])
             setMarchMode({ fromHex, troops })
           }}
-          onSetRallyMode={fromHex => setRallyMode(fromHex)}
+          onSetRallyMode={fromHex => { setRallyMode(fromHex); setSelectedHex(null) }}
           onClose={() => {
             setSelectedHex(null)
             map.current?.setFilter('hex-selected', ['==', ['get', 'h3'], ''])

@@ -70,7 +70,7 @@ export default function HistoryChart({ player }) {
 
   if (!data || data.length < 2) return (
     <div style={{ padding: '12px 0', fontSize: 12, color: '#6a5878', textAlign: 'center' }}>
-      Not enough data yet — history builds as you play.
+      Not enough data yet - history builds as you play.
     </div>
   )
 

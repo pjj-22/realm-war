@@ -92,7 +92,7 @@ export default function HelpModal({ onClose }) {
           <Row icon="1️⃣" label="Claim your first hex"
             desc="Click any unclaimed hex on the map and claim it. This becomes your capital. You start with troops already stationed there." />
           <Row icon="2️⃣" label="Build on your hex"
-            desc="Open the Buildings tab. Each hex holds one building — choose Mine for income, Barracks to train more troops, or Fort for defense." />
+            desc="Open the Buildings tab. Each hex holds one building - choose Mine for income, Barracks to train more troops, or Fort for defense." />
           <Row icon="3️⃣" label="March your troops"
             desc="Go to the Military tab. Select how many troops to send, click March, then click the target hex on the map." />
         </div>
@@ -102,25 +102,27 @@ export default function HelpModal({ onClose }) {
           <Row icon="💰" label="Earned every tick"
             desc={`Gold arrives automatically every ${tickLabel}. You earn 1g per hex you own, +3g per Mine.`} />
           <Row icon="★★" label="Strategic capitals"
-            desc="Gold and glowing-bordered hexes are strategic locations worth +5g per tick. Primary capitals (marked +territory) pay exponentially more based on how much of that country you control — own London and dominate Britain to earn serious income." />
+            desc="Gold and glowing-bordered hexes are strategic locations worth +5g per tick. Primary capitals (marked +territory) pay exponentially more based on how much of that country you control - own London and dominate Britain to earn serious income." />
         </div>
 
         <div style={S.section}>
-          <div style={S.sectionTitle}>Buildings — one per hex</div>
-          <Row icon="⛏" label="Mine — +3 gold/tick"
+          <div style={S.sectionTitle}>Buildings - one per hex</div>
+          <Row icon="⛏" label="Mine - +3 gold/tick"
             desc="The backbone of your economy. Build these on as many hexes as you can." />
-          <Row icon="🏰" label="Barracks — enables training"
+          <Row icon="🏰" label="Barracks - enables training"
             desc="Required to train new troops on that hex. Without one, you can't recruit soldiers there." />
-          <Row icon="🛡" label="Fort — +40% defender strength"
+          <Row icon="🛡" label="Fort - +40% defender strength"
             desc="Makes your troops significantly harder to defeat when defending that hex." />
         </div>
 
         <div style={S.section}>
           <div style={S.sectionTitle}>Marching &amp; Combat</div>
           <Row icon="⚔" label="Claiming land"
-            desc="March troops to an unclaimed adjacent hex — once they arrive, you can claim it." />
+            desc="March troops to an unclaimed adjacent hex - once they arrive, you can claim it." />
           <Row icon="💥" label="Attacking enemies"
             desc="March to a hex owned by another player. A battle begins automatically on arrival. Higher troop strength wins." />
+          <Row icon="🛡" label="Entrenchment"
+            desc="Defenders gain +8% strength for each adjacent friendly hex (up to +32%). Compact territory is hard to crack; thin salients are vulnerable." />
           <Row icon="🌊" label="Ocean crossings"
             desc="You can cross ocean hexes, but it takes 10× longer. Plan naval moves carefully." />
           <Row icon="↩" label="Recall"
@@ -128,11 +130,27 @@ export default function HelpModal({ onClose }) {
         </div>
 
         <div style={S.section}>
+          <div style={S.sectionTitle}>The World</div>
+          <Row icon="🏕" label="Marauder camps"
+            desc="Neutral camps spawn near new capitals. Defeat the garrison to take the hex and plunder its gold - perfect first targets." />
+          <Row icon="👑" label="Country crowns"
+            desc="Own a country's capital city plus enough of its territory and you're crowned its Ruler - announced to the whole world in the Herald." />
+          <Row icon="🤝" label="Alliances"
+            desc="Found or join an alliance (🤝 top-right). Allies can't attack each other, share map vision, reinforce each other's battles, and get a private chat." />
+          <Row icon="🍂" label="Border decay"
+            desc="Large empires slowly lose unguarded, undeveloped border hexes. Garrison troops or build to hold the frontier." />
+          <Row icon="🔔" label="Attack alerts"
+            desc="Enable push notifications in the dispatches panel (🔔) to get warned the moment an army marches on your territory - even when the game is closed." />
+        </div>
+
+        <div style={S.section}>
           <div style={S.sectionTitle}>Tips</div>
-          <div style={S.tip}>Build a Mine on your capital first — gold is everything early on.</div>
+          <div style={S.tip}>Build a Mine on your capital first - gold is everything early on.</div>
+          <div style={S.tip}>Raid the marauder camps near your capital for early gold.</div>
           <div style={S.tip}>Always keep some troops at home. An empty hex is easy to capture.</div>
           <div style={S.tip}>Forts are cheap and make your hexes much harder to take.</div>
-          <div style={S.tip}>Claim territory in clusters — isolated hexes are hard to defend.</div>
+          <div style={S.tip}>Claim territory in clusters - entrenchment makes compact borders much stronger.</div>
+          <div style={S.tip}>Lost your capital? You're not out - claim any free hex to rebuild.</div>
         </div>
 
         <button style={S.btn} onClick={onClose}>Begin</button>

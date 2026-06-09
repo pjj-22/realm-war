@@ -3,7 +3,7 @@ import { pool } from '../db.js'
 
 const router = Router()
 
-// Get active battle at a hex (public — anyone can watch)
+// Get active battle at a hex (public - anyone can watch)
 router.get('/hex/:h3Index', async (req, res) => {
   try {
     const result = await pool.query(`

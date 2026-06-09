@@ -3,12 +3,19 @@ import GameMap from './components/GameMap'
 import AuthModal from './components/AuthModal'
 import HelpModal from './components/HelpModal'
 import FTUEGuide from './components/FTUEGuide'
+import AdminPortal from './components/AdminPortal'
 import { ToastContainer, toast } from './components/Toast'
 import { api } from './api/client'
+
+if (window.location.hash === '#admin') {
+  document.title = 'Admin - Realm War'
+}
 
 export default function App() {
   const [player, setPlayer] = useState(null)
   const [checking, setChecking] = useState(true)
+
+  if (window.location.hash === '#admin') return <AdminPortal />
   const [showAuth, setShowAuth] = useState(true)
   const [showHelp, setShowHelp] = useState(false)
   const [showFTUE, setShowFTUE] = useState(false)

@@ -68,7 +68,7 @@ test.describe('UI labels and layout', () => {
     // Get into march mode via GameMap (need to click own hex with troops)
     // Verify the march mode banner text when it appears
     const banner = page.locator('text=Select target hex')
-    // Just verify the old text is gone — banner is conditional on having troops
+    // Just verify the old text is gone - banner is conditional on having troops
     await expect(page.locator('text=Click target hex')).not.toBeVisible()
   })
 })

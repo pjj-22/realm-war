@@ -1,4 +1,5 @@
 import { Router } from 'express'
+import { gridDisk, cellToLatLng } from 'h3-js'
 import { pool } from '../db.js'
 import { requireAuth } from '../auth.js'
 import { getIO } from '../socket.js'
@@ -6,6 +7,7 @@ import { isOcean } from '../terrain.js'
 import { getCountry } from '../countries.js'
 import { STARTING_TROOPS } from '../config.js'
 import { STRATEGIC_HEXES, STRATEGIC_BONUS_GOLD } from '../strategic.js'
+import { seedCampsAround } from '../wild.js'
 
 const router = Router()
 
@@ -40,7 +42,7 @@ router.get('/', async (req, res) => {
   }
 })
 
-// Strategic hexes — all locations with current ownership
+// Strategic hexes - all locations with current ownership
 router.get('/strategic', async (req, res) => {
   try {
     const indexes = Array.from(STRATEGIC_HEXES.keys())
@@ -58,7 +60,38 @@ router.get('/strategic', async (req, res) => {
   } catch { res.status(500).json({ error: 'Server error' }) }
 })
 
-// Batch terrain check — returns { h3Index: 'ocean' | 'land', ... }
+// Suggest a starting hex on the active front - near (but not on top of)
+// an existing empire, so new players spawn where the war is.
+router.get('/suggest-start', async (req, res) => {
+  try {
+    const anchors = await pool.query(`
+      SELECT capital_hex, username FROM players
+      WHERE capital_hex IS NOT NULL AND username NOT LIKE 'WILD_%'
+      ORDER BY RANDOM() LIMIT 5
+    `)
+    for (const { capital_hex, username } of anchors.rows) {
+      // Ring 5-9 around an existing capital: close enough to matter, far enough to breathe
+      const outer = gridDisk(capital_hex, 9)
+      const inner = new Set(gridDisk(capital_hex, 4))
+      const candidates = outer.filter(h => !inner.has(h) && !isOcean(h))
+      if (candidates.length === 0) continue
+
+      const owned = await pool.query('SELECT h3_index FROM hexes WHERE h3_index = ANY($1)', [candidates])
+      const taken = new Set(owned.rows.map(r => r.h3_index))
+      const free = candidates.filter(h => !taken.has(h))
+      if (free.length === 0) continue
+
+      const pick = free[Math.floor(Math.random() * free.length)]
+      const [lat, lng] = cellToLatLng(pick)
+      return res.json({ h3Index: pick, lat, lng, near: username })
+    }
+    res.status(404).json({ error: 'No suggestion available' })
+  } catch {
+    res.status(500).json({ error: 'Server error' })
+  }
+})
+
+// Batch terrain check - returns { h3Index: 'ocean' | 'land', ... }
 router.post('/terrain', (req, res) => {
   const { h3Indexes } = req.body
   if (!Array.isArray(h3Indexes)) return res.status(400).json({ error: 'h3Indexes required' })
@@ -108,11 +141,13 @@ router.post('/claim', requireAuth, async (req, res) => {
          ON CONFLICT (owner_id, h3_index, type) DO UPDATE SET quantity = troops.quantity + EXCLUDED.quantity`,
         [req.player.id, h3Index, STARTING_TROOPS]
       )
-      // Starter mine — free gift so new players immediately earn gold
+      // Starter mine - free gift so new players immediately earn gold
       await pool.query(
         `INSERT INTO buildings (h3_index, type) VALUES ($1, 'mine') ON CONFLICT DO NOTHING`,
         [h3Index]
       )
+      // PvE on-ramp: garrisoned neutral camps nearby to fight (and plunder)
+      seedCampsAround(h3Index)
     }
 
     getIO()?.emit('hexes:update')

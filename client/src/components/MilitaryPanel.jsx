@@ -175,7 +175,7 @@ export default function MilitaryPanel({ hex, player, onPlayerUpdate, onMarchStar
           </button>
         </div>
       ) : (
-        <div style={{ fontSize: 12, color: '#5a4a7a', marginBottom: 8 }}>Not set — trained troops stay here</div>
+        <div style={{ fontSize: 12, color: '#5a4a7a', marginBottom: 8 }}>Not set - trained troops stay here</div>
       )}
       <button
         onClick={() => onSetRallyMode?.(hex.h3)}

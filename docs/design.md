@@ -1,5 +1,5 @@
-# Realm War — Game Design Document
-*Version 0.1 — Draft*
+# Realm War - Game Design Document
+*Version 0.1 - Draft*
 
 ---
 
@@ -13,7 +13,7 @@ There is no end state. The war never ends.
 
 ## Core Fantasy
 
-You open the app and see the actual world map — continents, countries, cities — carved up and glowing with the colors of rival factions. You control a small piece of it. Your mines generate resources. Your armies hold your borders. Somewhere on the other side of the world, an alliance you've never met is marching toward your territory.
+You open the app and see the actual world map - continents, countries, cities - carved up and glowing with the colors of rival factions. You control a small piece of it. Your mines generate resources. Your armies hold your borders. Somewhere on the other side of the world, an alliance you've never met is marching toward your territory.
 
 ---
 
@@ -25,7 +25,7 @@ You open the app and see the actual world map — continents, countries, cities 
 4. **Attack** neighboring nodes to expand territory
 5. **Defend** your territory from attackers
 6. **Form alliances** to coordinate large-scale campaigns
-7. Repeat — forever
+7. Repeat - forever
 
 ---
 
@@ -33,9 +33,9 @@ You open the app and see the actual world map — continents, countries, cities 
 
 - The real-world map is the game board (powered by Mapbox or similar)
 - The map is divided into a **hex grid** overlaid on top of real geography (~10km per hex, ~1.5 million total land hexes)
-- Hexes roughly correspond to real regions — oceans are uncapturable, land is the battlefield
-- Hexes have **visual flavor** based on real terrain (mountains, forests, desert, coastline) — cosmetic but adds immersion
-- Players can only attack **adjacent hexes** — no teleporting armies
+- Hexes roughly correspond to real regions - oceans are uncapturable, land is the battlefield
+- Hexes have **visual flavor** based on real terrain (mountains, forests, desert, coastline) - cosmetic but adds immersion
+- Players can only attack **adjacent hexes** - no teleporting armies
 
 ### Node Types (within hexes)
 | Type | Description |
@@ -51,8 +51,8 @@ You open the app and see the actual world map — continents, countries, cities 
 
 Two resources keep things simple:
 
-- **Gold** — recruits troops, builds structures
-- **Mana** — upgrades troops, powers special abilities
+- **Gold** - recruits troops, builds structures
+- **Mana** - upgrades troops, powers special abilities
 
 Both are generated passively over time by owned hexes and mines. Rate scales with territory size but with **diminishing returns** (see Balance section).
 
@@ -69,16 +69,16 @@ Three unit types, each with a distinct role. No unit is universally dominant.
 | **Trebuchets** | Gold + Mana | Siege, slow moving | Walls & Towers (required to break them) | Archers (fragile up close) |
 
 ### Key Rules
-- Troops are **consumed in combat** — win or lose, you spend them
+- Troops are **consumed in combat** - win or lose, you spend them
 - Troops **regenerate slowly** on defended hexes over time
-- Each unit type can be **upgraded globally** with Mana — improves stats for all units of that type across your empire
-- Trebuchets **march slowly** — a siege force takes longer to arrive than a knight rush
+- Each unit type can be **upgraded globally** with Mana - improves stats for all units of that type across your empire
+- Trebuchets **march slowly** - a siege force takes longer to arrive than a knight rush
 
 ---
 
 ## Defenses
 
-Built on owned hexes. Defenses are **destroyed when a hex is captured** — the attacker gets nothing.
+Built on owned hexes. Defenses are **destroyed when a hex is captured** - the attacker gets nothing.
 
 | Defense | Cost | Effect | Countered By |
 |---------|------|--------|--------------|
@@ -87,7 +87,7 @@ Built on owned hexes. Defenses are **destroyed when a hex is captured** — the 
 | **Mage Tower** | Mana | Reduces attacking army strength by X% before combat lands | Archers (target the mages) |
 
 ### Combat Triangle in Practice
-- A knight rush hits a **walled hex** — stalls without trebuchets
+- A knight rush hits a **walled hex** - stalls without trebuchets
 - Trebuchets crack the walls but are shredded by **archer towers** if you don't bring archers
 - Archers cover the trebuchets but a **mage tower** weakens the whole force before it engages
 - Attacker must bring a **balanced force** to take a well-defended hex
@@ -111,9 +111,9 @@ Economy buildings are also **destroyed on capture**.
 
 ---
 
-## Power Balance — The Core Problem
+## Power Balance - The Core Problem
 
-> *"One player gets super powerful and never loses"* — this must be prevented by design.
+> *"One player gets super powerful and never loses"* - this must be prevented by design.
 
 ### Mechanisms
 
@@ -125,20 +125,20 @@ Economy buildings are also **destroyed on capture**.
 **2. Defensive Scaling**
 - Attacking is always more expensive than defending
 - The larger a player's empire, the more border hexes they have to defend
-- Large empires are inherently vulnerable — many fronts, spread thin
+- Large empires are inherently vulnerable - many fronts, spread thin
 
 **3. The Capital**
-- Every player has one designated **Capital hex** — their seat of power
+- Every player has one designated **Capital hex** - their seat of power
 - The Capital has a massive built-in defense bonus and cannot be destroyed, only captured
 - If all your territory is taken, you still hold your Capital and can rebuild from it
-- You are never truly eliminated — just reduced
+- You are never truly eliminated - just reduced
 
 **4. Slow Marching**
-- Armies don't teleport — they **march hex by hex in real time**
+- Armies don't teleport - they **march hex by hex in real time**
 - **Knights & Archers** move at **1 hour per hex**
-- **Trebuchets** move at **2 hours per hex** — a siege is a deliberate commitment
+- **Trebuchets** move at **2 hours per hex** - a siege is a deliberate commitment
 - Attacking deep into enemy territory takes many hours, crossing a continent takes days
-- Wiping a player overnight requires sustained, coordinated effort — not a single attack
+- Wiping a player overnight requires sustained, coordinated effort - not a single attack
 - This naturally limits how fast you can be destroyed, no shield needed
 
 **5. Rebellion Mechanic**
@@ -156,10 +156,10 @@ Economy buildings are also **destroyed on capture**.
 
 Since the game is perpetual, progression is personal:
 
-- **Player Level** — based on total territory held over time (not current — prevents grief)
-- **Titles** — unlocked at milestones ("Warlord", "Archmage", "Emperor")
-- **Historical Map** — a timeline of your empire's greatest extent
-- **Alliance Hall of Fame** — top alliances by peak territory (alliances: future feature)
+- **Player Level** - based on total territory held over time (not current - prevents grief)
+- **Titles** - unlocked at milestones ("Warlord", "Archmage", "Emperor")
+- **Historical Map** - a timeline of your empire's greatest extent
+- **Alliance Hall of Fame** - top alliances by peak territory (alliances: future feature)
 
 ---
 
@@ -168,7 +168,7 @@ Since the game is perpetual, progression is personal:
 Every 3 months, a **Season** ends:
 - A snapshot of the current map is saved as that season's "final state"
 - Season winners (top alliances/players by territory) get cosmetic rewards
-- The map **partially resets** — not fully wiped, but some territory reverts to Wildlands
+- The map **partially resets** - not fully wiped, but some territory reverts to Wildlands
 - Keeps the game fresh, prevents permanent lock-in by early dominant players
 
 ---
@@ -180,7 +180,7 @@ Every 3 months, a **Season** ends:
   - Custom faction colors/banners
   - Troop skins (knights become samurai, etc.)
   - Map themes (dark mode, ancient map aesthetic)
-- Optional **supporter tier** — small monthly fee for profile badge and priority customer support, nothing gameplay-affecting
+- Optional **supporter tier** - small monthly fee for profile badge and priority customer support, nothing gameplay-affecting
 
 ---
 
@@ -188,7 +188,7 @@ Every 3 months, a **Season** ends:
 
 - Mobile first (iOS + Android)
 - Web client secondary (for map watching / diplomacy)
-- No AR camera required — the map IS the game
+- No AR camera required - the map IS the game
 
 ---
 
@@ -208,7 +208,7 @@ Every 3 months, a **Season** ends:
 ## Open Questions
 
 - [x] ~~What is the hex size?~~ **~10km per hex** (~1.5 million total land hexes globally). Can be adjusted as player base grows.
-- [ ] How many players per "server" — one global server or regional shards?
+- [ ] How many players per "server" - one global server or regional shards?
 - [x] ~~Combat resolution~~ **Time-based marching.** Armies travel in real time hex by hex. Combat resolves on arrival. Defenders can reinforce during the march window. Watch Towers reveal incoming armies early giving defenders response time.
 - [x] ~~Starting territories~~ **Suggested placement near player's real location with a home region bonus.** Bonus zone is a ~25 hex radius (~Colorado-sized) around the starting hex. Within this zone: +resource generation, +march speed, +defense. Players can ignore the suggestion and start elsewhere but forfeit the bonus.
 - [x] ~~Notifications~~ **Capital attack notifications always on. Everything else opt-in per type:** Watch Tower alerts, border crossing alerts. Lets players tune to their play style.

@@ -1,10 +1,11 @@
 import { useState, useEffect } from 'react'
+import { api } from '../api/client'
 
 const STEPS = [
   {
     id: 'claim',
     title: 'Claim your first territory',
-    body: 'Zoom in on the map and click any hex to claim it. Your empire starts here.',
+    body: 'Zoom in on the map and click any hex to claim it. Your empire starts here. Marauder camps will appear nearby - raid them for gold.',
     icon: '⚑',
   },
   {
@@ -91,6 +92,25 @@ export default function FTUEGuide({ player, onDismiss }) {
         <p style={{ fontSize: 14, color: '#9a8898', lineHeight: 1.6, margin: '0 0 14px' }}>
           {step.body}
         </p>
+        {step.id === 'claim' && (
+          <button
+            onClick={async () => {
+              try {
+                const s = await api.suggestStart()
+                window.dispatchEvent(new CustomEvent('rw:flyto', { detail: { lat: s.lat, lng: s.lng, zoom: 9.5 } }))
+              } catch { /* no suggestion available */ }
+            }}
+            style={{
+              width: '100%', padding: '7px 0', marginBottom: 8,
+              background: 'rgba(200,140,40,0.18)',
+              border: '1px solid rgba(220,160,60,0.45)',
+              borderRadius: 4, color: '#e0b060',
+              cursor: 'pointer', fontSize: 14,
+              letterSpacing: 1, fontFamily: 'Georgia, serif',
+            }}>
+            🎯 Take me to the front
+          </button>
+        )}
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
           <button
             onClick={() => advance(STEPS[idx + 1]?.id || null)}
@@ -102,7 +122,7 @@ export default function FTUEGuide({ player, onDismiss }) {
               cursor: 'pointer', fontSize: 14,
               letterSpacing: 1, fontFamily: 'Georgia, serif',
             }}>
-            {isLast ? 'Got it — good luck!' : 'Got it →'}
+            {isLast ? 'Got it - good luck!' : 'Got it →'}
           </button>
           {idx > 0 && (
             <button

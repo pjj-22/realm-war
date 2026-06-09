@@ -5,6 +5,7 @@ import { gridDistance } from 'h3-js'
 import { TROOP_STATS, OCEAN_MARCH_MULTIPLIER, BUILDING_TIME_SECONDS } from '../config.js'
 import { getIO } from '../socket.js'
 import { isOcean } from '../terrain.js'
+import { notifyIncomingAttack } from '../notify.js'
 
 const router = Router()
 
@@ -100,7 +101,7 @@ router.post('/march', requireAuth, async (req, res) => {
       [quantity, req.player.id, fromHex, type]
     )
 
-    // Calculate arrival time — ocean hexes cost 10× march time
+    // Calculate arrival time - ocean hexes cost 10× march time
     const stats = TROOP_STATS[type]
     const dist = Math.max(1, gridDistance(fromHex, toHex))
     const multiplier = isOcean(toHex) ? OCEAN_MARCH_MULTIPLIER : 1
@@ -111,6 +112,7 @@ router.post('/march', requireAuth, async (req, res) => {
       [req.player.id, fromHex, toHex, type, quantity, arrivesAt]
     )
 
+    notifyIncomingAttack(req.player.id, toHex, quantity, arrivesAt)
     getIO()?.emit('armies:update')
     res.json({ army: result.rows[0] })
   } catch {

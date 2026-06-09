@@ -74,13 +74,15 @@ router.post('/login', async (req, res) => {
 router.get('/leaderboard', async (req, res) => {
   try {
     const result = await pool.query(`
-      SELECT p.username, p.color, p.capital_hex,
+      SELECT p.username, p.color, p.capital_hex, a.tag AS alliance_tag,
         COUNT(DISTINCT h.h3_index)::integer AS hex_count,
         COALESCE(SUM(t.quantity), 0)::integer AS total_troops
       FROM players p
+      LEFT JOIN alliances a ON a.id = p.alliance_id
       LEFT JOIN hexes h ON h.owner_id = p.id
       LEFT JOIN troops t ON t.owner_id = p.id
-      GROUP BY p.id, p.username, p.color, p.capital_hex
+      WHERE p.username NOT LIKE 'WILD_%'
+      GROUP BY p.id, p.username, p.color, p.capital_hex, a.tag
       ORDER BY hex_count DESC, total_troops DESC
       LIMIT 10
     `)
@@ -109,7 +111,7 @@ router.get('/stats', requireAuth, async (req, res) => {
     row.next_tick_at = new Date(nextTickAt).toISOString()
     row.tick_interval_ms = TICK_INTERVAL_MS
 
-    // Income breakdown by country — group owned hexes + their mines by country
+    // Income breakdown by country - group owned hexes + their mines by country
     const hexRows = await pool.query(`
       SELECT h.h3_index,
         COALESCE(SUM(CASE WHEN b.type='mine' AND EXTRACT(EPOCH FROM (NOW() - b.created_at)) >= $2 THEN 1 ELSE 0 END), 0)::integer AS mines
@@ -151,7 +153,7 @@ router.get('/me', requireAuth, async (req, res) => {
   }
 })
 
-// Hex history — returns up to 120 datapoints over the last 30 days
+// Hex history - returns up to 120 datapoints over the last 30 days
 router.get('/history', requireAuth, async (req, res) => {
   try {
     const rows = await pool.query(

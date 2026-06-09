@@ -5,7 +5,7 @@ export const DEV_MODE = true
 // ─── Starting resources ───────────────────────────────────────────────────────
 export const STARTING_GOLD   = DEV_MODE ? 9999 : 100
 export const STARTING_TROOPS = DEV_MODE ?   50 :  20
-export const STARTING_MANA = 0  // mana removed — kept for DB compat
+export const STARTING_MANA = 0  // mana removed - kept for DB compat
 
 // ─── Resource tick ────────────────────────────────────────────────────────────
 export const TICK_INTERVAL_MS = DEV_MODE
@@ -16,7 +16,7 @@ export const TICK_INTERVAL_MS = DEV_MODE
 export const BUILDING_COSTS = {
   mine:     { gold: DEV_MODE ?  5 : 50 },
   barracks: { gold: DEV_MODE ? 10 : 75 },
-  fort:     { gold: DEV_MODE ? 10 : 80 },  // stationary defense — replaces archer_tower + watch_tower
+  fort:     { gold: DEV_MODE ? 10 : 80 },  // stationary defense - replaces archer_tower + watch_tower
 }
 
 // ─── Troop stats ──────────────────────────────────────────────────────────────
@@ -52,3 +52,25 @@ export const BUILDING_TIME_SECONDS = DEV_MODE ? 30 : 300  // 30s dev, 5 min prod
 export const GOLD_CAP_BASE     = DEV_MODE ? 99999 :  500
 export const GOLD_CAP_PER_HEX  = DEV_MODE ?  9999 :  100
 export const GOLD_CAP_PER_MINE = DEV_MODE ?  9999 :   50
+
+// ─── Neutral camps (PvE on-ramp) ──────────────────────────────────────────────
+export const CAMPS_PER_SPAWN    = 3                    // camps seeded around each new capital
+export const CAMP_GARRISON_MIN  = DEV_MODE ?  5 :  8
+export const CAMP_GARRISON_MAX  = DEV_MODE ? 12 : 18
+export const CAMP_LOOT_GOLD     = DEV_MODE ? 20 : 40   // plunder for capturing a camp
+
+// ─── Entrenchment - defense from compact borders ──────────────────────────────
+export const ENTRENCH_BONUS_PER_NEIGHBOR = 0.08  // +8% defender strength per adjacent friendly hex
+export const ENTRENCH_MAX_NEIGHBORS      = 4     // capped at +32%
+
+// ─── Border decay - anti-blob ─────────────────────────────────────────────────
+export const DECAY_HEX_THRESHOLD = DEV_MODE ? 12 : 30  // empires above this size start decaying
+export const DECAY_CHANCE        = 0.15                // per eligible border hex per tick
+export const DECAY_MAX_PER_TICK  = 3                   // at most N hexes lost per player per tick
+
+// ─── Country crowns ───────────────────────────────────────────────────────────
+export const CROWN_MIN_HEXES = DEV_MODE ? 3 : 10  // hexes in-country (plus its capital) to be crowned
+
+// ─── Alliances ────────────────────────────────────────────────────────────────
+export const ALLIANCE_CREATE_COST = DEV_MODE ? 10 : 100
+export const CHAT_MAX_LENGTH      = 240

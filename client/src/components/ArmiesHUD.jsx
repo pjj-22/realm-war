@@ -3,6 +3,7 @@ import { cellToLatLng, gridDistance } from 'h3-js'
 import { api } from '../api/client'
 import { useIsMobile } from '../hooks/useIsMobile'
 import { toast } from './Toast'
+import { TroopFigure } from './BuildingArt'
 
 const BUILDING_ICON = { mine: '⛏', barracks: '🏰', fort: '🛡' }
 
@@ -32,10 +33,10 @@ function HexRow({ hex, isCapital, onFlyTo }) {
         ? <span style={{ fontSize: 14, color: '#c9a020', width: 12, flexShrink: 0 }}>★</span>
         : <span style={{ width: 12, flexShrink: 0 }} />
       }
-      <span style={{ fontSize: 14, color: '#c9b99a', minWidth: 28, textAlign: 'right', flexShrink: 0 }}>
+      <span style={{ fontSize: 13, color: '#c9b99a', minWidth: 26, textAlign: 'right', flexShrink: 0, fontVariantNumeric: 'tabular-nums' }}>
         {hex.troop_count}
       </span>
-      <span style={{ fontSize: 14, color: '#5a4a7a', marginLeft: 1, flexShrink: 0 }}>⚔</span>
+      <span style={{ fontSize: 13, color: '#5a4a7a', flexShrink: 0 }}>⚔</span>
       <span style={{ fontSize: 9, color: '#4a3a6a', flex: 1, fontFamily: hex.country_name ? 'Georgia, serif' : 'monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', letterSpacing: 0 }}>
         {hex.country_name || hex.h3_index}
       </span>
@@ -79,12 +80,14 @@ function MarchRow({ army, isOwn, canRecall, onRecall, showDistance }) {
       border: `1px solid ${isOwn ? '#3a2a6a' : '#5a2a2a'}`,
     }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 3 }}>
-        <span style={{ fontSize: 14, color: '#c9b99a' }}>
-          {!isOwn && army.color && (
-            <span style={{ width: 7, height: 7, borderRadius: '50%', background: army.color, display: 'inline-block', marginRight: 5 }} />
-          )}
-          {!isOwn && <span style={{ color: '#9a8aaa', marginRight: 4 }}>{army.username}</span>}
-          {army.quantity}⚔
+        <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 14, color: '#c9b99a' }}>
+          <TroopFigure
+            color={isOwn ? '#c9b99a' : (army.color || '#c06060')}
+            size={20}
+            animate
+            count={army.quantity}
+          />
+          {!isOwn && <span style={{ color: '#9a8aaa' }}>{army.username}</span>}
         </span>
         <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
           {showDistance && (
@@ -208,7 +211,7 @@ export default function ArmiesHUD({ armies, activeBattles = [], player, claimedR
             </>
           ) : (
             <div style={{ fontSize: 14, color: '#5a4a7a', textAlign: 'center', padding: '10px 0' }}>
-              No territory — claim a hex to start
+              No territory - claim a hex to start
             </div>
           )}
         </div>

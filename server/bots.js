@@ -3,10 +3,11 @@ import { latLngToCell, gridDisk, gridDistance } from 'h3-js'
 import { getIO } from './socket.js'
 import { STARTING_GOLD, STARTING_MANA, STARTING_TROOPS, TROOP_STATS, BUILDING_COSTS, OCEAN_MARCH_MULTIPLIER, BUILDING_TIME_SECONDS } from './config.js'
 import { isOcean } from './terrain.js'
+import { notifyIncomingAttack } from './notify.js'
 
 const HEX_RES = 7
 
-// One bot per entry — created once, reused across restarts
+// One bot per entry - created once, reused across restarts
 const BOT_DEFS = [
   { username: 'BOT_Iron',  color: '#8B4513', lat:  40.7, lng:  -74.0 }, // New York
   { username: 'BOT_Storm', color: '#4169E1', lat:  51.5, lng:   -0.1 }, // London
@@ -136,7 +137,7 @@ async function botBuild(bot) {
         'INSERT INTO buildings (h3_index, type) SELECT $1,$2 WHERE NOT EXISTS (SELECT 1 FROM buildings WHERE h3_index=$1) RETURNING id',
         [h3_index, type]
       )
-      if (!inserted.rows[0]) break  // another process beat us — skip this hex
+      if (!inserted.rows[0]) break  // another process beat us - skip this hex
       await pool.query('UPDATE players SET gold=gold-$1 WHERE id=$2', [cost.gold, bot.id])
       gold -= cost.gold
       console.log(`[bot] ${bot.username} built ${type} at ${h3_index}`)
@@ -228,7 +229,7 @@ async function botMarch(bot) {
 
     // 2. Adjacent enemy
     if (!target && source.troops >= ATTACK_MIN) {
-      // prefer weakly-held hexes — pick the enemy neighbor with fewest troops
+      // prefer weakly-held hexes - pick the enemy neighbor with fewest troops
       let bestTroops = Infinity
       for (const h of neighbors) {
         const owner = neighborOwner.get(h)
@@ -299,6 +300,7 @@ async function botMarch(bot) {
       'INSERT INTO armies (owner_id, from_hex, to_hex, type, quantity, arrives_at, departed_at) VALUES ($1,$2,$3,$4,$5,$6,NOW())',
       [bot.id, source.h3_index, target, 'troop', sendQty, arrivesAt]
     )
+    notifyIncomingAttack(bot.id, target, sendQty, arrivesAt)
     console.log(`[bot] ${bot.username} marching ${sendQty} troops → ${target}`)
   }
 }

@@ -43,7 +43,7 @@ const DEFS = [
   { name: 'Johannesburg',  primary: true,  lat: -26.195, lng:  28.034 },
   { name: 'Riyadh',        primary: true,  lat:  24.688, lng:  46.722 },
   { name: 'Tehran',        primary: true,  lat:  35.700, lng:  51.415 },
-  // Chokepoints — flat bonus only, no territory mechanic
+  // Chokepoints - flat bonus only, no territory mechanic
   { name: 'Suez Canal',    primary: false, lat:  30.583, lng:  32.265 },
   { name: 'Panama Canal',  primary: false, lat:   9.107, lng: -79.681 },
   { name: 'Gibraltar',     primary: false, lat:  36.140, lng:  -5.354 },

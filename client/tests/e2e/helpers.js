@@ -17,7 +17,7 @@ export async function createTestAccount() {
 
 // Delete a test account by username (cleanup)
 export async function deleteTestAccount(token) {
-  // No delete endpoint — just leave orphaned test accounts, they don't affect gameplay
+  // No delete endpoint - just leave orphaned test accounts, they don't affect gameplay
 }
 
 // Login via UI and wait for map to be ready

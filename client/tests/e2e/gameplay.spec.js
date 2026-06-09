@@ -8,7 +8,7 @@ test.describe('Core gameplay', () => {
     account = await createTestAccount()
   })
 
-  test('claim first hex — capital flow', async ({ page }) => {
+  test('claim first hex - capital flow', async ({ page }) => {
     await loginViaUI(page, account.username, account.password)
     await zoomToHexGrid(page)
 
@@ -49,7 +49,7 @@ test.describe('Core gameplay', () => {
     // If all visible hexes were ocean or owned, skip gracefully
   })
 
-  test('military tab — march button fires march mode', async ({ page }) => {
+  test('military tab - march button fires march mode', async ({ page }) => {
     await loginViaUI(page, account.username, account.password)
     await zoomToHexGrid(page)
 
@@ -72,7 +72,7 @@ test.describe('Core gameplay', () => {
     }
   })
 
-  test('buildings tab — shows build options', async ({ page }) => {
+  test('buildings tab - shows build options', async ({ page }) => {
     await loginViaUI(page, account.username, account.password)
     await zoomToHexGrid(page)
     await clickHex(page)

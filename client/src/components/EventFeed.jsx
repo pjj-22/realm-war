@@ -1,6 +1,8 @@
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { api } from '../api/client.js'
 import { useSocket } from '../hooks/useSocket'
+import { getPushStatus, enablePush, disablePush } from '../push.js'
+import { toast } from './Toast'
 
 const TYPE_ICON = {
   battle_won:        '🏆',
@@ -8,6 +10,11 @@ const TYPE_ICON = {
   hex_lost:          '💀',
   training_complete: '✅',
   capital_lost:      '👑',
+  incoming_attack:   '🏹',
+  under_attack:      '🔥',
+  crown:             '👑',
+  plunder:           '💰',
+  decay:             '🍂',
 }
 
 function relTime(ts) {
@@ -18,19 +25,89 @@ function relTime(ts) {
   return `${Math.floor(secs / 86400)}d ago`
 }
 
+function PushToggle() {
+  const [status, setStatus] = useState('unsupported')
+  useEffect(() => { getPushStatus().then(setStatus).catch(() => {}) }, [])
+
+  if (status === 'unsupported') return null
+
+  async function toggle() {
+    try {
+      if (status === 'on') {
+        await disablePush()
+        setStatus('off')
+        toast('Push notifications off')
+      } else {
+        await enablePush()
+        setStatus('on')
+        toast('You\'ll be alerted when your realm is attacked', 'success')
+      }
+    } catch (err) {
+      toast(err.message)
+      getPushStatus().then(setStatus).catch(() => {})
+    }
+  }
+
+  return (
+    <button
+      onClick={toggle}
+      title={status === 'on' ? 'Disable attack alerts' : 'Get notified when your realm is under attack'}
+      style={{
+        background: 'none', border: '1px solid rgba(255,255,255,0.12)',
+        borderRadius: 4, color: status === 'on' ? '#c9a040' : '#7a6890',
+        cursor: status === 'blocked' ? 'not-allowed' : 'pointer',
+        fontSize: 11, padding: '2px 8px', fontFamily: 'Georgia, serif',
+        opacity: status === 'blocked' ? 0.5 : 1,
+      }}>
+      {status === 'on' ? '🔔 alerts on' : status === 'blocked' ? '🔕 blocked' : '🔕 alerts off'}
+    </button>
+  )
+}
+
 export default function EventFeed() {
   const [open, setOpen]     = useState(false)
+  const [tab, setTab]       = useState('empire') // 'empire' | 'herald'
   const [count, setCount]   = useState(0)
   const [events, setEvents] = useState([])
+  const [world, setWorld]   = useState([])
+  const [popups, setPopups] = useState([])
   const openRef             = useRef(false)
+  const tabRef              = useRef('empire')
+  const seenRef             = useRef(null)
   openRef.current = open
+  tabRef.current = tab
+
+  // Seed seen-event ids so we only pop genuinely new dispatches
+  useEffect(() => {
+    api.peekEvents()
+      .then(evs => { seenRef.current = new Set(evs.map(e => e.id)) })
+      .catch(() => { seenRef.current = new Set() })
+  }, [])
 
   useSocket({
     'events:new': async () => {
-      if (openRef.current) {
-        try { setEvents(await api.getEvents()) } catch {}
-      } else {
-        try { setCount(c => c + 1) } catch {}
+      if (openRef.current && tabRef.current === 'empire') {
+        try { setEvents(await api.getEvents()) } catch { /* offline */ }
+        return
+      }
+      setCount(c => c + 1)
+      // Transient popups on the right edge for new dispatches
+      try {
+        const evs = await api.peekEvents()
+        if (!seenRef.current) return
+        const fresh = evs.filter(e => !seenRef.current.has(e.id)).slice(0, 3)
+        fresh.forEach(e => seenRef.current.add(e.id))
+        if (fresh.length > 0) {
+          setPopups(p => [...p, ...fresh].slice(-4))
+          fresh.forEach(e =>
+            setTimeout(() => setPopups(p => p.filter(x => x.id !== e.id)), 6000)
+          )
+        }
+      } catch { /* offline */ }
+    },
+    'world:new': async () => {
+      if (openRef.current && tabRef.current === 'herald') {
+        try { setWorld(await api.getWorldEvents()) } catch { /* offline */ }
       }
     },
   })
@@ -38,14 +115,61 @@ export default function EventFeed() {
   const openFeed = async () => {
     setOpen(true)
     try {
-      const data = await api.getEvents()
-      setEvents(data)
+      const [ev, w] = await Promise.all([api.getEvents(), api.getWorldEvents()])
+      setEvents(ev)
+      setWorld(w)
       setCount(0)
-    } catch {}
+    } catch { /* offline */ }
   }
+
+  const tabBtn = (id, label) => (
+    <button
+      onClick={() => setTab(id)}
+      style={{
+        flex: 1, padding: '6px 0', background: 'none',
+        border: 'none', borderBottom: tab === id ? '2px solid #a070e0' : '2px solid transparent',
+        color: tab === id ? '#c0a0f0' : '#6a5878',
+        cursor: 'pointer', fontSize: 12, letterSpacing: 2, textTransform: 'uppercase',
+        fontFamily: 'Georgia, serif',
+      }}>
+      {label}
+    </button>
+  )
+
+  const rows = tab === 'empire' ? events : world
 
   return (
     <div style={{ position: 'relative' }}>
+      {/* Transient dispatch popups - slide in from the right, fade out */}
+      {popups.length > 0 && (
+        <div style={{
+          position: 'fixed', top: 56, right: 8, zIndex: 90,
+          display: 'flex', flexDirection: 'column', gap: 8,
+          pointerEvents: 'none',
+        }}>
+          {popups.map(ev => (
+            <div
+              key={ev.id}
+              onClick={openFeed}
+              style={{
+                pointerEvents: 'auto', cursor: 'pointer',
+                width: 'min(300px, calc(100vw - 16px))',
+                background: 'rgba(15,10,28,0.96)',
+                border: '1px solid rgba(160,110,200,0.4)',
+                borderRadius: 6, padding: '10px 14px',
+                boxShadow: '0 4px 20px rgba(0,0,0,0.6)',
+                display: 'flex', gap: 10, alignItems: 'flex-start',
+                fontFamily: 'Georgia, serif',
+                animation: 'rw-notif 6s ease forwards',
+              }}>
+              <span style={{ fontSize: 15, flexShrink: 0 }}>{TYPE_ICON[ev.type] || '·'}</span>
+              <span style={{ fontSize: 13, color: '#c4b498', lineHeight: 1.45, wordBreak: 'break-word' }}>
+                {ev.message}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
       <button
         onClick={open ? () => setOpen(false) : openFeed}
         style={{
@@ -89,8 +213,8 @@ export default function EventFeed() {
           background: 'rgba(8,6,20,0.97)',
           border: '1px solid rgba(255,255,255,0.1)',
           borderRadius: 6,
-          width: 'min(300px, calc(100vw - 16px))',
-          maxHeight: 380,
+          width: 'min(320px, calc(100vw - 16px))',
+          maxHeight: 420,
           display: 'flex',
           flexDirection: 'column',
           boxShadow: '0 8px 32px rgba(0,0,0,0.7)',
@@ -108,34 +232,45 @@ export default function EventFeed() {
             textTransform: 'uppercase',
             color: '#7a6890',
           }}>
-            <span>Notifications</span>
-            <button onClick={() => setOpen(false)} style={{
-              background: 'none', border: 'none', color: '#7a6890',
-              cursor: 'pointer', fontSize: 18, lineHeight: 1,
-            }}>×</button>
+            <span>Dispatches</span>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <PushToggle />
+              <button onClick={() => setOpen(false)} style={{
+                background: 'none', border: 'none', color: '#7a6890',
+                cursor: 'pointer', fontSize: 18, lineHeight: 1,
+              }}>×</button>
+            </div>
           </div>
+
+          <div style={{ display: 'flex', borderBottom: '1px solid rgba(255,255,255,0.07)' }}>
+            {tabBtn('empire', 'Your Empire')}
+            {tabBtn('herald', '🗞 The Herald')}
+          </div>
+
           <div style={{ overflowY: 'auto', flex: 1 }}>
-            {events.length === 0 ? (
+            {rows.length === 0 ? (
               <div style={{ padding: 16, color: '#6a5878', fontSize: 14, textAlign: 'center' }}>
-                No notifications
+                {tab === 'empire' ? 'No dispatches' : 'The world is quiet… for now'}
               </div>
-            ) : events.map(ev => (
-              <div key={ev.id} style={{
+            ) : rows.map(ev => (
+              <div key={`${tab}-${ev.id}`} style={{
                 padding: '9px 12px',
                 borderBottom: '1px solid rgba(255,255,255,0.04)',
                 display: 'flex',
                 gap: 10,
                 alignItems: 'flex-start',
-                background: ev.read ? 'transparent' : 'rgba(80,50,20,0.2)',
+                background: tab === 'empire' && !ev.read ? 'rgba(80,50,20,0.2)' : 'transparent',
               }}>
-                <span style={{ fontSize: 14, flexShrink: 0, marginTop: 1 }}>
-                  {TYPE_ICON[ev.type] || '·'}
-                </span>
+                {tab === 'empire' && (
+                  <span style={{ fontSize: 14, flexShrink: 0, marginTop: 1 }}>
+                    {TYPE_ICON[ev.type] || '·'}
+                  </span>
+                )}
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: 14, color: '#c4b498', wordBreak: 'break-word' }}>
                     {ev.message}
                   </div>
-                  <div style={{ fontSize: 14, color: '#6a5878', marginTop: 3 }}>
+                  <div style={{ fontSize: 12, color: '#6a5878', marginTop: 3 }}>
                     {relTime(ev.created_at)}
                   </div>
                 </div>

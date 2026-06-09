@@ -61,7 +61,10 @@ export default function LeaderboardPanel({ player, onFlyTo }) {
       >
         <span style={{ fontSize: 14, color: '#8a7a9a', minWidth: 18, textAlign: 'right' }}>{rank}.</span>
         <span style={{ width: 9, height: 9, borderRadius: '50%', background: p.color, display: 'inline-block', flexShrink: 0 }} />
-        <span style={{ fontSize: 14, flex: 1 }}>{displayName(p.username)}</span>
+        <span style={{ fontSize: 14, flex: 1 }}>
+          {p.alliance_tag && <span style={{ color: '#9070c0', fontSize: 11 }}>[{p.alliance_tag}] </span>}
+          {displayName(p.username)}
+        </span>
         {isBot && <span style={{ fontSize: 9, color: '#4a3a6a', letterSpacing: 1 }}>AI</span>}
         <span style={{ fontSize: 14, color: '#9a8aaa' }}>{p.hex_count}▲</span>
         <span style={{ fontSize: 14, color: '#8a7aaa' }}>{p.total_troops}⚔</span>
@@ -115,7 +118,7 @@ export default function LeaderboardPanel({ player, onFlyTo }) {
             </>
           )}
 
-          {/* History chart — expands when player clicks their own entry */}
+          {/* History chart - expands when player clicks their own entry */}
           {showHistory && player && (
             <div style={{
               marginTop: 8, paddingTop: 10,
