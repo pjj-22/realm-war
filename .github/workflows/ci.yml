@@ -1,0 +1,121 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  client:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: client
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: client/package-lock.json
+      - run: npm ci
+      # Lint is informational for now - the codebase predates the react-hooks v7 rules
+      - run: npx eslint src/ || true
+      - run: npm run build
+
+  server-smoke:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: server
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: realmwar
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:ci@localhost:5432/realmwar
+      JWT_SECRET: ci_secret
+      ADMIN_SECRET: ci_admin
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+      - run: npm ci
+      - name: Apply schema
+        run: PGPASSWORD=ci psql -h localhost -U postgres -d realmwar -f schema.sql
+      - name: Boot server and smoke-test the API
+        run: |
+          node index.js &
+          SERVER_PID=$!
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:3001/api/health > /dev/null && break
+            sleep 1
+          done
+          curl -sf http://localhost:3001/api/health
+          # register -> claim -> verify camps + season endpoints
+          TOKEN=$(curl -sf -X POST http://localhost:3001/api/players/register \
+            -H 'Content-Type: application/json' \
+            -d '{"username":"ci_smoke","password":"ci_password","color":"#ff6600"}' | python3 -c 'import sys,json;print(json.load(sys.stdin)["token"])')
+          curl -sf http://localhost:3001/api/players/me -H "Authorization: Bearer $TOKEN" > /dev/null
+          curl -sf http://localhost:3001/api/seasons/current > /dev/null
+          curl -sf http://localhost:3001/api/world/events > /dev/null
+          curl -sf http://localhost:3001/api/players/leaderboard > /dev/null
+          kill $SERVER_PID
+
+  e2e:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: realmwar
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:ci@localhost:5432/realmwar
+      JWT_SECRET: ci_secret
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install server deps + schema
+        working-directory: server
+        run: |
+          npm ci
+          PGPASSWORD=ci psql -h localhost -U postgres -d realmwar -f schema.sql
+      - name: Install client deps + Playwright
+        working-directory: client
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+      - name: Start server and client
+        run: |
+          (cd server && node index.js > /tmp/server.log 2>&1 &)
+          (cd client && npm run dev -- --port 5199 > /tmp/client.log 2>&1 &)
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:3001/api/health > /dev/null && curl -sf http://localhost:5199 > /dev/null && break
+            sleep 1
+          done
+      - name: Run e2e tests
+        working-directory: client
+        run: npx playwright test
+      - name: Print logs on failure
+        if: failure()
+        run: tail -50 /tmp/server.log /tmp/client.log

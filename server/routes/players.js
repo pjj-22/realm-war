@@ -2,6 +2,7 @@ import { Router } from 'express'
 import bcrypt from 'bcryptjs'
 import { pool } from '../db.js'
 import { signToken, requireAuth } from '../auth.js'
+import { rateLimit } from '../ratelimit.js'
 import { STARTING_GOLD, STARTING_MANA, TICK_INTERVAL_MS, BUILDING_TIME_SECONDS, GOLD_CAP_BASE } from '../config.js'
 import { nextTickAt } from '../tick.js'
 import { getCountry } from '../countries.js'
@@ -9,7 +10,7 @@ import { getCountry } from '../countries.js'
 const router = Router()
 
 // Register
-router.post('/register', async (req, res) => {
+router.post('/register', rateLimit({ windowMs: 60 * 60 * 1000, max: 10, message: 'Too many accounts created - try later' }), async (req, res) => {
   const { username, password, color } = req.body
   if (!username || !password) return res.status(400).json({ error: 'Username and password required' })
   if (username.length < 3 || username.length > 32) return res.status(400).json({ error: 'Username must be 3-32 characters' })
@@ -31,7 +32,7 @@ router.post('/register', async (req, res) => {
 })
 
 // Login
-router.post('/login', async (req, res) => {
+router.post('/login', rateLimit({ windowMs: 10 * 60 * 1000, max: 20, message: 'Too many login attempts - try later' }), async (req, res) => {
   const { username, password } = req.body
   if (!username || !password) return res.status(400).json({ error: 'Username and password required' })
 
@@ -74,15 +75,19 @@ router.post('/login', async (req, res) => {
 router.get('/leaderboard', async (req, res) => {
   try {
     const result = await pool.query(`
+      WITH hx AS (SELECT owner_id, COUNT(*)::int AS n FROM hexes GROUP BY owner_id),
+           tr AS (SELECT owner_id, SUM(quantity)::int AS n FROM troops GROUP BY owner_id),
+           ch AS (SELECT winner_id, COUNT(*)::int AS n FROM seasons WHERE status='ended' AND winner_id IS NOT NULL GROUP BY winner_id)
       SELECT p.username, p.color, p.capital_hex, a.tag AS alliance_tag,
-        COUNT(DISTINCT h.h3_index)::integer AS hex_count,
-        COALESCE(SUM(t.quantity), 0)::integer AS total_troops
+        COALESCE(hx.n, 0) AS hex_count,
+        COALESCE(tr.n, 0) AS total_troops,
+        COALESCE(ch.n, 0) AS champion_titles
       FROM players p
       LEFT JOIN alliances a ON a.id = p.alliance_id
-      LEFT JOIN hexes h ON h.owner_id = p.id
-      LEFT JOIN troops t ON t.owner_id = p.id
+      LEFT JOIN hx ON hx.owner_id = p.id
+      LEFT JOIN tr ON tr.owner_id = p.id
+      LEFT JOIN ch ON ch.winner_id = p.id
       WHERE p.username NOT LIKE 'WILD_%'
-      GROUP BY p.id, p.username, p.color, p.capital_hex, a.tag
       ORDER BY hex_count DESC, total_troops DESC
       LIMIT 10
     `)

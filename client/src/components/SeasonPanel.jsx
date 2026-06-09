@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { playSound } from '../sound.js'
 
 function fmtRemaining(ms) {
   if (ms <= 0) return 'ending…'
@@ -62,6 +63,11 @@ function StandingsTable({ rows, highlight }) {
             {r.alliance_tag && <span style={{ color: '#9070c0', fontSize: 11 }}>[{r.alliance_tag}] </span>}
             {r.username.startsWith('BOT_') ? r.username.slice(4) : r.username}
             {r.username.startsWith('BOT_') && <span style={{ fontSize: 9, color: '#4a3a6a', marginLeft: 4 }}>AI</span>}
+            {r.champion_titles > 0 && (
+              <span title={`${r.champion_titles} season championship${r.champion_titles > 1 ? 's' : ''}`} style={{ fontSize: 11, marginLeft: 4 }}>
+                🏆{r.champion_titles > 1 ? `×${r.champion_titles}` : ''}
+              </span>
+            )}
           </span>
           <span style={{ fontSize: 13, color: '#9a8aaa' }}>{r.hex_count}▲</span>
           <span style={{ fontSize: 13, color: '#8a7aaa' }}>{r.total_troops}⚔</span>
@@ -148,6 +154,7 @@ export default function SeasonPanel({ season, history, player, onClose }) {
 
 // Full-screen moment when a season you played just ended
 export function SeasonEndOverlay({ endedSeason, newNumber, player, onDismiss }) {
+  useEffect(() => { playSound('fanfare') }, [])
   const snapshot = endedSeason.snapshot || []
   const champion = snapshot[0]
   return (

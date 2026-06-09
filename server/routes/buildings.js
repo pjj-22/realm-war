@@ -1,5 +1,5 @@
 import { Router } from 'express'
-import { pool } from '../db.js'
+import { pool, withTransaction, httpError } from '../db.js'
 import { requireAuth } from '../auth.js'
 import { BUILDING_COSTS, UPGRADE_COST, UPGRADE_MINUTES, MAX_UPGRADE_LEVEL, BUILDING_TIME_SECONDS, TICK_INTERVAL_MS } from '../config.js'
 
@@ -57,18 +57,21 @@ router.post('/', requireAuth, async (req, res) => {
     }
 
     const cost = BUILDING_COSTS[type]
-    const player = await pool.query('SELECT gold FROM players WHERE id=$1', [req.player.id])
-    const { gold } = player.rows[0]
-    if (gold < cost.gold) {
-      return res.status(400).json({ error: `Need ${cost.gold}g, have ${gold}g` })
-    }
+    const { building, gold } = await withTransaction(async (tx) => {
+      const player = await tx.query('SELECT gold FROM players WHERE id=$1 FOR UPDATE', [req.player.id])
+      const current = player.rows[0].gold
+      if (current < cost.gold) throw httpError(400, `Need ${cost.gold}g, have ${current}g`)
+      // Re-check the slot inside the lock window
+      const taken = await tx.query('SELECT 1 FROM buildings WHERE h3_index=$1', [h3Index])
+      if (taken.rows.length >= MAX_BUILDINGS_PER_HEX) throw httpError(400, 'This hex already has a building')
 
-    await pool.query('UPDATE players SET gold=gold-$1 WHERE id=$2', [cost.gold, req.player.id])
-    const built = await pool.query('INSERT INTO buildings (h3_index, type) VALUES ($1,$2) RETURNING *', [h3Index, type])
-
-    const updated = await pool.query('SELECT gold FROM players WHERE id=$1', [req.player.id])
-    res.json({ success: true, building: built.rows[0], player: updated.rows[0] })
-  } catch {
+      await tx.query('UPDATE players SET gold=gold-$1 WHERE id=$2', [cost.gold, req.player.id])
+      const built = await tx.query('INSERT INTO buildings (h3_index, type) VALUES ($1,$2) RETURNING *', [h3Index, type])
+      return { building: built.rows[0], gold: current - cost.gold }
+    })
+    res.json({ success: true, building, player: { gold } })
+  } catch (err) {
+    if (err.status) return res.status(err.status).json({ error: err.message })
     res.status(500).json({ error: 'Server error' })
   }
 })
@@ -105,21 +108,22 @@ router.post('/:h3Index/upgrade', requireAuth, async (req, res) => {
     const existing = await pool.query('SELECT id FROM upgrade_queue WHERE h3_index=$1', [h3Index])
     if (existing.rows[0]) return res.status(409).json({ error: 'Upgrade already in progress' })
 
-    const player = await pool.query('SELECT gold FROM players WHERE id=$1', [req.player.id])
-    const { gold } = player.rows[0]
-    if (gold < UPGRADE_COST.gold) {
-      return res.status(400).json({ error: `Need ${UPGRADE_COST.gold}g` })
-    }
-
     const completesAt = new Date(Date.now() + UPGRADE_MINUTES * 60 * 1000)
-    await pool.query('UPDATE players SET gold=gold-$1 WHERE id=$2', [UPGRADE_COST.gold, req.player.id])
-    const job = await pool.query(
-      'INSERT INTO upgrade_queue (owner_id, h3_index, completes_at) VALUES ($1,$2,$3) RETURNING *',
-      [req.player.id, h3Index, completesAt]
-    )
-    const updated = await pool.query('SELECT gold FROM players WHERE id=$1', [req.player.id])
-    res.json({ upgrade: job.rows[0], player: updated.rows[0] })
-  } catch {
+    const { upgrade, gold } = await withTransaction(async (tx) => {
+      const player = await tx.query('SELECT gold FROM players WHERE id=$1 FOR UPDATE', [req.player.id])
+      const current = player.rows[0].gold
+      if (current < UPGRADE_COST.gold) throw httpError(400, `Need ${UPGRADE_COST.gold}g`)
+
+      await tx.query('UPDATE players SET gold=gold-$1 WHERE id=$2', [UPGRADE_COST.gold, req.player.id])
+      const job = await tx.query(
+        'INSERT INTO upgrade_queue (owner_id, h3_index, completes_at) VALUES ($1,$2,$3) RETURNING *',
+        [req.player.id, h3Index, completesAt]
+      )
+      return { upgrade: job.rows[0], gold: current - UPGRADE_COST.gold }
+    })
+    res.json({ upgrade, player: { gold } })
+  } catch (err) {
+    if (err.status) return res.status(err.status).json({ error: err.message })
     res.status(500).json({ error: 'Server error' })
   }
 })

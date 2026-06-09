@@ -1,6 +1,6 @@
 import { pool } from './db.js'
 import { getIO } from './socket.js'
-import { SEASON_DURATION_MS, STARTING_GOLD } from './config.js'
+import { SEASON_DURATION_MS, STARTING_GOLD, SEASON_PODIUM_BONUS } from './config.js'
 import { respawnBots } from './bots.js'
 import { sendPush } from './push.js'
 
@@ -38,16 +38,19 @@ export async function computeStandings(limit = 10) {
   const r = await pool.query(`
     WITH hx AS (SELECT owner_id, COUNT(*)::int AS n FROM hexes GROUP BY owner_id),
          tr AS (SELECT owner_id, SUM(quantity)::int AS n FROM troops GROUP BY owner_id),
-         cr AS (SELECT player_id, COUNT(*)::int AS n FROM country_crowns GROUP BY player_id)
+         cr AS (SELECT player_id, COUNT(*)::int AS n FROM country_crowns GROUP BY player_id),
+         ch AS (SELECT winner_id, COUNT(*)::int AS n FROM seasons WHERE status='ended' AND winner_id IS NOT NULL GROUP BY winner_id)
     SELECT p.id, p.username, p.color, a.tag AS alliance_tag,
       COALESCE(hx.n, 0) AS hex_count,
       COALESCE(tr.n, 0) AS total_troops,
-      COALESCE(cr.n, 0) AS crowns
+      COALESCE(cr.n, 0) AS crowns,
+      COALESCE(ch.n, 0) AS champion_titles
     FROM players p
     LEFT JOIN alliances a ON a.id = p.alliance_id
     LEFT JOIN hx ON hx.owner_id = p.id
     LEFT JOIN tr ON tr.owner_id = p.id
     LEFT JOIN cr ON cr.player_id = p.id
+    LEFT JOIN ch ON ch.winner_id = p.id
     WHERE p.username NOT LIKE 'WILD_%'
       AND (COALESCE(hx.n, 0) > 0 OR COALESCE(tr.n, 0) > 0)
     ORDER BY hex_count DESC, total_troops DESC
@@ -106,6 +109,10 @@ export async function processSeason() {
     await pool.query('DELETE FROM hexes')
     await pool.query('DELETE FROM country_crowns')
     await pool.query('UPDATE players SET capital_hex=NULL, gold=$1', [STARTING_GOLD])
+    // Podium gold carries into the new age
+    for (let i = 0; i < Math.min(SEASON_PODIUM_BONUS.length, standings.length); i++) {
+      await pool.query('UPDATE players SET gold = gold + $1 WHERE id = $2', [SEASON_PODIUM_BONUS[i], standings[i].id])
+    }
 
     current = null
     await ensureSeason()

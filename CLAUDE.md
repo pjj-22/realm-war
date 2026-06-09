@@ -41,7 +41,7 @@ Tests create throwaway accounts (`test_<timestamp>`) directly against the API an
 
 ## DEV_MODE
 
-`server/config.js` starts with `export const DEV_MODE = true`. Every game constant (tick interval, costs, training/march times, gold caps) branches on it - dev values are ~100× faster/cheaper. It is currently `true`; set to `false` for production speeds. All balance tuning lives in `config.js` and `strategic.js`; don't hardcode game numbers elsewhere.
+`server/config.js` derives `DEV_MODE` from the environment (`DEV_MODE=false` for prod speeds; defaults to true). Every game constant (tick interval, costs, training/march times, gold caps) branches on it - dev values are ~100× faster/cheaper. It is currently `true`; set to `false` for production speeds. All balance tuning lives in `config.js` and `strategic.js`; don't hardcode game numbers elsewhere.
 
 ## Architecture
 

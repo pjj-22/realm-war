@@ -2,6 +2,7 @@ import { Router } from 'express'
 import { pool } from '../db.js'
 import { runTick } from '../tick.js'
 import { ensureBots } from '../bots.js'
+import { getCurrentSeason, processSeason } from '../season.js'
 import { getIO } from '../socket.js'
 
 const router = Router()
@@ -21,8 +22,8 @@ router.get('/overview', async (req, res) => {
     const [players, hexes, armies, battles] = await Promise.all([
       pool.query('SELECT COUNT(*)::integer AS n FROM players WHERE username NOT LIKE \'BOT_%\''),
       pool.query('SELECT COUNT(*)::integer AS n FROM hexes'),
-      pool.query('SELECT COUNT(*)::integer AS n FROM armies WHERE arrived = false'),
-      pool.query('SELECT COUNT(*)::integer AS n FROM battles WHERE resolved = false'),
+      pool.query("SELECT COUNT(*)::integer AS n FROM armies WHERE status='marching'"),
+      pool.query("SELECT COUNT(*)::integer AS n FROM battles WHERE status='active'"),
     ])
     res.json({
       human_players: players.rows[0].n,
@@ -91,6 +92,18 @@ router.post('/tick', async (req, res) => {
     await runTick()
     getIO()?.emit('tick')
     res.json({ ok: true })
+  } catch (err) { res.status(500).json({ error: err.message }) }
+})
+
+// End the current season immediately (testing / emergencies)
+router.post('/season/end', async (req, res) => {
+  try {
+    const season = getCurrentSeason()
+    if (!season) return res.status(404).json({ error: 'No active season' })
+    await pool.query('UPDATE seasons SET ends_at=NOW() WHERE id=$1', [season.id])
+    season.ends_at = new Date(0) // force the cached row past its deadline
+    await processSeason()
+    res.json({ ok: true, ended: season.number })
   } catch (err) { res.status(500).json({ error: err.message }) }
 })
 

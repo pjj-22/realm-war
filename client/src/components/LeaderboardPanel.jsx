@@ -64,6 +64,11 @@ export default function LeaderboardPanel({ player, onFlyTo }) {
         <span style={{ fontSize: 14, flex: 1 }}>
           {p.alliance_tag && <span style={{ color: '#9070c0', fontSize: 11 }}>[{p.alliance_tag}] </span>}
           {displayName(p.username)}
+          {p.champion_titles > 0 && (
+            <span title={`${p.champion_titles} season championship${p.champion_titles > 1 ? 's' : ''}`} style={{ fontSize: 11, marginLeft: 4 }}>
+              🏆{p.champion_titles > 1 ? `×${p.champion_titles}` : ''}
+            </span>
+          )}
         </span>
         {isBot && <span style={{ fontSize: 9, color: '#4a3a6a', letterSpacing: 1 }}>AI</span>}
         <span style={{ fontSize: 14, color: '#9a8aaa' }}>{p.hex_count}▲</span>

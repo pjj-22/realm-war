@@ -92,7 +92,12 @@ export const DEV_MODE = true
 | Starting gold | 9999 | 100 |
 | Gold cap | effectively unlimited | 500 + 100/hex |
 
-Set `DEV_MODE = false` before deploying.
+`DEV_MODE` defaults to `true`; set the environment variable `DEV_MODE=false` before deploying (no code edit needed).
+
+## Sounds
+
+Game sounds are synthesized with WebAudio by default. To use real audio, drop mp3 files into `client/public/sounds/`:
+`horn.mp3` (incoming attack), `battle.mp3` (clash/territory lost), `capture.mp3` (victory), `coin.mp3` (plunder), `fanfare.mp3` (crowns/season end). Files are auto-detected and preferred over the synth. Mute toggle lives in the dispatches panel (🔔).
 
 ## Game mechanics
 

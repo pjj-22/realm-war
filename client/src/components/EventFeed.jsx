@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from 'react'
 import { api } from '../api/client.js'
 import { useSocket } from '../hooks/useSocket'
 import { getPushStatus, enablePush, disablePush } from '../push.js'
+import { playForEventType, soundMuted, setSoundMuted } from '../sound.js'
 import { toast } from './Toast'
 
 const TYPE_ICON = {
@@ -64,6 +65,22 @@ function PushToggle() {
   )
 }
 
+function SoundToggle() {
+  const [muted, setMuted] = useState(soundMuted())
+  return (
+    <button
+      onClick={() => { setSoundMuted(!muted); setMuted(!muted) }}
+      title={muted ? 'Unmute game sounds' : 'Mute game sounds'}
+      style={{
+        background: 'none', border: '1px solid rgba(255,255,255,0.12)',
+        borderRadius: 4, color: muted ? '#7a6890' : '#c9a040',
+        cursor: 'pointer', fontSize: 11, padding: '2px 8px', fontFamily: 'Georgia, serif',
+      }}>
+      {muted ? '🔇' : '🔊'}
+    </button>
+  )
+}
+
 export default function EventFeed() {
   const [open, setOpen]     = useState(false)
   const [tab, setTab]       = useState('empire') // 'empire' | 'herald'
@@ -99,6 +116,7 @@ export default function EventFeed() {
         fresh.forEach(e => seenRef.current.add(e.id))
         if (fresh.length > 0) {
           setPopups(p => [...p, ...fresh].slice(-4))
+          playForEventType(fresh[0].type)
           fresh.forEach(e =>
             setTimeout(() => setPopups(p => p.filter(x => x.id !== e.id)), 6000)
           )
@@ -234,6 +252,7 @@ export default function EventFeed() {
           }}>
             <span>Dispatches</span>
             <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <SoundToggle />
               <PushToggle />
               <button onClick={() => setOpen(false)} style={{
                 background: 'none', border: 'none', color: '#7a6890',

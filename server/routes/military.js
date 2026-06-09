@@ -1,5 +1,5 @@
 import { Router } from 'express'
-import { pool } from '../db.js'
+import { pool, withTransaction, httpError } from '../db.js'
 import { requireAuth } from '../auth.js'
 import { gridDistance } from 'h3-js'
 import { TROOP_STATS, OCEAN_MARCH_MULTIPLIER, BUILDING_TIME_SECONDS } from '../config.js'
@@ -39,40 +39,40 @@ router.post('/train', requireAuth, async (req, res) => {
     const stats = TROOP_STATS[type]
     const totalGold = stats.gold * quantity
 
-    // Check resources
-    const player = await pool.query('SELECT gold FROM players WHERE id=$1', [req.player.id])
-    const { gold } = player.rows[0]
-    if (gold < totalGold) {
-      return res.status(400).json({ error: `Need ${totalGold}g, have ${gold}g` })
-    }
+    const { training, gold } = await withTransaction(async (tx) => {
+      // Lock the player row so concurrent trains can't double-spend
+      const player = await tx.query('SELECT gold FROM players WHERE id=$1 FOR UPDATE', [req.player.id])
+      const current = player.rows[0].gold
+      if (current < totalGold) throw httpError(400, `Need ${totalGold}g, have ${current}g`)
 
-    // Check for barracks (halves train time)
-    const building = await pool.query(
-      'SELECT type, created_at FROM buildings WHERE h3_index=$1', [h3Index]
-    )
-    const hasBarracks = building.rows.some(b =>
-      b.type === 'barracks' && (Date.now() - new Date(b.created_at).getTime() >= BUILDING_TIME_SECONDS * 1000)
-    )
-    const trainMinutes = hasBarracks ? stats.trainMinutes / 2 : stats.trainMinutes
+      // Check for barracks (halves train time)
+      const building = await tx.query(
+        'SELECT type, created_at FROM buildings WHERE h3_index=$1', [h3Index]
+      )
+      const hasBarracks = building.rows.some(b =>
+        b.type === 'barracks' && (Date.now() - new Date(b.created_at).getTime() >= BUILDING_TIME_SECONDS * 1000)
+      )
+      const trainMinutes = hasBarracks ? stats.trainMinutes / 2 : stats.trainMinutes
 
-    // Chain after the last queued job on this hex so jobs don't overlap
-    const lastJob = await pool.query(
-      'SELECT MAX(completes_at) AS last FROM training_queue WHERE owner_id=$1 AND h3_index=$2',
-      [req.player.id, h3Index]
-    )
-    const startedAt  = lastJob.rows[0]?.last ? new Date(lastJob.rows[0].last) : new Date()
-    const completesAt = new Date(startedAt.getTime() + trainMinutes * 60 * 1000 * quantity)
+      // Chain after the last queued job on this hex so jobs don't overlap
+      const lastJob = await tx.query(
+        'SELECT MAX(completes_at) AS last FROM training_queue WHERE owner_id=$1 AND h3_index=$2',
+        [req.player.id, h3Index]
+      )
+      const startedAt  = lastJob.rows[0]?.last ? new Date(lastJob.rows[0].last) : new Date()
+      const completesAt = new Date(startedAt.getTime() + trainMinutes * 60 * 1000 * quantity)
 
-    // Deduct gold and queue training
-    await pool.query('UPDATE players SET gold=gold-$1 WHERE id=$2', [totalGold, req.player.id])
-    const result = await pool.query(
-      'INSERT INTO training_queue (owner_id, h3_index, type, quantity, started_at, completes_at) VALUES ($1,$2,$3,$4,$5,$6) RETURNING *',
-      [req.player.id, h3Index, type, quantity, startedAt, completesAt]
-    )
+      await tx.query('UPDATE players SET gold=gold-$1 WHERE id=$2', [totalGold, req.player.id])
+      const result = await tx.query(
+        'INSERT INTO training_queue (owner_id, h3_index, type, quantity, started_at, completes_at) VALUES ($1,$2,$3,$4,$5,$6) RETURNING *',
+        [req.player.id, h3Index, type, quantity, startedAt, completesAt]
+      )
+      return { training: result.rows[0], gold: current - totalGold }
+    })
 
-    const updated = await pool.query('SELECT gold FROM players WHERE id=$1', [req.player.id])
-    res.json({ training: result.rows[0], player: updated.rows[0] })
-  } catch {
+    res.json({ training, player: { gold } })
+  } catch (err) {
+    if (err.status) return res.status(err.status).json({ error: err.message })
     res.status(500).json({ error: 'Server error' })
   }
 })
@@ -87,35 +87,37 @@ router.post('/march', requireAuth, async (req, res) => {
     const hex = await pool.query('SELECT owner_id FROM hexes WHERE h3_index=$1', [fromHex])
     if (hex.rows[0]?.owner_id !== req.player.id) return res.status(403).json({ error: 'You do not own this hex' })
 
-    // Check troops available
-    const troopsRow = await pool.query(
-      'SELECT quantity FROM troops WHERE owner_id=$1 AND h3_index=$2 AND type=$3',
-      [req.player.id, fromHex, type]
-    )
-    const available = troopsRow.rows[0]?.quantity || 0
-    if (available < quantity) return res.status(400).json({ error: `Only ${available} troops available` })
-
-    // Deduct troops
-    await pool.query(
-      'UPDATE troops SET quantity=quantity-$1 WHERE owner_id=$2 AND h3_index=$3 AND type=$4',
-      [quantity, req.player.id, fromHex, type]
-    )
-
     // Calculate arrival time - ocean hexes cost 10× march time
     const stats = TROOP_STATS[type]
     const dist = Math.max(1, gridDistance(fromHex, toHex))
     const multiplier = isOcean(toHex) ? OCEAN_MARCH_MULTIPLIER : 1
     const arrivesAt = new Date(Date.now() + dist * stats.marchMinutesPerHex * multiplier * 60 * 1000)
 
-    const result = await pool.query(
-      'INSERT INTO armies (owner_id, from_hex, to_hex, type, quantity, arrives_at, departed_at) VALUES ($1,$2,$3,$4,$5,$6,NOW()) RETURNING *',
-      [req.player.id, fromHex, toHex, type, quantity, arrivesAt]
-    )
+    const army = await withTransaction(async (tx) => {
+      // Lock the garrison row so concurrent marches can't send the same troops twice
+      const troopsRow = await tx.query(
+        'SELECT quantity FROM troops WHERE owner_id=$1 AND h3_index=$2 AND type=$3 FOR UPDATE',
+        [req.player.id, fromHex, type]
+      )
+      const available = troopsRow.rows[0]?.quantity || 0
+      if (available < quantity) throw httpError(400, `Only ${available} troops available`)
+
+      await tx.query(
+        'UPDATE troops SET quantity=quantity-$1 WHERE owner_id=$2 AND h3_index=$3 AND type=$4',
+        [quantity, req.player.id, fromHex, type]
+      )
+      const result = await tx.query(
+        'INSERT INTO armies (owner_id, from_hex, to_hex, type, quantity, arrives_at, departed_at) VALUES ($1,$2,$3,$4,$5,$6,NOW()) RETURNING *',
+        [req.player.id, fromHex, toHex, type, quantity, arrivesAt]
+      )
+      return result.rows[0]
+    })
 
     notifyIncomingAttack(req.player.id, toHex, quantity, arrivesAt)
     getIO()?.emit('armies:update')
-    res.json({ army: result.rows[0] })
-  } catch {
+    res.json({ army })
+  } catch (err) {
+    if (err.status) return res.status(err.status).json({ error: err.message })
     res.status(500).json({ error: 'Server error' })
   }
 })

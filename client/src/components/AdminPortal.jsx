@@ -122,6 +122,18 @@ export default function AdminPortal() {
     setBotBusy(false)
   }
 
+  const [seasonBusy, setSeasonBusy] = useState(false)
+  async function endSeason() {
+    if (!confirm('End the current season NOW? Standings freeze, a Champion is crowned, and the entire map resets.')) return
+    setSeasonBusy(true)
+    try {
+      const r = await adminRequest('POST', '/season/end', null, secret)
+      alert(`Season ${r.ended} ended. A new age begins.`)
+      await load()
+    } catch (e) { alert(e.message) }
+    setSeasonBusy(false)
+  }
+
   async function deletePlayer(id, username) {
     if (!confirm(`Delete ${username}? This removes all their hexes, troops, and buildings.`)) return
     try { await adminRequest('DELETE', `/players/${id}`, null, secret); await load() }
@@ -187,6 +199,9 @@ export default function AdminPortal() {
           </button>
           <button onClick={resetBots} style={btnStyle('#3a2a1a')} disabled={botBusy}>
             {botBusy ? 'Resetting…' : '🤖 Reset Bots'}
+          </button>
+          <button onClick={endSeason} style={btnStyle('#5a2a2a')} disabled={seasonBusy}>
+            {seasonBusy ? 'Ending…' : '🏁 End Season'}
           </button>
           <a href="/" style={{ ...btnStyle(), textDecoration: 'none', fontSize: 12 }}>← Game</a>
         </div>

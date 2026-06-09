@@ -3,6 +3,7 @@ import { pool } from '../db.js'
 import { requireAuth } from '../auth.js'
 import { getIO } from '../socket.js'
 import { CHAT_MAX_LENGTH } from '../config.js'
+import { rateLimit } from '../ratelimit.js'
 
 const router = Router()
 
@@ -38,7 +39,7 @@ router.get('/', requireAuth, async (req, res) => {
 })
 
 // Send a message
-router.post('/', requireAuth, async (req, res) => {
+router.post('/', requireAuth, rateLimit({ windowMs: 10 * 1000, max: 5, key: req => `chat:${req.player.id}`, message: 'Easy there - sending too fast' }), async (req, res) => {
   const { channel, text } = req.body
   const trimmed = (text || '').trim()
   if (!trimmed) return res.status(400).json({ error: 'Message required' })

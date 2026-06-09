@@ -1,6 +1,9 @@
 // ─── Master game config ───────────────────────────────────────────────────────
-// Set DEV_MODE=true for fast local testing, false for real game speeds.
-export const DEV_MODE = true
+// Fast dev speeds by default; set DEV_MODE=false in the environment for
+// real game speeds (no code edit needed to deploy).
+import dotenv from 'dotenv'
+dotenv.config()
+export const DEV_MODE = process.env.DEV_MODE !== 'false'
 
 // ─── Starting resources ───────────────────────────────────────────────────────
 export const STARTING_GOLD   = DEV_MODE ? 9999 : 100
@@ -81,3 +84,6 @@ export const CHAT_MAX_LENGTH      = 240
 export const SEASON_DURATION_MS = DEV_MODE
   ? 5 * 60 * 1000              // 5 minutes - watch a full season roll over while testing
   : 90 * 24 * 60 * 60 * 1000   // 90 days
+
+// Podium gold carried into the new age (1st, 2nd, 3rd)
+export const SEASON_PODIUM_BONUS = [100, 50, 25]
