@@ -12,6 +12,7 @@ import BattlePanel from './BattlePanel'
 import BattleParticles from './BattleParticles'
 import ChatPanel from './ChatPanel'
 import AlliancePanel from './AlliancePanel'
+import SeasonPanel, { SeasonChip, SeasonEndOverlay } from './SeasonPanel'
 import { useResourceTicker } from '../hooks/useResourceTicker'
 import { useIsMobile } from '../hooks/useIsMobile'
 import { api } from '../api/client'
@@ -277,6 +278,10 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
   const [alliance, setAlliance] = useState(null)
   const [showAlliance, setShowAlliance] = useState(false)
   const allyIdsRef = useRef(null)
+  const [season, setSeason] = useState(null)
+  const [seasonHistory, setSeasonHistory] = useState([])
+  const [showSeason, setShowSeason] = useState(false)
+  const [endedSeason, setEndedSeason] = useState(null)
 
   const ownedHexCount = Object.values(claimedRef.current).filter(h => h.owner_id === player?.id).length
   const totalTroops = Object.values(claimedRef.current).filter(h => h.owner_id === player?.id).reduce((s, h) => s + (h.troop_count || 0), 0)
@@ -347,6 +352,24 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
     } catch { /* not logged in */ }
   }, [])
 
+  const loadSeason = useCallback(async () => {
+    try {
+      const s = await api.getSeason()
+      setSeason(s)
+      // Rolled over since we last looked? Show the final-standings moment.
+      const lastSeen = parseInt(localStorage.getItem('rw_season') || '0', 10)
+      if (lastSeen > 0 && s.number > lastSeen) {
+        const hist = await api.getSeasonHistory()
+        setSeasonHistory(hist)
+        const prev = hist.find(h => h.number === s.number - 1) || hist[0]
+        if (prev) setEndedSeason(prev)
+        // Player state (gold, capital) was reset server-side - resync
+        if (playerRef.current) api.me().then(p => onPlayerUpdate?.(p)).catch(() => {})
+      }
+      localStorage.setItem('rw_season', String(s.number))
+    } catch { /* no active season */ }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
   // Initial loads on mount
   useEffect(() => { loadClaimed() }, [loadClaimed])
   useEffect(() => { loadArmies() }, [loadArmies])
@@ -370,12 +393,15 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
     return () => window.removeEventListener('rw:flyto', handler)
   }, [])
 
+  useEffect(() => { loadSeason() }, [loadSeason])
+
   // Socket-driven updates - replace polling intervals
   useSocket({
     'hexes:update': () => { loadClaimed(); loadStrategic() },
     'armies:update': loadArmies,
     'battle:update': loadActiveBattles,
     'tick': loadStats,
+    'season:update': loadSeason,
   })
 
   useEffect(() => {
@@ -1057,6 +1083,17 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
           </button>
         )}
 
+        {season && (
+          <SeasonChip
+            season={season}
+            isMobile={isMobile}
+            onClick={async () => {
+              try { setSeasonHistory(await api.getSeasonHistory()) } catch { /* offline */ }
+              setShowSeason(true)
+            }}
+          />
+        )}
+
         <div style={{ flex: 1 }} />
 
         {/* Resources */}
@@ -1210,6 +1247,26 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
           alliance={alliance}
           onChanged={loadAlliance}
           onClose={() => setShowAlliance(false)}
+        />
+      )}
+
+      {/* ── Season dashboard ────────────────────────────────────── */}
+      {showSeason && season && (
+        <SeasonPanel
+          season={season}
+          history={seasonHistory}
+          player={player}
+          onClose={() => setShowSeason(false)}
+        />
+      )}
+
+      {/* ── Season end - final standings moment ─────────────────── */}
+      {endedSeason && season && (
+        <SeasonEndOverlay
+          endedSeason={endedSeason}
+          newNumber={season.number}
+          player={player}
+          onDismiss={() => setEndedSeason(null)}
         />
       )}
 

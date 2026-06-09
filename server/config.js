@@ -74,3 +74,10 @@ export const CROWN_MIN_HEXES = DEV_MODE ? 3 : 10  // hexes in-country (plus its 
 // ─── Alliances ────────────────────────────────────────────────────────────────
 export const ALLIANCE_CREATE_COST = DEV_MODE ? 10 : 100
 export const CHAT_MAX_LENGTH      = 240
+
+// ─── Seasons ──────────────────────────────────────────────────────────────────
+// When a season ends: standings are frozen, a Champion is crowned, and the map
+// resets for a new age. Accounts, alliances, and history persist.
+export const SEASON_DURATION_MS = DEV_MODE
+  ? 5 * 60 * 1000              // 5 minutes - watch a full season roll over while testing
+  : 90 * 24 * 60 * 60 * 1000   // 90 days

@@ -131,6 +131,8 @@ export default function HelpModal({ onClose }) {
 
         <div style={S.section}>
           <div style={S.sectionTitle}>The World</div>
+          <Row icon="🏁" label="Seasons"
+            desc="The war runs in seasons (see the countdown chip up top). Whoever holds the most hexes when the horn sounds is crowned Champion and enters the Hall of Fame - then the map resets for a new age. Accounts, alliances, and history persist." />
           <Row icon="🏕" label="Marauder camps"
             desc="Neutral camps spawn near new capitals. Defeat the garrison to take the hex and plunder its gold - perfect first targets." />
           <Row icon="👑" label="Country crowns"

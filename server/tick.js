@@ -10,6 +10,7 @@ import {
 import { getIO } from './socket.js'
 import { ensureBots, processBots } from './bots.js'
 import { ensureWildlands } from './wild.js'
+import { ensureSeason, processSeason } from './season.js'
 import { gridDistance, gridDisk } from 'h3-js'
 import { isOcean } from './terrain.js'
 import { sendPush } from './push.js'
@@ -571,10 +572,12 @@ export async function startTick() {
 
   await ensureWildlands()
   await ensureBots()
+  await ensureSeason()
   wrappedTick()
   setInterval(wrappedTick, TICK_INTERVAL_MS)
   setInterval(processTraining, TRAINING_INTERVAL_MS)
   setInterval(processCombat, COMBAT_INTERVAL_MS)
   setInterval(processBattleRounds, BATTLE_INTERVAL_MS)
   setInterval(processUpgrades, TRAINING_INTERVAL_MS)
+  setInterval(processSeason, TRAINING_INTERVAL_MS)
 }

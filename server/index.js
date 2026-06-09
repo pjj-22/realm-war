@@ -13,6 +13,7 @@ import pushRoutes from './routes/push.js'
 import worldRoutes from './routes/world.js'
 import allianceRoutes from './routes/alliance.js'
 import chatRoutes from './routes/chat.js'
+import seasonRoutes from './routes/season.js'
 import { initPush } from './push.js'
 import { startTick } from './tick.js'
 import { DEV_MODE, STARTING_GOLD, STARTING_MANA, TICK_INTERVAL_MS, BUILDING_TIME_SECONDS } from './config.js'
@@ -37,6 +38,7 @@ app.use('/api/push', pushRoutes)
 app.use('/api/world', worldRoutes)
 app.use('/api/alliance', allianceRoutes)
 app.use('/api/chat', chatRoutes)
+app.use('/api/seasons', seasonRoutes)
 
 app.get('/api/health', (_, res) => res.json({
   ok: true,
@@ -113,6 +115,17 @@ async function runMigrations() {
       alliance_id INTEGER REFERENCES alliances(id) ON DELETE CASCADE,
       text TEXT NOT NULL,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`)
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS seasons (
+      id SERIAL PRIMARY KEY,
+      number INTEGER NOT NULL UNIQUE,
+      started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      ends_at TIMESTAMPTZ NOT NULL,
+      ended_at TIMESTAMPTZ,
+      status TEXT NOT NULL DEFAULT 'active',
+      winner_id ${PID} REFERENCES players(id) ON DELETE SET NULL,
+      snapshot JSONB
     )`)
   console.log('[db] Migrations complete')
 }

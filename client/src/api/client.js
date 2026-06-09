@@ -59,4 +59,6 @@ export const api = {
   leaveAlliance: () => request('POST', '/alliance/leave'),
   getChat: (channel) => request('GET', `/chat?channel=${channel}`),
   sendChat: (channel, text) => request('POST', '/chat', { channel, text }),
+  getSeason: () => request('GET', '/seasons/current'),
+  getSeasonHistory: () => request('GET', '/seasons/history'),
 }

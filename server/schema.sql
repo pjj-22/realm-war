@@ -155,3 +155,15 @@ CREATE TABLE IF NOT EXISTS chat_messages (
   text        TEXT        NOT NULL,
   created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- Seasons: timed ages of the world; ending crowns a Champion and resets the map
+CREATE TABLE IF NOT EXISTS seasons (
+  id         SERIAL      PRIMARY KEY,
+  number     INTEGER     NOT NULL UNIQUE,
+  started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  ends_at    TIMESTAMPTZ NOT NULL,
+  ended_at   TIMESTAMPTZ,
+  status     TEXT        NOT NULL DEFAULT 'active',
+  winner_id  INTEGER     REFERENCES players(id) ON DELETE SET NULL,
+  snapshot   JSONB
+);

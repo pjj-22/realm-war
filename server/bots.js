@@ -87,6 +87,29 @@ export async function ensureBots() {
   }
 }
 
+// Re-seed bots that lost (or never had) a capital - used after a season reset
+export async function respawnBots() {
+  for (const def of BOT_DEFS) {
+    try {
+      const r = await pool.query('SELECT id, capital_hex FROM players WHERE username=$1', [def.username])
+      const bot = r.rows[0]
+      if (!bot || bot.capital_hex) continue
+      const startHex = await findFreeHex(latLngToCell(def.lat, def.lng, HEX_RES))
+      if (!startHex) continue
+      await pool.query(
+        'INSERT INTO hexes (h3_index, owner_id, claimed_at) VALUES ($1,$2,NOW()) ON CONFLICT DO NOTHING',
+        [startHex, bot.id]
+      )
+      await pool.query('UPDATE players SET capital_hex=$1, gold=GREATEST(gold,$2) WHERE id=$3',
+        [startHex, STARTING_GOLD, bot.id])
+      await depositTroops(bot.id, startHex, 'troop', STARTING_TROOPS)
+      console.log(`[bot] ${def.username} respawned at ${startHex}`)
+    } catch (err) {
+      console.error(`[bot] respawn failed for ${def.username}:`, err.message)
+    }
+  }
+}
+
 // Claim any hexes where the bot has troops stationed but doesn't yet own
 async function botClaim(bot) {
   const stationed = await pool.query(

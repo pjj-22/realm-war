@@ -29,6 +29,7 @@ There are about 1.5 million land hexes in the database. The game runs continuous
 - **Border decay** - large empires slowly lose unguarded, undeveloped border hexes
 - **Capital rebuild** - lose your capital and you can claim any free hex to start over (with starter troops and a free mine)
 - **Spawn suggestions** - new players get a "take me to the front" placement near the action
+- **Seasons** - timed ages (5 min dev / 90 days prod); most hexes at the horn wins, Champion enters the Hall of Fame, map resets
 - **Mobile-responsive** - playable on phone with bottom drawer UI
 
 ## Stack
