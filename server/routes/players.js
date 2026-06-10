@@ -3,6 +3,7 @@ import bcrypt from 'bcryptjs'
 import { pool } from '../db.js'
 import { signToken, requireAuth } from '../auth.js'
 import { rateLimit } from '../ratelimit.js'
+import { DEV_MODE } from '../config.js'
 import { STARTING_GOLD, STARTING_MANA, TICK_INTERVAL_MS, BUILDING_TIME_SECONDS, GOLD_CAP_BASE } from '../config.js'
 import { nextTickAt } from '../tick.js'
 import { getCountry } from '../countries.js'
@@ -10,7 +11,7 @@ import { getCountry } from '../countries.js'
 const router = Router()
 
 // Register
-router.post('/register', rateLimit({ windowMs: 60 * 60 * 1000, max: 10, message: 'Too many accounts created - try later' }), async (req, res) => {
+router.post('/register', rateLimit({ windowMs: 60 * 60 * 1000, max: DEV_MODE ? 1000 : 10, message: 'Too many accounts created - try later' }), async (req, res) => {
   const { username, password, color } = req.body
   if (!username || !password) return res.status(400).json({ error: 'Username and password required' })
   if (username.length < 3 || username.length > 32) return res.status(400).json({ error: 'Username must be 3-32 characters' })
@@ -32,7 +33,7 @@ router.post('/register', rateLimit({ windowMs: 60 * 60 * 1000, max: 10, message:
 })
 
 // Login
-router.post('/login', rateLimit({ windowMs: 10 * 60 * 1000, max: 20, message: 'Too many login attempts - try later' }), async (req, res) => {
+router.post('/login', rateLimit({ windowMs: 10 * 60 * 1000, max: DEV_MODE ? 1000 : 20, message: 'Too many login attempts - try later' }), async (req, res) => {
   const { username, password } = req.body
   if (!username || !password) return res.status(400).json({ error: 'Username and password required' })
 

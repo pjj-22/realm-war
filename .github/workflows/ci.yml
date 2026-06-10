@@ -118,4 +118,4 @@ jobs:
         run: npx playwright test
       - name: Print logs on failure
         if: failure()
-        run: tail -50 /tmp/server.log /tmp/client.log
+        run: tail -n 50 /tmp/server.log /tmp/client.log
