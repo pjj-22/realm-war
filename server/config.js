@@ -78,6 +78,10 @@ export const CROWN_MIN_HEXES = DEV_MODE ? 3 : 10  // hexes in-country (plus its 
 export const ALLIANCE_CREATE_COST = DEV_MODE ? 10 : 100
 export const CHAT_MAX_LENGTH      = 240
 
+// ─── Power projection - huge forces can't hide in the fog ─────────────────────
+export const PROJECTION_GARRISON = DEV_MODE ? 30 : 250    // a garrison this big is visible through fog
+export const PROJECTION_EMPIRE   = DEV_MODE ? 120 : 2500  // total troops at which your whole empire is exposed
+
 // ─── Seasons ──────────────────────────────────────────────────────────────────
 // When a season ends: standings are frozen, a Champion is crowned, and the map
 // resets for a new age. Accounts, alliances, and history persist.

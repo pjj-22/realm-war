@@ -118,8 +118,9 @@ function hexToGeoJSONFeature(cell, claimed, visibleSet) {
   const boundary = cellToBoundary(cell)
   const coords = boundary.map(([lat, lng]) => [lng, lat])
   coords.push(coords[0])
-  // fog = claimed enemy hex outside the visible ring
-  const fog = !!claimed?.owner_id && !!visibleSet && !visibleSet.has(cell)
+  // fog = claimed enemy hex outside the visible ring - unless its garrison
+  // (or its owner's total host) is too massive to hide (power projection)
+  const fog = !!claimed?.owner_id && !!visibleSet && !visibleSet.has(cell) && !claimed?.projected
   return {
     type: 'Feature',
     properties: {
@@ -170,7 +171,7 @@ function buildVisibleSet(claimedHexes, playerId, allyIds) {
 function buildClaimedPoints(claimedHexes, visibleSet) {
   const features = Object.entries(claimedHexes).map(([cell, claimed]) => {
     const [lat, lng] = cellToLatLng(cell)
-    const isVisible = !visibleSet || visibleSet.has(cell)
+    const isVisible = !visibleSet || visibleSet.has(cell) || claimed.projected
     return {
       type: 'Feature',
       properties: {
@@ -647,7 +648,8 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
         layout: {
           'text-field': ['get', 'label'],
           'text-size': 12,
-          'text-offset': [0, 0.55],
+          'text-anchor': 'left',
+          'text-offset': [0.55, 0.05],
           'text-allow-overlap': true,
           'text-ignore-placement': true,
         },
@@ -675,7 +677,8 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
         map.current.setLayoutProperty('army-label', 'icon-size', 0.42)
         map.current.setLayoutProperty('army-label', 'icon-allow-overlap', true)
         map.current.setLayoutProperty('army-label', 'icon-ignore-placement', true)
-        map.current.setLayoutProperty('army-label', 'icon-offset', [0, -11])
+        map.current.setLayoutProperty('army-label', 'icon-anchor', 'right')
+        map.current.setLayoutProperty('army-label', 'icon-offset', [8, 1])
       }
       armyImg.src = 'data:image/svg+xml;base64,' + btoa(armySvg)
 

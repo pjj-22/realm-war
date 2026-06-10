@@ -153,6 +153,8 @@ export default function HelpModal({ onClose }) {
             desc="Found or join an alliance (banner button, top-right). Allies can't attack each other, share map vision, reinforce each other's battles, and get a private chat." />
           <Row icon={<LeafIcon size={15} />} label="Border decay"
             desc="Large empires slowly lose unguarded, undeveloped border hexes. Garrison troops or build to hold the frontier." />
+          <Row icon={<FlameIcon size={15} />} label="Power projection"
+            desc="Massive forces can't hide. A hex garrisoning a huge army stays visible through fog of war, and once your total troop count grows large enough, your whole empire is exposed to everyone." />
           <Row icon={<BellIcon size={15} />} label="Attack alerts"
             desc="Enable push notifications in the dispatches panel (the bell) to get warned the moment an army marches on your territory - even when the game is closed." />
         </div>

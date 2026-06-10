@@ -5,7 +5,7 @@ import { requireAuth } from '../auth.js'
 import { getIO } from '../socket.js'
 import { isOcean } from '../terrain.js'
 import { getCountry } from '../countries.js'
-import { STARTING_TROOPS } from '../config.js'
+import { STARTING_TROOPS, PROJECTION_GARRISON, PROJECTION_EMPIRE } from '../config.js'
 import { STRATEGIC_HEXES, STRATEGIC_BONUS_GOLD } from '../strategic.js'
 import { seedCampsAround } from '../wild.js'
 
@@ -15,11 +15,14 @@ const router = Router()
 router.get('/', async (req, res) => {
   try {
     const result = await pool.query(`
+      WITH power AS (SELECT owner_id, SUM(quantity)::int AS total FROM troops GROUP BY owner_id)
       SELECT h.h3_index, h.owner_id, h.upgrade_level, h.rally_hex, h.claimed_at, p.color, p.username, p.capital_hex,
         COALESCE(SUM(DISTINCT t.quantity), 0)::integer AS troop_count,
+        COALESCE(MAX(power.total), 0)::integer AS owner_power,
         COALESCE(array_agg(DISTINCT b.type) FILTER (WHERE b.type IS NOT NULL), '{}') AS building_types
       FROM hexes h
       JOIN players p ON p.id = h.owner_id
+      LEFT JOIN power ON power.owner_id = h.owner_id
       LEFT JOIN troops t ON t.h3_index = h.h3_index
       LEFT JOIN buildings b ON b.h3_index = h.h3_index
       GROUP BY h.h3_index, h.owner_id, h.upgrade_level, h.rally_hex, p.color, p.username, p.capital_hex
@@ -27,8 +30,12 @@ router.get('/', async (req, res) => {
     const rows = result.rows.map(h => {
       const info = getCountry(h.h3_index)
       const strategic = STRATEGIC_HEXES.get(h.h3_index)
+      // Power projection: huge garrisons (or huge empires) can't hide in fog
+      const projected = h.troop_count >= PROJECTION_GARRISON || h.owner_power >= PROJECTION_EMPIRE
+      const { owner_power, ...rest } = h
       return {
-        ...h,
+        ...rest,
+        projected,
         country_name: info?.name || null,
         country_continent: info?.continent || null,
         strategic_name: strategic?.name || null,
