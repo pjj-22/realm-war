@@ -21,6 +21,46 @@ import { GoldIcon, SearchIcon, AllianceIcon, SwordsIcon } from './Icons'
 
 const HEX_RESOLUTION = 7
 
+// Register an SVG as a map sprite (no-op if already present)
+function addSvgImage(map, id, svg) {
+  if (map.hasImage?.(id)) return
+  const img = new Image()
+  img.onload = () => { if (map && !map.hasImage?.(id)) map.addImage(id, img) }
+  img.src = 'data:image/svg+xml;base64,' + btoa(svg)
+}
+
+// Mini building badges - white glyph on the building's pip color
+const PIP_SPRITES = {
+  'pip-mine': `<svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 16 16">
+    <circle cx="8" cy="8" r="7" fill="#c9902a" stroke="rgba(0,0,0,0.55)" stroke-width="1.4"/>
+    <g transform="translate(2.9,2.9) scale(0.64)">
+      <line x1="5" y1="13.5" x2="10.8" y2="4.4" stroke="#fff" stroke-width="2" stroke-linecap="round"/>
+      <path d="M4 5.8C6.5 2.2 11 2 13.3 4.4c-1.8-.5-4.3-.3-6 .8Z" fill="#fff"/>
+    </g>
+  </svg>`,
+  'pip-barracks': `<svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 16 16">
+    <circle cx="8" cy="8" r="7" fill="#a84040" stroke="rgba(0,0,0,0.55)" stroke-width="1.4"/>
+    <g transform="translate(3.1,2.9) scale(0.62)">
+      <path d="M3.5 14V5.5h1.6V3.8h1.8v1.7h2.2V3.8h1.8v1.7h1.6V14Z" fill="#fff"/>
+    </g>
+  </svg>`,
+  'pip-fort': `<svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 16 16">
+    <circle cx="8" cy="8" r="7" fill="#5a9840" stroke="rgba(0,0,0,0.55)" stroke-width="1.4"/>
+    <g transform="translate(3.1,2.9) scale(0.62)">
+      <path d="M8 1.8l5 1.9v4.1c0 3.3-3.4 5.6-5 6.4-1.6-.8-5-3.1-5-6.4V3.7Z" fill="#fff"/>
+    </g>
+  </svg>`,
+}
+
+const GARRISON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 16 16">
+  <g stroke="rgba(0,0,0,0.7)" stroke-width="3" stroke-linecap="round" fill="none">
+    <path d="M3 2.5l9 9M13 2.5l-9 9"/><path d="M10.6 11.4l-1.4 1.4M5.4 11.4l1.4 1.4"/>
+  </g>
+  <g stroke="#e8d8b0" stroke-width="1.6" stroke-linecap="round" fill="none">
+    <path d="M3 2.5l9 9M13 2.5l-9 9"/><path d="M10.6 11.4l-1.4 1.4M5.4 11.4l1.4 1.4"/>
+  </g>
+</svg>`
+
 function getViewportPolygon(map) {
   const bounds = map.getBounds()
   const ne = bounds.getNorthEast()
@@ -163,10 +203,11 @@ function buildPipFeatures(claimedHexes) {
     const spacing = n > 1 ? Math.min(0.30, 1.20 / (n - 1)) : 0
     const startX = -spacing * (n - 1) / 2
     types.slice(0, 6).forEach((type, i) => {
+      if (!PIP_COLORS[type]) return
       const ox = startX + i * spacing
       features.push({
         type: 'Feature',
-        properties: { pip_color: PIP_COLORS[type] || '#888888' },
+        properties: { pip_type: type },
         geometry: { type: 'Point', coordinates: [clng + (ox * HEX_SHORT_RAD) / cosLat, clat + 0.12 * HEX_SHORT_RAD] },
       })
     })
@@ -433,6 +474,10 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
     })
 
     map.current.on('load', () => {
+      // Sprites for garrison + building badges
+      addSvgImage(map.current, 'garrison-icon', GARRISON_SVG)
+      for (const [id, svg] of Object.entries(PIP_SPRITES)) addSvgImage(map.current, id, svg)
+
       // Always-visible claimed territory layer (visible at all zoom levels)
       map.current.addSource('claimed', {
         type: 'geojson',
@@ -510,6 +555,10 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
         source: 'claimed-points',
         minzoom: 7,
         layout: {
+          'icon-image': ['case', ['!=', ['get', 'troop_count'], 0], 'garrison-icon', ''],
+          'icon-size': ['interpolate', ['linear'], ['zoom'], 7, 0.32, 10, 0.46],
+          'icon-anchor': 'right',
+          'icon-offset': [2, 32],
           'text-field': ['case',
             ['==', ['get', 'troop_count'], -1], '?',
             ['>', ['get', 'troop_count'], 0], ['to-string', ['get', 'troop_count']],
@@ -517,7 +566,8 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
           ],
           'text-size': 15,
           'text-allow-overlap': false,
-          'text-offset': [0, 1.0],
+          'text-anchor': 'left',
+          'text-offset': [0.15, 1.0],
         },
         paint: {
           'text-color': 'rgba(255,255,255,0.95)',
@@ -533,15 +583,14 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
       })
       map.current.addLayer({
         id: 'building-pips',
-        type: 'circle',
+        type: 'symbol',
         source: 'building-pips',
         minzoom: 6.5,
-        paint: {
-          'circle-radius': ['interpolate', ['linear'], ['zoom'], 6.5, 3, 9, 6],
-          'circle-color': ['get', 'pip_color'],
-          'circle-stroke-width': 1,
-          'circle-stroke-color': 'rgba(0,0,0,0.55)',
-          'circle-opacity': 0.92,
+        layout: {
+          'icon-image': ['concat', 'pip-', ['get', 'pip_type']],
+          'icon-size': ['interpolate', ['linear'], ['zoom'], 6.5, 0.3, 9.5, 0.62],
+          'icon-allow-overlap': true,
+          'icon-ignore-placement': true,
         },
       })
 

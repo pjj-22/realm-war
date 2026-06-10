@@ -120,6 +120,14 @@ export default function HelpModal({ onClose }) {
         </div>
 
         <div style={S.section}>
+          <div style={S.sectionTitle}>Reading the Map</div>
+          <Row icon={<SwordsIcon size={15} />} label="Crossed swords + number"
+            desc="The garrison - how many troops are stationed on that hex. A ? means the hex is outside your vision." />
+          <Row icon={<PickaxeIcon size={15} />} label="Round badges"
+            desc="Buildings on the hex: gold pickaxe = mine, red keep = barracks, green shield = fort." />
+        </div>
+
+        <div style={S.section}>
           <div style={S.sectionTitle}>Marching &amp; Combat</div>
           <Row icon={<SwordsIcon size={15} />} label="Claiming land"
             desc="March troops to an unclaimed adjacent hex - once they arrive, you can claim it." />
