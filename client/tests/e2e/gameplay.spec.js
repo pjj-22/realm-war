@@ -66,8 +66,8 @@ test.describe('Core gameplay', () => {
       if (await marchBtn.isVisible({ timeout: 1000 }).catch(() => false)) {
         await marchBtn.click()
         await page.waitForTimeout(500)
-        // March mode banner should appear
-        await expect(page.locator('text=Select target hex')).toBeVisible({ timeout: 3000 })
+        // March mode banner should appear with the troop count
+        await expect(page.locator('text=click destination')).toBeVisible({ timeout: 3000 })
       }
     }
   })
@@ -83,8 +83,8 @@ test.describe('Core gameplay', () => {
       await buildingsTab.click()
       await page.waitForTimeout(400)
       // Should see at least one of Mine, Barracks, Fort
-      const hasBuildOption = await page.locator('text=Mine').isVisible().catch(() => false)
-        || await page.locator('text=Barracks').isVisible().catch(() => false)
+      const hasBuildOption = await page.locator('text=Mine').first().isVisible().catch(() => false)
+        || await page.locator('text=Barracks').first().isVisible().catch(() => false)
       expect(hasBuildOption).toBe(true)
     }
   })

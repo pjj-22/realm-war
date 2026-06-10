@@ -174,7 +174,7 @@ function buildPipFeatures(claimedHexes) {
   return { type: 'FeatureCollection', features }
 }
 
-function HarvestCountdown({ nextTickAt, onExpire }) {
+function HarvestCountdown({ nextTickAt, onExpire, compact }) {
   const [secs, setSecs] = useState(0)
   const firedRef = useRef(false)
   useEffect(() => {
@@ -195,8 +195,8 @@ function HarvestCountdown({ nextTickAt, onExpire }) {
   const m = Math.floor(secs / 60), s = secs % 60
   const label = m > 0 ? `${m}m ${String(s).padStart(2,'0')}s` : `${secs}s`
   return (
-    <span style={{ fontSize: 11, color: secs <= 5 ? '#c9902a' : '#7a6890' }}>
-      harvest in {label}
+    <span style={{ fontSize: 11, color: secs <= 5 ? '#c9902a' : '#7a6890', whiteSpace: 'nowrap' }}>
+      {compact ? `⏳${label}` : `harvest in ${label}`}
     </span>
   )
 }
@@ -1104,14 +1104,14 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
               <span style={{ fontSize: 15, color: goldOverCap ? '#e8a020' : '#c9902a', fontWeight: 'bold' }}>
                 {resources.gold}
               </span>
-              {goldCap !== null && (
+              {goldCap !== null && (goldOverCap || !isMobile) && (
                 <span style={{ fontSize: 11, color: goldOverCap ? '#8a5818' : '#7a6890' }}>
                   {goldOverCap ? '⚠' : `/ ${goldCap}`}
                 </span>
               )}
               {stats && !isMobile && <GoldIncomeTooltip hexCount={stats.hex_count || 0} mines={stats.mines || 0} incomeByCountry={stats.income_by_country} />}
             </div>
-            {stats?.next_tick_at && <HarvestCountdown nextTickAt={stats.next_tick_at} onExpire={loadStats} />}
+            {stats?.next_tick_at && <HarvestCountdown nextTickAt={stats.next_tick_at} onExpire={loadStats} compact={isMobile} />}
             {!isMobile && <span style={{ fontSize: 13, color: '#7a6890' }}>▲ {stats?.hex_count ?? ownedHexCount}</span>}
             {!isMobile && totalTroops > 0 && <span style={{ fontSize: 13, color: '#7a6890' }}>⚔ {totalTroops}</span>}
             {!isMobile && import.meta.env.DEV && (

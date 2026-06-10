@@ -94,6 +94,10 @@ const boxStyle = {
 // Season dashboard: countdown, win condition, live standings, hall of fame
 export default function SeasonPanel({ season, history, player, onClose }) {
   const left = useCountdown(season.ends_at)
+  const myRecord = (player && history || []).map(s => {
+    const idx = (s.snapshot || []).findIndex(r => r.username === player.username)
+    return idx >= 0 ? { number: s.number, place: idx + 1, hexes: s.snapshot[idx].hex_count } : null
+  }).filter(Boolean)
   return (
     <div style={overlayStyle} onClick={onClose}>
       <div style={boxStyle} onClick={e => e.stopPropagation()}>
@@ -125,6 +129,25 @@ export default function SeasonPanel({ season, history, player, onClose }) {
           Current standings
         </div>
         <StandingsTable rows={season.standings} highlight={player?.username} />
+
+        {myRecord.length > 0 && (
+          <>
+            <div style={{ fontSize: 12, letterSpacing: 2, textTransform: 'uppercase', color: '#7a6890', margin: '18px 0 8px' }}>
+              Your campaign record
+            </div>
+            <div style={{ fontSize: 13, color: '#c4b498', lineHeight: 1.8 }}>
+              {myRecord.map(r => (
+                <span key={r.number} style={{ marginRight: 12, whiteSpace: 'nowrap' }}>
+                  <span style={{ color: '#8a7a9a' }}>S{r.number}</span>{' '}
+                  <span style={{ color: r.place === 1 ? '#f0d080' : r.place <= 3 ? '#c0a0f0' : '#c4b498' }}>
+                    {['🥇', '🥈', '🥉'][r.place - 1] || `#${r.place}`}
+                  </span>{' '}
+                  <span style={{ color: '#7a6890', fontSize: 11 }}>{r.hexes}▲</span>
+                </span>
+              ))}
+            </div>
+          </>
+        )}
 
         {history?.length > 0 && (
           <>

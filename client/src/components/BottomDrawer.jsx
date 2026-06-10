@@ -250,6 +250,24 @@ export default function BottomDrawer({ hex, player, stats, onClaim, onLoginRequi
     return () => clearTimeout(t)
   }, [buildingData?.upgrading?.completes_at, loadBuildings])
 
+  // Tick progress bar (used by the territory panel)
+  const [tickPct, setTickPct] = useState(0)
+  const [tickSecs, setTickSecs] = useState(null)
+  useEffect(() => {
+    if (!stats?.next_tick_at || !stats?.tick_interval_ms) return
+    function update() {
+      const now = Date.now()
+      const end = new Date(stats.next_tick_at).getTime()
+      const interval = stats.tick_interval_ms
+      const elapsed = interval - Math.max(0, end - now)
+      setTickPct(Math.min(100, (elapsed / interval) * 100))
+      setTickSecs(Math.max(0, Math.ceil((end - now) / 1000)))
+    }
+    update()
+    const id = setInterval(update, 500)
+    return () => clearInterval(id)
+  }, [stats?.next_tick_at, stats?.tick_interval_ms])
+
   // ── derived data ─────────────────────────────────────────────
 
   const income = (() => {
@@ -372,24 +390,6 @@ export default function BottomDrawer({ hex, player, stats, onClaim, onLoginRequi
 
       return total
     })()
-
-    // Tick progress bar
-    const [tickPct, setTickPct] = useState(0)
-    const [tickSecs, setTickSecs] = useState(null)
-    useEffect(() => {
-      if (!stats?.next_tick_at || !stats?.tick_interval_ms) return
-      function update() {
-        const now = Date.now()
-        const end = new Date(stats.next_tick_at).getTime()
-        const interval = stats.tick_interval_ms
-        const elapsed = interval - Math.max(0, end - now)
-        setTickPct(Math.min(100, (elapsed / interval) * 100))
-        setTickSecs(Math.max(0, Math.ceil((end - now) / 1000)))
-      }
-      update()
-      const id = setInterval(update, 500)
-      return () => clearInterval(id)
-    }, [stats?.next_tick_at, stats?.tick_interval_ms])
 
     if (isClaimed && isFogged) return (
       <div style={{ fontSize: 14, color: '#6a5838', lineHeight: 1.8 }}>
@@ -937,9 +937,9 @@ export default function BottomDrawer({ hex, player, stats, onClaim, onLoginRequi
           </div>
 
           <div style={{ padding: isMobile ? '16px 16px 20px' : '24px 32px 28px', overflowY: 'auto', height: isMobile ? '48vh' : '36vh' }}>
-            {tab === 'territory' && <TerritoryPanel />}
-            {tab === 'buildings' && <BuildingsPanel />}
-            {tab === 'military'  && <MilitaryPanel />}
+            {tab === 'territory' && TerritoryPanel()}
+            {tab === 'buildings' && BuildingsPanel()}
+            {tab === 'military'  && MilitaryPanel()}
           </div>
         </>
       )}
