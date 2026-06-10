@@ -274,6 +274,8 @@ export async function processCombat() {
         // Own hex - deposit troops
         await depositTroops(army.owner_id, army.to_hex, army.type, army.quantity)
         await pool.query("UPDATE armies SET status='arrived' WHERE id=$1", [army.id])
+        getIO()?.emit('armies:update')
+        getIO()?.emit('hexes:update')
         console.log(`[combat] ${army.owner_id} reinforced own hex ${army.to_hex}`)
 
       } else if (!targetHex || !targetHex.owner_id) {
@@ -288,12 +290,14 @@ export async function processCombat() {
           console.log(`[combat] ${army.owner_id} auto-claimed ${army.to_hex}`)
         }
         await pool.query("UPDATE armies SET status='arrived' WHERE id=$1", [army.id])
+        getIO()?.emit('armies:update')
 
       } else if (await sameAlliance(army.owner_id, targetHex.owner_id)) {
         // Ally's hex - reinforce their defense instead of attacking
         await depositTroops(army.owner_id, army.to_hex, army.type, army.quantity)
         await pool.query("UPDATE armies SET status='arrived' WHERE id=$1", [army.id])
         getIO()?.emit('armies:update')
+        getIO()?.emit('hexes:update')
         console.log(`[combat] ${army.owner_id} reinforced ally hex ${army.to_hex}`)
 
       } else {

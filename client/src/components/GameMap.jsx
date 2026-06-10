@@ -597,7 +597,8 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
         minzoom: 5,
         layout: {
           'text-field': ['get', 'label'],
-          'text-size': 13,
+          'text-size': 12,
+          'text-offset': [0, 0.55],
           'text-allow-overlap': true,
           'text-ignore-placement': true,
         },
@@ -607,6 +608,27 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
           'text-halo-width': 1,
         },
       })
+
+      // Crossed-swords sprite for marching armies (matches Icons.jsx)
+      const armySvg = `<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 16 16">
+        <g stroke="rgba(0,0,0,0.65)" stroke-width="3" stroke-linecap="round" fill="none">
+          <path d="M3 2.5l9 9M13 2.5l-9 9"/><path d="M10.6 11.4l-1.4 1.4M5.4 11.4l1.4 1.4"/>
+        </g>
+        <g stroke="#ffffff" stroke-width="1.6" stroke-linecap="round" fill="none">
+          <path d="M3 2.5l9 9M13 2.5l-9 9"/><path d="M10.6 11.4l-1.4 1.4M5.4 11.4l1.4 1.4"/>
+        </g>
+      </svg>`
+      const armyImg = new Image(40, 40)
+      armyImg.onload = () => {
+        if (!map.current || map.current.hasImage?.('army-icon')) return
+        map.current.addImage('army-icon', armyImg)
+        map.current.setLayoutProperty('army-label', 'icon-image', 'army-icon')
+        map.current.setLayoutProperty('army-label', 'icon-size', 0.42)
+        map.current.setLayoutProperty('army-label', 'icon-allow-overlap', true)
+        map.current.setLayoutProperty('army-label', 'icon-ignore-placement', true)
+        map.current.setLayoutProperty('army-label', 'icon-offset', [0, -11])
+      }
+      armyImg.src = 'data:image/svg+xml;base64,' + btoa(armySvg)
 
       // Strategic hex layer - always visible, shows name + gold bonus
       map.current.addSource('strategic', {

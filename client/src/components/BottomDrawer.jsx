@@ -786,14 +786,14 @@ export default function BottomDrawer({ hex, player, stats, onClaim, onLoginRequi
           )}
 
           {military?.armies?.length > 0 && (
-            <div style={{ marginTop: 16 }}>
+            <div style={{ marginTop: 24, paddingTop: 16, paddingBottom: 8, borderTop: '1px solid rgba(255,255,255,0.07)' }}>
               <Label>Marching</Label>
               {military.armies.map(a => {
                 const pct = Math.min(100, ((Date.now() - new Date(a.departed_at)) / (new Date(a.arrives_at) - new Date(a.departed_at))) * 100)
                 const mins = Math.max(0, Math.ceil((new Date(a.arrives_at) - Date.now()) / 60000))
                 return (
-                  <div key={a.id} style={{ marginBottom: 9 }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 14, color: '#9a8060', marginBottom: 3 }}>
+                  <div key={a.id} style={{ marginBottom: 16, paddingRight: 4 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 14, color: '#9a8060', marginBottom: 6 }}>
                       <span>{a.quantity} troops</span>
                       <span>{mins}m remaining</span>
                     </div>
