@@ -60,6 +60,7 @@ initSocket(httpServer)
 
 async function runMigrations() {
   await pool.query('ALTER TABLE hexes ADD COLUMN IF NOT EXISTS rally_hex TEXT')
+  await pool.query('ALTER TABLE training_queue ADD COLUMN IF NOT EXISTS delivered INTEGER NOT NULL DEFAULT 0')
 
   // players.id is SERIAL on fresh installs (schema.sql) but UUID on older databases -
   // derive the type so foreign keys match either way

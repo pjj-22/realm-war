@@ -7,12 +7,16 @@ const ROUND_MS = 15000
 const DAMAGE_RATE = 0.15
 
 function RoundTimer({ lastRoundAt }) {
-  const [secsLeft, setSecsLeft] = useState(0)
+  const [secsLeft, setSecsLeft] = useState(ROUND_MS / 1000)
+  const baseRef = useRef(Date.now())
+
+  useEffect(() => {
+    if (lastRoundAt) baseRef.current = new Date(lastRoundAt).getTime()
+  }, [lastRoundAt])
 
   useEffect(() => {
     function update() {
-      const base = lastRoundAt ? new Date(lastRoundAt).getTime() : Date.now()
-      const next = base + ROUND_MS
+      const next = baseRef.current + ROUND_MS
       setSecsLeft(Math.max(0, Math.ceil((next - Date.now()) / 1000)))
     }
     update()
@@ -21,8 +25,8 @@ function RoundTimer({ lastRoundAt }) {
   }, [lastRoundAt])
 
   return (
-    <span style={{ fontSize: 11, color: secsLeft <= 3 ? '#ff8080' : '#7a6a9a' }}>
-      next round in {secsLeft}s
+    <span style={{ fontSize: 12, color: secsLeft <= 3 ? '#ff8080' : '#9a6a6a', whiteSpace: 'nowrap' }}>
+      {secsLeft > 0 ? `next round in ${secsLeft}s` : 'resolving round…'}
     </span>
   )
 }
@@ -78,7 +82,7 @@ function StrengthBar({ strength, maxStrength, initialStrength, initialQty, color
         })}
       </div>
       <div style={{ fontSize: 13, color: '#9a7a7a', marginTop: 6 }}>
-        Lost: {losses.toFixed(1)}{perIcon > 1 ? ` · 1 figure ≈ ${perIcon} troops` : ''}
+        Lost: ~{Math.max(0, Math.round((initialQty || 0) * (1 - aliveFrac)))} troops{perIcon > 1 ? ` · 1 figure ≈ ${perIcon}` : ''}
       </div>
     </div>
   )

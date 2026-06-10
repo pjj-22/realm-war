@@ -187,36 +187,64 @@ export async function runTick() {
 
 export async function processTraining() {
   try {
-    const done = await pool.query('SELECT * FROM training_queue WHERE completes_at <= NOW()')
-    for (const job of done.rows) {
+    const jobs = await pool.query(
+      'SELECT t.*, h.rally_hex FROM training_queue t LEFT JOIN hexes h ON h.h3_index = t.h3_index'
+    )
+    let deposited = false
+
+    for (const job of jobs.rows) {
+      const now = Date.now()
+      const completesAt = new Date(job.completes_at).getTime()
+      const hasRally = job.rally_hex && job.rally_hex !== job.h3_index
+
+      if (now < completesAt) {
+        // Incremental delivery: each soldier joins the garrison as it finishes
+        // training. Rally batches are held back so they march together.
+        if (hasRally) continue
+        const start = new Date(job.started_at).getTime()
+        const total = completesAt - start
+        const progress = total > 0 ? Math.max(0, (now - start) / total) : 0
+        const finished = Math.min(job.quantity, Math.floor(progress * job.quantity))
+        const delta = finished - (job.delivered || 0)
+        if (delta > 0) {
+          await depositTroops(job.owner_id, job.h3_index, job.type, delta)
+          await pool.query('UPDATE training_queue SET delivered=$1 WHERE id=$2', [finished, job.id])
+          deposited = true
+        }
+        continue
+      }
+
+      // Batch complete
       await pool.query('DELETE FROM training_queue WHERE id=$1', [job.id])
 
-      const hexInfo = await pool.query('SELECT rally_hex FROM hexes WHERE h3_index=$1', [job.h3_index])
-      const rallyHex = hexInfo.rows[0]?.rally_hex
-
-      if (rallyHex && rallyHex !== job.h3_index) {
-        // Auto-dispatch to rally point
+      if (hasRally) {
+        // Auto-dispatch the whole batch to the rally point
         const stats = TROOP_STATS[job.type] || TROOP_STATS.troop
-        const dist = Math.max(1, gridDistance(job.h3_index, rallyHex))
-        const multiplier = isOcean(rallyHex) ? OCEAN_MARCH_MULTIPLIER : 1
+        const dist = Math.max(1, gridDistance(job.h3_index, job.rally_hex))
+        const multiplier = isOcean(job.rally_hex) ? OCEAN_MARCH_MULTIPLIER : 1
         const arrivesAt = new Date(Date.now() + dist * stats.marchMinutesPerHex * multiplier * 60 * 1000)
         await pool.query(
           'INSERT INTO armies (owner_id, from_hex, to_hex, type, quantity, arrives_at, departed_at) VALUES ($1,$2,$3,$4,$5,$6,NOW())',
-          [job.owner_id, job.h3_index, rallyHex, job.type, job.quantity, arrivesAt]
+          [job.owner_id, job.h3_index, job.rally_hex, job.type, job.quantity, arrivesAt]
         )
         getIO()?.emit('armies:update')
         await insertEvent(job.owner_id, 'training_complete', `✅ ${job.quantity} troops marching to rally point`, job.h3_index)
-        console.log(`[training] ${job.quantity} troops auto-marching to rally ${rallyHex}`)
+        console.log(`[training] ${job.quantity} troops auto-marching to rally ${job.rally_hex}`)
       } else {
-        await pool.query(`
-          INSERT INTO troops (owner_id, h3_index, type, quantity)
-          VALUES ($1, $2, $3, $4)
-          ON CONFLICT (owner_id, h3_index, type)
-          DO UPDATE SET quantity = troops.quantity + EXCLUDED.quantity
-        `, [job.owner_id, job.h3_index, job.type, job.quantity])
+        const remaining = job.quantity - (job.delivered || 0)
+        if (remaining > 0) {
+          await depositTroops(job.owner_id, job.h3_index, job.type, remaining)
+          deposited = true
+        }
         await insertEvent(job.owner_id, 'training_complete', `✅ ${job.quantity} troops finished training at ${job.h3_index}`, job.h3_index)
         console.log(`[training] ${job.quantity} troops ready at ${job.h3_index}`)
       }
+    }
+
+    // Tell clients the garrisons changed so counts update live
+    if (deposited) {
+      getIO()?.emit('hexes:update')
+      getIO()?.emit('armies:update')
     }
   } catch (err) {
     console.error('[training] Error:', err.message)
@@ -486,6 +514,7 @@ export async function processBattleRounds() {
             round_number=round_number+1, last_round_at=NOW()
           WHERE id=$5
         `, [newAtkStr, newDefStr, defDmg, atkDmg, battle.id])
+        getIO()?.emit('battle:update')
         console.log(`[battle] round ${battle.round_number + 1} at ${battle.h3_index}: ${newAtkStr.toFixed(1)} vs ${newDefStr.toFixed(1)}`)
       }
     }
