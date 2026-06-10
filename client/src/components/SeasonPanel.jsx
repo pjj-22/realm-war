@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { playSound } from '../sound.js'
+import { BannerIcon, MedalIcon, TrophyIcon, CrownIcon, SwordsIcon } from './Icons'
 
 function fmtRemaining(ms) {
   if (ms <= 0) return 'ending…'
@@ -38,7 +39,7 @@ export function SeasonChip({ season, onClick, isMobile }) {
         color: urgent ? '#e08060' : '#9a8ac0',
         fontSize: 12, fontFamily: 'Georgia, serif', whiteSpace: 'nowrap',
       }}>
-      🏁 {!isMobile && `S${season.number} · `}{fmtRemaining(left)}
+      <BannerIcon size={11} color={urgent ? '#e08060' : '#9a8ac0'} /> {!isMobile && `S${season.number} · `}{fmtRemaining(left)}
     </button>
   )
 }
@@ -56,7 +57,7 @@ function StandingsTable({ rows, highlight }) {
           borderRadius: 3,
         }}>
           <span style={{ width: 22, textAlign: 'right', color: '#8a7a9a', fontSize: 13 }}>
-            {['🥇', '🥈', '🥉'][i] || `${i + 1}.`}
+            {i < 3 ? <MedalIcon rank={i + 1} size={15} /> : `${i + 1}.`}
           </span>
           <span style={{ width: 9, height: 9, borderRadius: '50%', background: r.color, flexShrink: 0 }} />
           <span style={{ flex: 1, fontSize: 14, color: '#c4b498' }}>
@@ -65,13 +66,13 @@ function StandingsTable({ rows, highlight }) {
             {r.username.startsWith('BOT_') && <span style={{ fontSize: 9, color: '#4a3a6a', marginLeft: 4 }}>AI</span>}
             {r.champion_titles > 0 && (
               <span title={`${r.champion_titles} season championship${r.champion_titles > 1 ? 's' : ''}`} style={{ fontSize: 11, marginLeft: 4 }}>
-                🏆{r.champion_titles > 1 ? `×${r.champion_titles}` : ''}
+                <TrophyIcon size={11} />{r.champion_titles > 1 ? `×${r.champion_titles}` : ''}
               </span>
             )}
           </span>
           <span style={{ fontSize: 13, color: '#9a8aaa' }}>{r.hex_count}▲</span>
-          <span style={{ fontSize: 13, color: '#8a7aaa' }}>{r.total_troops}⚔</span>
-          {r.crowns > 0 && <span style={{ fontSize: 13, color: '#c9a040' }}>{r.crowns}👑</span>}
+          <span style={{ fontSize: 13, color: '#8a7aaa' }}>{r.total_troops}<SwordsIcon size={10} color="#8a7aaa" /></span>
+          {r.crowns > 0 && <span style={{ fontSize: 13, color: '#c9a040' }}>{r.crowns}<CrownIcon size={11} /></span>}
         </div>
       ))}
     </div>
@@ -106,7 +107,7 @@ export default function SeasonPanel({ season, history, player, onClose }) {
           color: '#7a6890', fontSize: 20, cursor: 'pointer', lineHeight: 1,
         }}>×</button>
         <div style={{ fontSize: 18, letterSpacing: 4, textTransform: 'uppercase', textAlign: 'center', color: '#c0a0f0', marginBottom: 4 }}>
-          🏁 Season {season.number}
+          <BannerIcon size={15} color="#c0a0f0" /> Season {season.number}
         </div>
         <div style={{ textAlign: 'center', marginBottom: 14 }}>
           <span style={{ fontSize: 26, color: left < 60000 ? '#e08060' : '#e0d0b0', fontVariantNumeric: 'tabular-nums' }}>
@@ -140,7 +141,7 @@ export default function SeasonPanel({ season, history, player, onClose }) {
                 <span key={r.number} style={{ marginRight: 12, whiteSpace: 'nowrap' }}>
                   <span style={{ color: '#8a7a9a' }}>S{r.number}</span>{' '}
                   <span style={{ color: r.place === 1 ? '#f0d080' : r.place <= 3 ? '#c0a0f0' : '#c4b498' }}>
-                    {['🥇', '🥈', '🥉'][r.place - 1] || `#${r.place}`}
+                    {r.place <= 3 ? <MedalIcon rank={r.place} size={14} /> : `#${r.place}`}
                   </span>{' '}
                   <span style={{ color: '#7a6890', fontSize: 11 }}>{r.hexes}▲</span>
                 </span>
@@ -160,7 +161,7 @@ export default function SeasonPanel({ season, history, player, onClose }) {
                 {s.winner_username ? (
                   <>
                     <span style={{ width: 9, height: 9, borderRadius: '50%', background: s.winner_color, flexShrink: 0 }} />
-                    <span style={{ color: '#e0c070' }}>👑 {s.winner_username.startsWith('BOT_') ? s.winner_username.slice(4) : s.winner_username}</span>
+                    <span style={{ color: '#e0c070' }}><CrownIcon size={12} /> {s.winner_username.startsWith('BOT_') ? s.winner_username.slice(4) : s.winner_username}</span>
                     {s.snapshot?.[0] && <span style={{ fontSize: 12, color: '#7a6890' }}>{s.snapshot[0].hex_count} hexes</span>}
                   </>
                 ) : (
@@ -198,7 +199,7 @@ export function SeasonEndOverlay({ endedSeason, newNumber, player, onDismiss }) 
             <div style={{ fontSize: 12, letterSpacing: 3, textTransform: 'uppercase', color: '#b08040', marginBottom: 6 }}>Champion</div>
             <div style={{ fontSize: 22, color: '#f0d080', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10 }}>
               <span style={{ width: 13, height: 13, borderRadius: '50%', background: champion.color, display: 'inline-block' }} />
-              👑 {champion.username.startsWith('BOT_') ? champion.username.slice(4) : champion.username}
+              <CrownIcon size={18} /> {champion.username.startsWith('BOT_') ? champion.username.slice(4) : champion.username}
             </div>
             <div style={{ fontSize: 13, color: '#9a8060', marginTop: 4 }}>
               {champion.hex_count} hexes · {champion.total_troops} troops{champion.crowns > 0 ? ` · ${champion.crowns} crowns` : ''}

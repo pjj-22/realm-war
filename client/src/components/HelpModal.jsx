@@ -56,6 +56,10 @@ function Row({ icon, label, desc }) {
 
 import { useState, useEffect } from 'react'
 import { api } from '../api/client'
+import {
+  GoldIcon, PickaxeIcon, KeepIcon, ShieldIcon, SwordsIcon, FlameIcon, WaveIcon,
+  BannerIcon, TentIcon, CrownIcon, AllianceIcon, LeafIcon, BellIcon,
+} from './Icons'
 
 export default function HelpModal({ onClose }) {
   const [tickLabel, setTickLabel] = useState('10 minutes')
@@ -89,17 +93,17 @@ export default function HelpModal({ onClose }) {
 
         <div style={S.section}>
           <div style={S.sectionTitle}>Getting Started</div>
-          <Row icon="1️⃣" label="Claim your first hex"
+          <Row icon={<b style={{ color: '#b08040' }}>1</b>} label="Claim your first hex"
             desc="Click any unclaimed hex on the map and claim it. This becomes your capital. You start with troops already stationed there." />
-          <Row icon="2️⃣" label="Build on your hex"
+          <Row icon={<b style={{ color: '#b08040' }}>2</b>} label="Build on your hex"
             desc="Open the Buildings tab. Each hex holds one building - choose Mine for income, Barracks to train more troops, or Fort for defense." />
-          <Row icon="3️⃣" label="March your troops"
+          <Row icon={<b style={{ color: '#b08040' }}>3</b>} label="March your troops"
             desc="Go to the Military tab. Select how many troops to send, click March, then click the target hex on the map." />
         </div>
 
         <div style={S.section}>
           <div style={S.sectionTitle}>Gold</div>
-          <Row icon="💰" label="Earned every tick"
+          <Row icon={<GoldIcon size={15} />} label="Earned every tick"
             desc={`Gold arrives automatically every ${tickLabel}. You earn 1g per hex you own, +3g per Mine.`} />
           <Row icon="★★" label="Strategic capitals"
             desc="Gold and glowing-bordered hexes are strategic locations worth +5g per tick. Primary capitals (marked +territory) pay exponentially more based on how much of that country you control - own London and dominate Britain to earn serious income." />
@@ -107,42 +111,42 @@ export default function HelpModal({ onClose }) {
 
         <div style={S.section}>
           <div style={S.sectionTitle}>Buildings - one per hex</div>
-          <Row icon="⛏" label="Mine - +3 gold/tick"
+          <Row icon={<PickaxeIcon size={15} />} label="Mine - +3 gold/tick"
             desc="The backbone of your economy. Build these on as many hexes as you can." />
-          <Row icon="🏰" label="Barracks - enables training"
+          <Row icon={<KeepIcon size={15} />} label="Barracks - enables training"
             desc="Required to train new troops on that hex. Without one, you can't recruit soldiers there." />
-          <Row icon="🛡" label="Fort - +40% defender strength"
+          <Row icon={<ShieldIcon size={15} />} label="Fort - +40% defender strength"
             desc="Makes your troops significantly harder to defeat when defending that hex." />
         </div>
 
         <div style={S.section}>
           <div style={S.sectionTitle}>Marching &amp; Combat</div>
-          <Row icon="⚔" label="Claiming land"
+          <Row icon={<SwordsIcon size={15} />} label="Claiming land"
             desc="March troops to an unclaimed adjacent hex - once they arrive, you can claim it." />
-          <Row icon="💥" label="Attacking enemies"
+          <Row icon={<FlameIcon size={15} />} label="Attacking enemies"
             desc="March to a hex owned by another player. A battle begins automatically on arrival. Higher troop strength wins." />
-          <Row icon="🛡" label="Entrenchment"
+          <Row icon={<ShieldIcon size={15} />} label="Entrenchment"
             desc="Defenders gain +8% strength for each adjacent friendly hex (up to +32%). Compact territory is hard to crack; thin salients are vulnerable." />
-          <Row icon="🌊" label="Ocean crossings"
+          <Row icon={<WaveIcon size={15} />} label="Ocean crossings"
             desc="You can cross ocean hexes, but it takes 10× longer. Plan naval moves carefully." />
           <Row icon="↩" label="Recall"
-            desc="Open the Armies panel (⚔ top-left) to see your marching armies and recall them before they arrive." />
+            desc="Open the Armies panel (top-left) to see your marching armies and recall them before they arrive." />
         </div>
 
         <div style={S.section}>
           <div style={S.sectionTitle}>The World</div>
-          <Row icon="🏁" label="Seasons"
+          <Row icon={<BannerIcon size={15} />} label="Seasons"
             desc="The war runs in seasons (see the countdown chip up top). Whoever holds the most hexes when the horn sounds is crowned Champion and enters the Hall of Fame - then the map resets for a new age. Accounts, alliances, and history persist." />
-          <Row icon="🏕" label="Marauder camps"
+          <Row icon={<TentIcon size={15} />} label="Marauder camps"
             desc="Neutral camps spawn near new capitals. Defeat the garrison to take the hex and plunder its gold - perfect first targets." />
-          <Row icon="👑" label="Country crowns"
+          <Row icon={<CrownIcon size={15} />} label="Country crowns"
             desc="Own a country's capital city plus enough of its territory and you're crowned its Ruler - announced to the whole world in the Herald." />
-          <Row icon="🤝" label="Alliances"
-            desc="Found or join an alliance (🤝 top-right). Allies can't attack each other, share map vision, reinforce each other's battles, and get a private chat." />
-          <Row icon="🍂" label="Border decay"
+          <Row icon={<AllianceIcon size={15} />} label="Alliances"
+            desc="Found or join an alliance (banner button, top-right). Allies can't attack each other, share map vision, reinforce each other's battles, and get a private chat." />
+          <Row icon={<LeafIcon size={15} />} label="Border decay"
             desc="Large empires slowly lose unguarded, undeveloped border hexes. Garrison troops or build to hold the frontier." />
-          <Row icon="🔔" label="Attack alerts"
-            desc="Enable push notifications in the dispatches panel (🔔) to get warned the moment an army marches on your territory - even when the game is closed." />
+          <Row icon={<BellIcon size={15} />} label="Attack alerts"
+            desc="Enable push notifications in the dispatches panel (the bell) to get warned the moment an army marches on your territory - even when the game is closed." />
         </div>
 
         <div style={S.section}>

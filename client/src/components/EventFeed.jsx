@@ -3,19 +3,31 @@ import { api } from '../api/client.js'
 import { useSocket } from '../hooks/useSocket'
 import { getPushStatus, enablePush, disablePush } from '../push.js'
 import { playForEventType, soundMuted, setSoundMuted } from '../sound.js'
+import { stripEmoji } from '../text.js'
+import {
+  TrophyIcon, SkullIcon, CheckIcon, FallenCrownIcon, BowIcon, FlameIcon,
+  CrownIcon, GoldIcon, LeafIcon, BannerIcon, BellIcon, BellOffIcon,
+  SpeakerIcon, SpeakerOffIcon, ScrollIcon,
+} from './Icons'
 import { toast } from './Toast'
 
-const TYPE_ICON = {
-  battle_won:        '🏆',
-  battle_lost:       '☠',
-  hex_lost:          '💀',
-  training_complete: '✅',
-  capital_lost:      '👑',
-  incoming_attack:   '🏹',
-  under_attack:      '🔥',
-  crown:             '👑',
-  plunder:           '💰',
-  decay:             '🍂',
+const TYPE_ICONS = {
+  battle_won:        TrophyIcon,
+  battle_lost:       SkullIcon,
+  hex_lost:          SkullIcon,
+  training_complete: CheckIcon,
+  capital_lost:      FallenCrownIcon,
+  incoming_attack:   BowIcon,
+  under_attack:      FlameIcon,
+  crown:             CrownIcon,
+  plunder:           GoldIcon,
+  decay:             LeafIcon,
+  season:            BannerIcon,
+}
+
+function EventIcon({ type, size = 14 }) {
+  const Icon = TYPE_ICONS[type]
+  return Icon ? <Icon size={size} /> : <span style={{ color: '#6a5878' }}>·</span>
 }
 
 function relTime(ts) {
@@ -60,7 +72,8 @@ function PushToggle() {
         fontSize: 11, padding: '2px 8px', fontFamily: 'Georgia, serif',
         opacity: status === 'blocked' ? 0.5 : 1,
       }}>
-      {status === 'on' ? '🔔 alerts on' : status === 'blocked' ? '🔕 blocked' : '🔕 alerts off'}
+      {status === 'on' ? <BellIcon size={11} color="#c9a040" /> : <BellOffIcon size={11} />}{' '}
+      {status === 'on' ? 'alerts on' : status === 'blocked' ? 'blocked' : 'alerts off'}
     </button>
   )
 }
@@ -76,7 +89,7 @@ function SoundToggle() {
         borderRadius: 4, color: muted ? '#7a6890' : '#c9a040',
         cursor: 'pointer', fontSize: 11, padding: '2px 8px', fontFamily: 'Georgia, serif',
       }}>
-      {muted ? '🔇' : '🔊'}
+      {muted ? <SpeakerOffIcon size={13} /> : <SpeakerIcon size={13} color="#c9a040" />}
     </button>
   )
 }
@@ -180,9 +193,9 @@ export default function EventFeed() {
                 fontFamily: 'Georgia, serif',
                 animation: 'rw-notif 6s ease forwards',
               }}>
-              <span style={{ fontSize: 15, flexShrink: 0 }}>{TYPE_ICON[ev.type] || '·'}</span>
+              <span style={{ flexShrink: 0, marginTop: 1 }}><EventIcon type={ev.type} size={15} /></span>
               <span style={{ fontSize: 13, color: '#c4b498', lineHeight: 1.45, wordBreak: 'break-word' }}>
-                {ev.message}
+                {stripEmoji(ev.message)}
               </span>
             </div>
           ))}
@@ -203,7 +216,7 @@ export default function EventFeed() {
         }}
         title="Notifications"
       >
-        🔔
+        <BellIcon size={16} />
         {count > 0 && (
           <span style={{
             position: 'absolute',
@@ -263,7 +276,7 @@ export default function EventFeed() {
 
           <div style={{ display: 'flex', borderBottom: '1px solid rgba(255,255,255,0.07)' }}>
             {tabBtn('empire', 'Your Empire')}
-            {tabBtn('herald', '🗞 The Herald')}
+            {tabBtn('herald', <><ScrollIcon size={12} /> The Herald</>)}
           </div>
 
           <div style={{ overflowY: 'auto', flex: 1 }}>
@@ -280,14 +293,12 @@ export default function EventFeed() {
                 alignItems: 'flex-start',
                 background: tab === 'empire' && !ev.read ? 'rgba(80,50,20,0.2)' : 'transparent',
               }}>
-                {tab === 'empire' && (
-                  <span style={{ fontSize: 14, flexShrink: 0, marginTop: 1 }}>
-                    {TYPE_ICON[ev.type] || '·'}
-                  </span>
-                )}
+                <span style={{ flexShrink: 0, marginTop: 2 }}>
+                  <EventIcon type={ev.type} size={14} />
+                </span>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: 14, color: '#c4b498', wordBreak: 'break-word' }}>
-                    {ev.message}
+                    {stripEmoji(ev.message)}
                   </div>
                   <div style={{ fontSize: 12, color: '#6a5878', marginTop: 3 }}>
                     {relTime(ev.created_at)}

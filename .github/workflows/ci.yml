@@ -22,6 +22,12 @@ jobs:
       # Lint is informational for now - the codebase predates the react-hooks v7 rules
       - run: npx eslint src/ || true
       - run: npm run build
+      - name: No pictographic emojis (use Icons.jsx)
+        run: |
+          if grep -rPn '[\x{1F000}-\x{1FAFF}\x{FE0F}\x{2694}\x{26CF}\x{2705}\x{2620}\x{26A1}\x{2691}\x{26F0}-\x{26FF}]' src ../server --include='*.js' --include='*.jsx' --include='*.css'; then
+            echo 'Pictographic emoji found - render an SVG from Icons.jsx instead'
+            exit 1
+          fi
 
   server-smoke:
     runs-on: ubuntu-latest

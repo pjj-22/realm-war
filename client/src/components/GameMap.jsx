@@ -16,7 +16,7 @@ import SeasonPanel, { SeasonChip, SeasonEndOverlay } from './SeasonPanel'
 import { useResourceTicker } from '../hooks/useResourceTicker'
 import { useIsMobile } from '../hooks/useIsMobile'
 import { api } from '../api/client'
-import { GoldIcon } from './Icons'
+import { GoldIcon, SearchIcon, AllianceIcon, SwordsIcon } from './Icons'
 
 
 const HEX_RESOLUTION = 7
@@ -512,7 +512,7 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
         layout: {
           'text-field': ['case',
             ['==', ['get', 'troop_count'], -1], '?',
-            ['>', ['get', 'troop_count'], 0], ['concat', ['to-string', ['get', 'troop_count']], '⚔'],
+            ['>', ['get', 'troop_count'], 0], ['to-string', ['get', 'troop_count']],
             ''
           ],
           'text-size': 15,
@@ -800,6 +800,7 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
       const [lat, lng] = cellToLatLng(battle.h3_index)
       const el = document.createElement('div')
       el.className = 'battle-ring'
+      el.innerHTML = `<svg viewBox="0 0 16 16" style="position:absolute;top:50%;left:50%;width:24px;height:24px;transform:translate(-50%,-50%)"><g stroke="#ff5050" stroke-width="1.6" stroke-linecap="round" fill="none"><path d="M3 2.5l9 9M13 2.5l-9 9"/><path d="M10.6 11.4l-1.4 1.4M5.4 11.4l1.4 1.4"/></g></svg>`
       const marker = new maplibregl.Marker({ element: el, anchor: 'center' })
         .setLngLat([lng, lat])
         .addTo(map.current)
@@ -921,7 +922,7 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
         return {
           type: 'Feature',
           properties: {
-            label: `⚔${a.quantity}`,
+            label: `${a.quantity}`,
             color: a.color || '#f0c040',
             isEnemy: isEnemy ? 1 : 0,
           },
@@ -1079,7 +1080,7 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
           </form>
         ) : (
           <button onClick={() => setSearchOpen(true)} style={{ background: 'none', border: 'none', color: '#7a6890', cursor: 'pointer', fontSize: 16, padding: '4px 8px' }}>
-            🔍
+            <SearchIcon size={16} color="#7a6890" />
           </button>
         )}
 
@@ -1113,7 +1114,7 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
             </div>
             {stats?.next_tick_at && <HarvestCountdown nextTickAt={stats.next_tick_at} onExpire={loadStats} compact={isMobile} />}
             {!isMobile && <span style={{ fontSize: 13, color: '#7a6890' }}>▲ {stats?.hex_count ?? ownedHexCount}</span>}
-            {!isMobile && totalTroops > 0 && <span style={{ fontSize: 13, color: '#7a6890' }}>⚔ {totalTroops}</span>}
+            {!isMobile && totalTroops > 0 && <span style={{ fontSize: 13, color: '#7a6890' }}><SwordsIcon size={12} color="#7a6890" /> {totalTroops}</span>}
             {!isMobile && import.meta.env.DEV && (
               <button
                 onClick={async () => { try { const r = await api.devRefill(); onPlayerUpdate?.({ ...player, gold: r.gold }) } catch {} }}
@@ -1135,7 +1136,7 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
                 color: alliance ? '#c0a0f0' : '#7a6890', fontSize: 15, padding: '4px 6px',
                 fontFamily: 'Georgia, serif',
               }}>
-              🤝{alliance && !isMobile ? ` ${alliance.tag}` : ''}
+              <AllianceIcon size={15} color={alliance ? '#c0a0f0' : '#7a6890'} />{alliance && !isMobile ? ` ${alliance.tag}` : ''}
             </button>
             <EventFeed />
             {!isMobile && <span style={{ fontSize: 13, color: '#c4b498' }}>{player.username}</span>}

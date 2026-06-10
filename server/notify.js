@@ -23,13 +23,13 @@ export async function notifyIncomingAttack(attackerId, toHex, quantity, arrivesA
     if (owner.alliance_id && owner.alliance_id === atk.alliance_id) return
 
     const etaMin = Math.max(1, Math.round((new Date(arrivesAt) - Date.now()) / 60000))
-    const message = `🏹 ${atk.username}'s army (${quantity} troops) is marching on your territory - arrives in ~${etaMin}m`
+    const message = `${atk.username}'s army (${quantity} troops) is marching on your territory - arrives in ~${etaMin}m`
     await pool.query(
       'INSERT INTO events (player_id, type, message, hex_index) VALUES ($1,$2,$3,$4)',
       [owner.id, 'incoming_attack', message, toHex]
     )
     getIO()?.emit('events:new')
-    sendPush(owner.id, '⚔️ Incoming attack!', message, { hex: toHex })
+    sendPush(owner.id, 'Incoming attack!', message, { hex: toHex })
   } catch (err) {
     console.error('[notify] incoming attack error:', err.message)
   }

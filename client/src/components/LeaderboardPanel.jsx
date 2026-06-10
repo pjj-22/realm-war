@@ -4,6 +4,7 @@ import { api } from '../api/client'
 import { useIsMobile } from '../hooks/useIsMobile'
 import { useSocket } from '../hooks/useSocket'
 import HistoryChart from './HistoryChart'
+import { TrophyIcon, SwordsIcon, ChartIcon } from './Icons'
 
 export default function LeaderboardPanel({ player, onFlyTo }) {
   const isMobile = useIsMobile()
@@ -66,15 +67,15 @@ export default function LeaderboardPanel({ player, onFlyTo }) {
           {displayName(p.username)}
           {p.champion_titles > 0 && (
             <span title={`${p.champion_titles} season championship${p.champion_titles > 1 ? 's' : ''}`} style={{ fontSize: 11, marginLeft: 4 }}>
-              🏆{p.champion_titles > 1 ? `×${p.champion_titles}` : ''}
+              <TrophyIcon size={11} />{p.champion_titles > 1 ? `×${p.champion_titles}` : ''}
             </span>
           )}
         </span>
         {isBot && <span style={{ fontSize: 9, color: '#4a3a6a', letterSpacing: 1 }}>AI</span>}
         <span style={{ fontSize: 14, color: '#9a8aaa' }}>{p.hex_count}▲</span>
-        <span style={{ fontSize: 14, color: '#8a7aaa' }}>{p.total_troops}⚔</span>
+        <span style={{ fontSize: 14, color: '#8a7aaa' }}>{p.total_troops}<SwordsIcon size={11} color="#8a7aaa" /></span>
         {isMe
-          ? <span style={{ fontSize: 11, color: '#6a5a8a' }}>{showHistory ? '▲' : '📈'}</span>
+          ? <span style={{ fontSize: 11, color: '#6a5a8a' }}>{showHistory ? '▲' : <ChartIcon size={12} color="#6a5a8a" />}</span>
           : canFly && <span style={{ fontSize: 14, color: '#5a4a7a' }}>⌖</span>
         }
       </div>
@@ -99,7 +100,7 @@ export default function LeaderboardPanel({ player, onFlyTo }) {
           color: '#9a8aaa', fontFamily: 'Georgia, serif', fontSize: 14,
           letterSpacing: 2, textTransform: 'uppercase',
         }}>
-        <span>🏆 Leaderboard</span>
+        <span><TrophyIcon size={13} /> Leaderboard</span>
         <span style={{ fontSize: 13 }}>{open ? '▲' : '▼'}</span>
       </button>
 

@@ -1,30 +1,31 @@
 import { useState, useEffect } from 'react'
 import { api } from '../api/client'
+import { BannerIcon, SwordsIcon, KeepIcon, BoltIcon, TargetIcon } from './Icons'
 
 const STEPS = [
   {
     id: 'claim',
     title: 'Claim your first territory',
     body: 'Zoom in on the map and click any hex to claim it. Your empire starts here. Marauder camps will appear nearby - raid them for gold.',
-    icon: '⚑',
+    icon: BannerIcon,
   },
   {
     id: 'build',
     title: 'Build a Barracks',
     body: 'Click your hex → Buildings tab → build a Barracks. It unlocks troop training and halves train time. You already have a free Mine for gold income.',
-    icon: '⚔',
+    icon: KeepIcon,
   },
   {
     id: 'train',
     title: 'Train your troops',
     body: 'Open the Military tab on your hex and train some troops. They\'ll be ready in seconds.',
-    icon: '🗡',
+    icon: SwordsIcon,
   },
   {
     id: 'march',
     title: 'Expand your empire',
     body: 'Select troops in the Military tab, hit March, then click an adjacent hex. Claim it to grow your territory.',
-    icon: '⚡',
+    icon: BoltIcon,
   },
 ]
 
@@ -84,7 +85,7 @@ export default function FTUEGuide({ player, onDismiss }) {
 
       <div style={{ padding: '12px 16px 16px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-          <span style={{ fontSize: 18 }}>{step.icon}</span>
+          <step.icon size={18} color="#c090f0" />
           <span style={{ fontSize: 14, color: '#c090f0', letterSpacing: 2, textTransform: 'uppercase' }}>
             {step.title}
           </span>
@@ -108,7 +109,7 @@ export default function FTUEGuide({ player, onDismiss }) {
               cursor: 'pointer', fontSize: 14,
               letterSpacing: 1, fontFamily: 'Georgia, serif',
             }}>
-            🎯 Take me to the front
+            <TargetIcon size={13} color="#e0b060" /> Take me to the front
           </button>
         )}
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>

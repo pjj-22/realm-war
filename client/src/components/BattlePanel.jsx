@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { api } from '../api/client'
 import { useSocket } from '../hooks/useSocket'
 import { useIsMobile } from '../hooks/useIsMobile'
+import { SwordsIcon } from './Icons'
 
 const ROUND_MS = 15000
 const DAMAGE_RATE = 0.15
@@ -177,7 +178,7 @@ export default function BattlePanel({ hex, player, onMarchStart, onClose }) {
         borderBottom: '1px solid rgba(190,60,50,0.2)',
       }}>
         <span style={{ fontSize: 16, letterSpacing: 4, color: '#e07060', textTransform: 'uppercase' }}>
-          ⚔ Battle in Progress
+          <SwordsIcon size={15} color="#e07060" /> Battle in Progress
         </span>
         <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
           <span style={{ fontSize: 13, color: '#9a6a6a' }}>
@@ -256,7 +257,7 @@ export default function BattlePanel({ hex, player, onMarchStart, onClose }) {
               fontSize: 14, letterSpacing: 3, textTransform: 'uppercase',
               fontFamily: 'Georgia, serif',
             }}>
-            ⚔ Send Reinforcements
+            <SwordsIcon size={13} color="#e0a090" /> Send Reinforcements
           </button>
         )}
       </div>

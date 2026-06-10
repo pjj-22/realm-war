@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
 import { api } from '../api/client'
 import { useSocket } from '../hooks/useSocket'
+import { ChatIcon } from './Icons'
 
 function relTime(ts) {
   const secs = Math.floor((Date.now() - new Date(ts)) / 1000)
@@ -84,7 +85,7 @@ export default function ChatPanel({ player, alliance }) {
           boxShadow: '0 2px 12px rgba(0,0,0,0.5)',
           display: 'flex', alignItems: 'center', justifyContent: 'center',
         }}>
-        💬
+        <ChatIcon size={18} />
         {unread && !open && (
           <span style={{
             position: 'absolute', top: 0, right: 0,
@@ -106,8 +107,8 @@ export default function ChatPanel({ player, alliance }) {
           fontFamily: 'Georgia, serif',
         }}>
           <div style={{ display: 'flex', borderBottom: '1px solid rgba(255,255,255,0.07)' }}>
-            {tabBtn('global', '🌍 World')}
-            {alliance && tabBtn('alliance', `🤝 ${alliance.tag}`)}
+            {tabBtn('global', 'World')}
+            {alliance && tabBtn('alliance', alliance.tag)}
           </div>
 
           <div ref={listRef} style={{ flex: 1, overflowY: 'auto', padding: '6px 10px' }}>

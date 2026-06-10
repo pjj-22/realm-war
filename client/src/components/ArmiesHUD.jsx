@@ -4,8 +4,8 @@ import { api } from '../api/client'
 import { useIsMobile } from '../hooks/useIsMobile'
 import { toast } from './Toast'
 import { TroopFigure } from './BuildingArt'
+import { SwordsIcon } from './Icons'
 
-const BUILDING_ICON = { mine: '⛏', barracks: '🏰', fort: '🛡' }
 
 function parseTypes(types) {
   if (!types) return []
@@ -36,7 +36,7 @@ function HexRow({ hex, isCapital, onFlyTo }) {
       <span style={{ fontSize: 13, color: '#c9b99a', minWidth: 26, textAlign: 'right', flexShrink: 0, fontVariantNumeric: 'tabular-nums' }}>
         {hex.troop_count}
       </span>
-      <span style={{ fontSize: 13, color: '#5a4a7a', flexShrink: 0 }}>⚔</span>
+      <span style={{ flexShrink: 0 }}><SwordsIcon size={11} color="#5a4a7a" /></span>
       <span style={{ fontSize: 9, color: '#4a3a6a', flex: 1, fontFamily: hex.country_name ? 'Georgia, serif' : 'monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', letterSpacing: 0 }}>
         {hex.country_name || hex.h3_index}
       </span>
@@ -153,14 +153,14 @@ export default function ArmiesHUD({ armies, activeBattles = [], player, claimedR
         borderRadius: 6, color: '#c9b99a', cursor: 'pointer', fontSize: 14, letterSpacing: 1,
         boxShadow: threats.length > 0 ? '0 0 12px rgba(180,40,40,0.4)' : '0 0 12px rgba(80,40,160,0.3)',
       }}>
-        <span>⚔ Armies</span>
+        <span><SwordsIcon size={13} color="#c9b99a" /> Armies</span>
         {ownedHexes.length > 0 && (
           <span style={{ background: '#3a2a6a', borderRadius: 10, padding: '2px 8px', fontSize: 12 }}>
             {ownedHexes.length}▲
           </span>
         )}
         {threats.length > 0 && <span style={{ color: '#ff6060', fontSize: 12 }}>⚠{threats.length}</span>}
-        {activeBattles.length > 0 && <span style={{ color: '#ff4444', fontSize: 12 }}>⚔{activeBattles.length}</span>}
+        {activeBattles.length > 0 && <span style={{ color: '#ff4444', fontSize: 12 }}><SwordsIcon size={11} color="#ff4444" />{activeBattles.length}</span>}
       </button>
 
       {/* Panel */}

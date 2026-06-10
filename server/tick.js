@@ -155,11 +155,11 @@ export async function runTick() {
              ON CONFLICT (country) DO UPDATE SET player_id=$2, crowned_at=NOW()`,
             [country, owner]
           )
-          insertWorldEvent('crown', `👑 ${nameOf.get(owner)} has been crowned Ruler of ${country}!`, capHex, owner)
-          insertEvent(owner, 'crown', `👑 You have been crowned Ruler of ${country}!`, capHex)
+          insertWorldEvent('crown', `${nameOf.get(owner)} has been crowned Ruler of ${country}!`, capHex, owner)
+          insertEvent(owner, 'crown', `You have been crowned Ruler of ${country}!`, capHex)
         } else if (!qualified && holder) {
           await pool.query('DELETE FROM country_crowns WHERE country=$1', [country])
-          insertWorldEvent('crown_lost', `🥀 The throne of ${country} sits empty - ${nameOf.get(holder) || 'its ruler'} has been deposed.`, capHex, holder)
+          insertWorldEvent('crown_lost', `The throne of ${country} sits empty - ${nameOf.get(holder) || 'its ruler'} has been deposed.`, capHex, holder)
         }
       }
     }
@@ -228,7 +228,7 @@ export async function processTraining() {
           [job.owner_id, job.h3_index, job.rally_hex, job.type, job.quantity, arrivesAt]
         )
         getIO()?.emit('armies:update')
-        await insertEvent(job.owner_id, 'training_complete', `✅ ${job.quantity} troops marching to rally point`, job.h3_index)
+        await insertEvent(job.owner_id, 'training_complete', `${job.quantity} troops marching to rally point`, job.h3_index)
         console.log(`[training] ${job.quantity} troops auto-marching to rally ${job.rally_hex}`)
       } else {
         const remaining = job.quantity - (job.delivered || 0)
@@ -236,7 +236,7 @@ export async function processTraining() {
           await depositTroops(job.owner_id, job.h3_index, job.type, remaining)
           deposited = true
         }
-        await insertEvent(job.owner_id, 'training_complete', `✅ ${job.quantity} troops finished training at ${job.h3_index}`, job.h3_index)
+        await insertEvent(job.owner_id, 'training_complete', `${job.quantity} troops finished training at ${job.h3_index}`, job.h3_index)
         console.log(`[training] ${job.quantity} troops ready at ${job.h3_index}`)
       }
     }
@@ -355,7 +355,7 @@ export async function processCombat() {
             await depositTroops(army.owner_id, army.to_hex, army.type, army.quantity)
             await pool.query("UPDATE armies SET status='arrived' WHERE id=$1", [army.id])
             if (prevOwner.rows[0]?.owner_id) {
-              await insertEvent(prevOwner.rows[0].owner_id, 'hex_lost', `💀 Your hex ${army.to_hex} was captured unopposed`, army.to_hex)
+              await insertEvent(prevOwner.rows[0].owner_id, 'hex_lost', `Your hex ${army.to_hex} was captured unopposed`, army.to_hex)
             }
             getIO()?.emit('hexes:update')
             getIO()?.emit('armies:update')
@@ -383,8 +383,8 @@ export async function processCombat() {
             const defenderInfo = await pool.query('SELECT username FROM players WHERE id=$1', [targetHex.owner_id])
             const defName = defenderInfo.rows[0]?.username
             if (!isNPC(defName)) {
-              insertEvent(targetHex.owner_id, 'under_attack', `🔥 Battle started at your hex - ${attackStr} enemy troops attacking`, army.to_hex)
-              sendPush(targetHex.owner_id, '🔥 You are under attack!', `${attackStr} enemy troops are assaulting your territory. Send reinforcements!`, { hex: army.to_hex })
+              insertEvent(targetHex.owner_id, 'under_attack', `Battle started at your hex - ${attackStr} enemy troops attacking`, army.to_hex)
+              sendPush(targetHex.owner_id, 'You are under attack!', `${attackStr} enemy troops are assaulting your territory. Send reinforcements!`, { hex: army.to_hex })
             }
 
             getIO()?.emit('battle:update')
@@ -467,7 +467,7 @@ export async function processBattleRounds() {
           // Camp plunder - capturing a Wildlands camp pays out loot
           if (isWild(defName)) {
             await pool.query('UPDATE players SET gold=gold+$1 WHERE id=$2', [CAMP_LOOT_GOLD, battle.attacker_id])
-            await insertEvent(battle.attacker_id, 'plunder', `💰 Camp plundered! +${CAMP_LOOT_GOLD} gold`, battle.h3_index)
+            await insertEvent(battle.attacker_id, 'plunder', `Camp plundered! +${CAMP_LOOT_GOLD} gold`, battle.h3_index)
           }
 
           const defenderData = await pool.query('SELECT capital_hex FROM players WHERE id=$1', [battle.defender_id])
@@ -478,22 +478,22 @@ export async function processBattleRounds() {
               [battle.defender_id, battle.h3_index]
             )
             await pool.query('UPDATE players SET capital_hex=NULL WHERE id=$1', [battle.defender_id])
-            await insertEvent(battle.defender_id, 'capital_lost', `👑 Your capital has fallen! All is not lost - claim any free hex to found a new capital and rebuild.`, battle.h3_index)
-            insertWorldEvent('capital', `🔥 ${defName}'s capital has fallen to ${atkName}!`, battle.h3_index, battle.attacker_id)
-            sendPush(battle.defender_id, '👑 Your capital has fallen!', 'All is not lost - claim any free hex to found a new capital and rebuild.', { hex: battle.h3_index })
+            await insertEvent(battle.defender_id, 'capital_lost', `Your capital has fallen! All is not lost - claim any free hex to found a new capital and rebuild.`, battle.h3_index)
+            insertWorldEvent('capital', `${defName}'s capital has fallen to ${atkName}!`, battle.h3_index, battle.attacker_id)
+            sendPush(battle.defender_id, 'Your capital has fallen!', 'All is not lost - claim any free hex to found a new capital and rebuild.', { hex: battle.h3_index })
             console.log(`[battle] ${battle.defender_id} lost their capital at ${battle.h3_index}`)
           } else if (!isWild(defName)) {
-            insertWorldEvent('battle', `⚔️ ${atkName} seized ${countryName} territory from ${defName}`, battle.h3_index, battle.attacker_id)
+            insertWorldEvent('battle', `${atkName} seized ${countryName} territory from ${defName}`, battle.h3_index, battle.attacker_id)
           }
-          await insertEvent(battle.attacker_id, 'battle_won', `🏆 Battle won at ${battle.h3_index}`, battle.h3_index)
-          await insertEvent(battle.defender_id, 'battle_lost', `☠ Battle lost at ${battle.h3_index}`, battle.h3_index)
-          await insertEvent(battle.defender_id, 'hex_lost', `💀 Your hex ${battle.h3_index} was captured in battle`, battle.h3_index)
+          await insertEvent(battle.attacker_id, 'battle_won', `Battle won at ${battle.h3_index}`, battle.h3_index)
+          await insertEvent(battle.defender_id, 'battle_lost', `Battle lost at ${battle.h3_index}`, battle.h3_index)
+          await insertEvent(battle.defender_id, 'hex_lost', `Your hex ${battle.h3_index} was captured in battle`, battle.h3_index)
         } else {
           if (!isWild(defName) && !isWild(atkName)) {
-            insertWorldEvent('battle', `🛡 ${defName} repelled ${atkName}'s assault in ${countryName}`, battle.h3_index, battle.defender_id)
+            insertWorldEvent('battle', `${defName} repelled ${atkName}'s assault in ${countryName}`, battle.h3_index, battle.defender_id)
           }
-          await insertEvent(battle.defender_id, 'battle_won', `🏆 Defended ${battle.h3_index} successfully`, battle.h3_index)
-          await insertEvent(battle.attacker_id, 'battle_lost', `☠ Attack on ${battle.h3_index} failed`, battle.h3_index)
+          await insertEvent(battle.defender_id, 'battle_won', `Defended ${battle.h3_index} successfully`, battle.h3_index)
+          await insertEvent(battle.attacker_id, 'battle_lost', `Attack on ${battle.h3_index} failed`, battle.h3_index)
         }
 
         await pool.query(
@@ -577,7 +577,7 @@ export async function processDecay() {
       }
       if (lost > 0) {
         anyLost = true
-        insertEvent(player.id, 'decay', `🍂 ${lost} unguarded border hex${lost > 1 ? 'es' : ''} slipped from your control. Garrison or build to hold the frontier.`)
+        insertEvent(player.id, 'decay', `${lost} unguarded border hex${lost > 1 ? 'es' : ''} slipped from your control. Garrison or build to hold the frontier.`)
         console.log(`[decay] ${player.username} lost ${lost} border hexes`)
       }
     }

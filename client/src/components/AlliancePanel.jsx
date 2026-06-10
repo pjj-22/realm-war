@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { api } from '../api/client'
 import { toast } from './Toast'
+import { AllianceIcon } from './Icons'
 
 const S = {
   overlay: {
@@ -59,7 +60,7 @@ export default function AlliancePanel({ alliance, onChanged, onClose }) {
           float: 'right', background: 'none', border: 'none',
           color: '#7a6890', fontSize: 20, cursor: 'pointer', lineHeight: 1,
         }}>×</button>
-        <div style={S.title}>🤝 Alliance</div>
+        <div style={S.title}><AllianceIcon size={16} color="#c0a0f0" /> Alliance</div>
 
         {alliance ? (
           <>

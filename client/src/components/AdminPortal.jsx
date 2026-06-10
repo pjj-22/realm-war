@@ -148,7 +148,7 @@ export default function AdminPortal() {
         fontFamily: 'Georgia, serif', color: '#c9b99a',
       }}>
         <div style={{ ...CARD_STYLE, width: 320, textAlign: 'center' }}>
-          <div style={{ fontSize: 20, marginBottom: 4, letterSpacing: 2 }}>⚔ REALM WAR</div>
+          <div style={{ fontSize: 20, marginBottom: 4, letterSpacing: 2 }}>REALM WAR</div>
           <div style={{ fontSize: 12, color: '#6a5878', letterSpacing: 3, marginBottom: 24 }}>ADMIN</div>
           <input
             type="password"
@@ -187,7 +187,7 @@ export default function AdminPortal() {
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 28 }}>
         <div>
-          <span style={{ fontSize: 22, letterSpacing: 2 }}>⚔ REALM WAR</span>
+          <span style={{ fontSize: 22, letterSpacing: 2 }}>REALM WAR</span>
           <span style={{ fontSize: 12, color: '#6a5878', letterSpacing: 3, marginLeft: 12 }}>ADMIN PORTAL</span>
         </div>
         <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
@@ -195,13 +195,13 @@ export default function AdminPortal() {
             {loading ? '…' : '↻ Refresh'}
           </button>
           <button onClick={forceTick} style={btnStyle('#2a3a5a')} disabled={tickBusy}>
-            {tickBusy ? 'Ticking…' : '⚡ Force Tick'}
+            {tickBusy ? 'Ticking…' : 'Force Tick'}
           </button>
           <button onClick={resetBots} style={btnStyle('#3a2a1a')} disabled={botBusy}>
-            {botBusy ? 'Resetting…' : '🤖 Reset Bots'}
+            {botBusy ? 'Resetting…' : 'Reset Bots'}
           </button>
           <button onClick={endSeason} style={btnStyle('#5a2a2a')} disabled={seasonBusy}>
-            {seasonBusy ? 'Ending…' : '🏁 End Season'}
+            {seasonBusy ? 'Ending…' : 'End Season'}
           </button>
           <a href="/" style={{ ...btnStyle(), textDecoration: 'none', fontSize: 12 }}>← Game</a>
         </div>

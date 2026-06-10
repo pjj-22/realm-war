@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { api } from '../api/client'
-import { GoldIcon } from './Icons'
+import { GoldIcon, PickaxeIcon, SwordsIcon, ShieldIcon } from './Icons'
 import { MineArt, BarracksArt, FortArt, BuildingIcon } from './BuildingArt'
 import { useIsMobile } from '../hooks/useIsMobile'
 import { useSocket } from '../hooks/useSocket'
@@ -22,17 +22,17 @@ const PULSE_CSS = `
 
 const BUILDING_DEFS = [
   {
-    type: 'mine', icon: '⛏', label: 'Mine', color: '#c9902a', goldCost: 5,
+    type: 'mine', label: 'Mine', color: '#c9902a', goldCost: 5,
     effect: '+3 gold per tick',
     desc: 'Extracts gold from the land each resource tick. Stack multiple mines on one hex to maximize income from your richest territories.',
   },
   {
-    type: 'barracks', icon: '⚔', label: 'Barracks', color: '#a84040', goldCost: 10,
+    type: 'barracks', label: 'Barracks', color: '#a84040', goldCost: 10,
     effect: 'Enables training · halves train time',
     desc: 'Without a barracks you cannot train troops on this hex. Building one also cuts all training times in half. Only one barracks per hex.',
   },
   {
-    type: 'fort', icon: '🛡', label: 'Fort', color: '#5a9840', goldCost: 10,
+    type: 'fort', label: 'Fort', color: '#5a9840', goldCost: 10,
     effect: '+40% defender strength',
     desc: 'A fortified position that strengthens your garrison. Each fort adds 40% to the defensive strength of troops holding this hex.',
   },
@@ -574,10 +574,10 @@ export default function BottomDrawer({ hex, player, stats, onClaim, onLoginRequi
           {isOwn && (
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', paddingTop: 4, borderTop: '1px solid rgba(255,255,255,0.06)' }}>
               {!buildingData?.buildings?.length && (
-                <Btn onClick={() => setTab('buildings')}>⛏ Build</Btn>
+                <Btn onClick={() => setTab('buildings')}><PickaxeIcon size={13} color="#d4b870" /> Build</Btn>
               )}
               {hasBarracks && (
-                <Btn onClick={() => setTab('military')}>⚔ Train Troops</Btn>
+                <Btn onClick={() => setTab('military')}><SwordsIcon size={13} color="#d4b870" /> Train Troops</Btn>
               )}
               {totalTroops > 0 && (
                 <>

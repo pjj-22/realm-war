@@ -80,21 +80,20 @@ export async function processSeason() {
     await pool.query(
       'INSERT INTO world_events (type, message, player_id) VALUES ($1,$2,$3)',
       ['season', winner
-        ? `🏁 Season ${season.number} is over - ${winner.username} is crowned Champion with ${winner.hex_count} hexes! A new age begins.`
-        : `🏁 Season ${season.number} is over. A new age begins.`,
+        ? `Season ${season.number} is over - ${winner.username} is crowned Champion with ${winner.hex_count} hexes! A new age begins.`
+        : `Season ${season.number} is over. A new age begins.`,
        winner?.id || null]
     )
-    const medals = ['🥇', '🥈', '🥉']
     for (let i = 0; i < Math.min(3, standings.length); i++) {
       await pool.query(
         'INSERT INTO events (player_id, type, message) VALUES ($1,$2,$3)',
-        [standings[i].id, 'season', `${medals[i]} Season ${season.number} final standings: #${i + 1} with ${standings[i].hex_count} hexes`]
+        [standings[i].id, 'season', `Season ${season.number} final standings: #${i + 1} with ${standings[i].hex_count} hexes`]
       )
     }
     // Push to everyone who opted in
     const subs = await pool.query('SELECT DISTINCT player_id FROM push_subscriptions')
     for (const { player_id } of subs.rows) {
-      sendPush(player_id, `🏁 Season ${season.number} is over!`,
+      sendPush(player_id, `Season ${season.number} is over!`,
         winner ? `${winner.username} is Champion. The map has reset - claim your new capital!` : 'The map has reset - claim your new capital!')
     }
 
