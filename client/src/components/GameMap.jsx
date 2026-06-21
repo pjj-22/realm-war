@@ -344,6 +344,7 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
   }, [])
 
   const strategicRef = useRef({})
+  const zonesRef = useRef(new Map()) // h3 → city name, for click enrichment
 
   const loadStrategic = useCallback(async () => {
     if (!map.current?.getSource('strategic')) return
@@ -379,6 +380,7 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
     if (!map.current?.getSource('zones')) return
     try {
       const zones = await api.getZones()
+      zonesRef.current = new Map(zones.map(z => [z.h3, z.city]))
       const features = zones.map(z => {
         const boundary = cellToBoundary(z.h3)
         const coords = boundary.map(([lat, lng]) => [lng, lat])
@@ -857,14 +859,17 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
           map.current.getCanvas().style.cursor = ''
           return null
         }
-        // Normal click - select hex, enrich with strategic info if applicable
+        // Normal click - select hex, enrich with strategic + city-zone info
         const strategic = strategicRef.current[hex.h3]
-        const enriched = strategic ? {
+        const enriched = {
           ...hex,
-          strategic_name: strategic.name,
-          strategic_bonus: strategic.bonus_gold,
-          strategic_primary: strategic.primary,
-        } : hex
+          zone_city: zonesRef.current.get(hex.h3) || null,
+          ...(strategic ? {
+            strategic_name: strategic.name,
+            strategic_bonus: strategic.bonus_gold,
+            strategic_primary: strategic.primary,
+          } : {}),
+        }
         setSelectedHex(enriched)
         map.current.setFilter('hex-selected', ['==', ['get', 'h3'], hex.h3])
         return null
@@ -1305,6 +1310,20 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
         player={player}
         onFlyTo={(lng, lat) => map.current?.flyTo({ center: [lng, lat], zoom: 9, speed: 1.5 })}
       />
+
+      {/* ── City-zone legend ─────────────────────────────────────── */}
+      {zoom >= 5 && !isMobile && (
+        <div style={{
+          position: 'absolute', bottom: 16, left: 16, pointerEvents: 'none',
+          display: 'flex', alignItems: 'center', gap: 8,
+          background: 'rgba(20,15,40,0.82)', border: '1px solid rgba(224,184,74,0.35)',
+          borderRadius: 6, padding: '6px 11px',
+          fontFamily: 'Georgia, serif', fontSize: 12, color: '#cdb98a', letterSpacing: 0.5,
+        }}>
+          <span style={{ width: 13, height: 13, borderRadius: 3, background: 'rgba(224,184,74,0.35)', border: '1px solid rgba(224,184,74,0.7)' }} />
+          City zone — <span style={{ color: '#e0b84a' }}>+2g</span> per hex you hold
+        </div>
+      )}
 
       {/* ── Zoom hint ───────────────────────────────────────────── */}
       {zoom < 8 && (

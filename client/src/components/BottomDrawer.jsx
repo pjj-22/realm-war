@@ -354,9 +354,11 @@ export default function BottomDrawer({ hex, player, stats, onClaim, onLoginRequi
   // ── tab panels ───────────────────────────────────────────────
 
   function TerritoryPanel() {
+    const ZONE_BONUS = 2 // keep in sync with server ZONE_BONUS_PER_HEX
+    const inZone = !!hex.zone_city
     const troops = Object.entries(troopMap).filter(([, n]) => n > 0)
     const totalTroops = troops.reduce((s, [, n]) => s + n, 0)
-    const totalIncome = income.gold + (hex.strategic_bonus || 0)
+    const totalIncome = income.gold + (hex.strategic_bonus || 0) + (inZone ? ZONE_BONUS : 0)
     const forts = buildingData?.buildings?.filter(b => b.type === 'fort').length || 0
     const hasFortBonus = forts > 0 || hex.strategic_name
     const defMult = 1 + forts * 0.4 + (hex.strategic_name ? 0.2 : 0)
@@ -377,6 +379,9 @@ export default function BottomDrawer({ hex, player, stats, onClaim, onLoginRequi
 
       // Strategic bonus: applies for all ticks held
       if (hex.strategic_bonus) total += ticksHeld * hex.strategic_bonus
+
+      // City-zone bonus: applies for all ticks held
+      if (inZone) total += ticksHeld * ZONE_BONUS
 
       // Mines: only count from when each mine became active (created_at + build time)
       if (buildingData?.buildings) {
@@ -440,10 +445,27 @@ export default function BottomDrawer({ hex, player, stats, onClaim, onLoginRequi
               <div>
                 <div style={{ fontSize: 14, color: '#f0d070', letterSpacing: 1 }}>{hex.strategic_name}</div>
                 <div style={{ fontSize: 13, color: '#9a7840' }}>
-                  {hex.strategic_primary
-                    ? <>+{hex.strategic_bonus}g · +20% def · <span style={{ color: '#c9a040' }}>territory income scales with {hex.country_name}</span></>
-                    : <>+{hex.strategic_bonus}g per tick · +20% defense</>
-                  }
+                  +{hex.strategic_bonus}g per tick · +20% defense
+                  {hex.strategic_primary && <span style={{ color: '#c9a040' }}> · national capital</span>}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* City-zone banner - what the gold border on the map means */}
+          {inZone && (
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: 10,
+              padding: '8px 14px',
+              background: 'rgba(224,184,74,0.08)',
+              border: '1px solid rgba(224,184,74,0.28)',
+              borderRadius: 5,
+            }}>
+              <span style={{ fontSize: 16, color: '#e0b84a' }}>◇</span>
+              <div>
+                <div style={{ fontSize: 14, color: '#e0c878', letterSpacing: 1 }}>{hex.zone_city} Zone</div>
+                <div style={{ fontSize: 13, color: '#9a7840' }}>
+                  <span style={{ color: '#c9a040' }}>+{ZONE_BONUS}g per tick</span> while you hold this hex
                 </div>
               </div>
             </div>
