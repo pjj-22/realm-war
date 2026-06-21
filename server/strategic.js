@@ -1,4 +1,4 @@
-import { latLngToCell } from 'h3-js'
+import { latLngToCell, gridDisk, gridDistance } from 'h3-js'
 import { getCountry } from './countries.js'
 
 const HEX_RES = 7
@@ -43,14 +43,21 @@ const DEFS = [
   { name: 'Johannesburg',  primary: true,  lat: -26.195, lng:  28.034 },
   { name: 'Riyadh',        primary: true,  lat:  24.688, lng:  46.722 },
   { name: 'Tehran',        primary: true,  lat:  35.700, lng:  51.415 },
-  // Chokepoints - flat bonus only, no territory mechanic
-  { name: 'Suez Canal',    primary: false, lat:  30.583, lng:  32.265 },
-  { name: 'Panama Canal',  primary: false, lat:   9.107, lng: -79.681 },
-  { name: 'Gibraltar',     primary: false, lat:  36.140, lng:  -5.354 },
+  // Chokepoints - flat bonus only, no city zone
+  { name: 'Suez Canal',    primary: false, chokepoint: true, lat:  30.583, lng:  32.265 },
+  { name: 'Panama Canal',  primary: false, chokepoint: true, lat:   9.107, lng: -79.681 },
+  { name: 'Gibraltar',     primary: false, chokepoint: true, lat:  36.140, lng:  -5.354 },
 ]
 
 export const STRATEGIC_BONUS_GOLD    = 5   // +5g per tick (all strategic hexes)
 export const STRATEGIC_DEFENSE_BONUS = 0.2 // +20% defender strength
+
+// ─── City zones - a visible ring of influence around each city ────────────────
+// Owning hexes inside a city's zone pays a flat per-hex bonus. This replaces the
+// old per-country exponential: legible, fair across uneven country sizes, and
+// drawable on the map. Chokepoints have no zone.
+export const CITY_ZONE_RADIUS    = 3  // rings around a city (~37 hexes per zone)
+export const ZONE_BONUS_PER_HEX  = 2  // +2g per tick for each owned hex in a zone
 
 export const STRATEGIC_HEXES = new Map(
   DEFS.map(def => [
@@ -66,3 +73,26 @@ for (const [h3, def] of STRATEGIC_HEXES) {
   const info = getCountry(h3)
   if (info) CAPITAL_COUNTRY.set(h3, info.name)
 }
+
+// City zones: every hex within CITY_ZONE_RADIUS rings of a (non-chokepoint) city,
+// assigned to its single nearest city so overlapping rings never double-pay.
+// h3_index → city name.
+export const CITY_ZONES = new Map()
+{
+  const bestDist = new Map()
+  for (const def of DEFS) {
+    if (def.chokepoint) continue
+    const center = latLngToCell(def.lat, def.lng, HEX_RES)
+    for (const h of gridDisk(center, CITY_ZONE_RADIUS)) {
+      const d = gridDistance(center, h)
+      if (d < 0) continue
+      if (!bestDist.has(h) || d < bestDist.get(h)) {
+        bestDist.set(h, d)
+        CITY_ZONES.set(h, def.name)
+      }
+    }
+  }
+}
+
+// Zone hexes grouped for the client to shade: [{ h3, city }]
+export const CITY_ZONE_LIST = Array.from(CITY_ZONES, ([h3, city]) => ({ h3, city }))

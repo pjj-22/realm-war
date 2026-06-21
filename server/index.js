@@ -62,6 +62,18 @@ async function runMigrations() {
   await pool.query('ALTER TABLE hexes ADD COLUMN IF NOT EXISTS rally_hex TEXT')
   await pool.query('ALTER TABLE training_queue ADD COLUMN IF NOT EXISTS delivered INTEGER NOT NULL DEFAULT 0')
 
+  // battles.created_at is in schema.sql but older DBs only have the legacy started_at;
+  // ensure the canonical column exists and backfill it from started_at where present
+  await pool.query('ALTER TABLE battles ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()')
+  await pool.query(`
+    DO $$
+    BEGIN
+      IF EXISTS (SELECT 1 FROM information_schema.columns
+                 WHERE table_name='battles' AND column_name='started_at') THEN
+        UPDATE battles SET created_at = started_at WHERE started_at IS NOT NULL;
+      END IF;
+    END $$;`)
+
   // players.id is SERIAL on fresh installs (schema.sql) but UUID on older databases -
   // derive the type so foreign keys match either way
   const idType = await pool.query(

@@ -50,6 +50,7 @@ export const api = {
   suggestStart: () => request('GET', '/hexes/suggest-start'),
   getWorldEvents: () => request('GET', '/world/events'),
   getCrowns: () => request('GET', '/world/crowns'),
+  getZones: () => request('GET', '/world/zones'),
   getPushKey: () => request('GET', '/push/key'),
   pushSubscribe: (subscription) => request('POST', '/push/subscribe', { subscription }),
   pushUnsubscribe: (endpoint) => request('DELETE', '/push/subscribe', { endpoint }),

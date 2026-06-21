@@ -1,7 +1,11 @@
 import { Router } from 'express'
 import { pool } from '../db.js'
+import { CITY_ZONE_LIST } from '../strategic.js'
 
 const router = Router()
+
+// City zones - static ring of influence hexes around each city (for map shading)
+router.get('/zones', (req, res) => res.json(CITY_ZONE_LIST))
 
 // The Realm Herald - public global news feed
 router.get('/events', async (req, res) => {

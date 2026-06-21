@@ -374,6 +374,25 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
     } catch {}
   }, [])
 
+  // City zones are static - fetch once and shade them
+  const loadZones = useCallback(async () => {
+    if (!map.current?.getSource('zones')) return
+    try {
+      const zones = await api.getZones()
+      const features = zones.map(z => {
+        const boundary = cellToBoundary(z.h3)
+        const coords = boundary.map(([lat, lng]) => [lng, lat])
+        coords.push(coords[0])
+        return {
+          type: 'Feature',
+          properties: { city: z.city },
+          geometry: { type: 'Polygon', coordinates: [coords] },
+        }
+      })
+      map.current.getSource('zones').setData({ type: 'FeatureCollection', features })
+    } catch { /* zones are static, best-effort */ }
+  }, [])
+
   const loadArmies = useCallback(async () => {
     try { setArmies(await api.getArmies()) } catch {}
   }, [])
@@ -478,6 +497,26 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
       // Sprites for garrison + building badges
       addSvgImage(map.current, 'garrison-icon', GARRISON_SVG)
       for (const [id, svg] of Object.entries(PIP_SPRITES)) addSvgImage(map.current, id, svg)
+
+      // City zones - subtle background shading for each city's ring of influence.
+      // Sits beneath ownership so claimed colors paint over it.
+      map.current.addSource('zones', {
+        type: 'geojson',
+        data: { type: 'FeatureCollection', features: [] },
+      })
+      map.current.addLayer({
+        id: 'zone-fill',
+        type: 'fill',
+        source: 'zones',
+        paint: { 'fill-color': '#e0b84a', 'fill-opacity': 0.16 },
+      })
+      map.current.addLayer({
+        id: 'zone-border',
+        type: 'line',
+        source: 'zones',
+        minzoom: 4,
+        paint: { 'line-color': '#e0b84a', 'line-width': 1.2, 'line-opacity': 0.45 },
+      })
 
       // Always-visible claimed territory layer (visible at all zoom levels)
       map.current.addSource('claimed', {
@@ -711,7 +750,7 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
           'text-field': ['concat',
             ['get', 'name'],
             '\n+', ['to-string', ['get', 'bonus_gold']], 'g',
-            ['case', ['boolean', ['get', 'primary'], false], ' +territory', ''],
+            ['case', ['boolean', ['get', 'primary'], false], ' +zone', ''],
           ],
           'text-size': ['interpolate', ['linear'], ['zoom'], 4, 9, 8, 13],
           'text-allow-overlap': false,
@@ -747,6 +786,7 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
       updateOverview()
       updateClaimed()
       loadStrategic()
+      loadZones()
       // armies state may already be loaded - force a sync
       map.current.once('idle', () => {
         setArmies(prev => [...prev])

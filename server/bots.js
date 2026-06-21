@@ -156,8 +156,10 @@ async function botBuild(bot) {
       const cost = BUILDING_COSTS[type]
       if (gold < cost.gold) continue
 
+      // $1 is cast to text so its type is unambiguous: older DBs type h3_index as
+      // varchar (schema.sql uses TEXT), which otherwise yields 42P08 on the reused param
       const inserted = await pool.query(
-        'INSERT INTO buildings (h3_index, type) SELECT $1,$2 WHERE NOT EXISTS (SELECT 1 FROM buildings WHERE h3_index=$1) RETURNING id',
+        'INSERT INTO buildings (h3_index, type) SELECT $1::text,$2 WHERE NOT EXISTS (SELECT 1 FROM buildings WHERE h3_index=$1::text) RETURNING id',
         [h3_index, type]
       )
       if (!inserted.rows[0]) break  // another process beat us - skip this hex

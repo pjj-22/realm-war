@@ -14,7 +14,7 @@ import { ensureSeason, processSeason } from './season.js'
 import { gridDistance, gridDisk } from 'h3-js'
 import { isOcean } from './terrain.js'
 import { sendPush } from './push.js'
-import { STRATEGIC_HEXES, STRATEGIC_BONUS_GOLD, STRATEGIC_DEFENSE_BONUS, CAPITAL_COUNTRY } from './strategic.js'
+import { STRATEGIC_HEXES, STRATEGIC_BONUS_GOLD, STRATEGIC_DEFENSE_BONUS, CAPITAL_COUNTRY, CITY_ZONES, ZONE_BONUS_PER_HEX } from './strategic.js'
 import { getCountry } from './countries.js'
 
 function isNPC(username) {
@@ -25,7 +25,7 @@ function isWild(username) {
   return username?.startsWith('WILD_')
 }
 
-async function insertEvent(playerId, type, message, hexIndex = null) {
+export async function insertEvent(playerId, type, message, hexIndex = null) {
   try {
     await pool.query(
       'INSERT INTO events (player_id, type, message, hex_index) VALUES ($1,$2,$3,$4)',
@@ -38,7 +38,7 @@ async function insertEvent(playerId, type, message, hexIndex = null) {
 }
 
 // Public newspaper entry - everyone sees these
-async function insertWorldEvent(type, message, hexIndex = null, playerId = null) {
+export async function insertWorldEvent(type, message, hexIndex = null, playerId = null) {
   try {
     await pool.query(
       'INSERT INTO world_events (type, message, hex_index, player_id) VALUES ($1,$2,$3,$4)',
@@ -109,11 +109,24 @@ export async function runTick() {
     // Prune rows older than 30 days
     await pool.query("DELETE FROM hex_history WHERE recorded_at < NOW() - INTERVAL '30 days'")
 
-    // Territory income - primary capitals pay 1.1^N bonus where N = owner's hex count in that country
+    // City zone income - each owned hex inside a city's zone pays a flat bonus.
+    // Legible and fair across uneven country sizes; replaces the old 1.1^N territory bonus.
+    if (CITY_ZONES.size > 0) {
+      const zonedHexes = await pool.query(
+        'SELECT owner_id, COUNT(*)::int AS n FROM hexes WHERE owner_id IS NOT NULL AND h3_index = ANY($1) GROUP BY owner_id',
+        [Array.from(CITY_ZONES.keys())]
+      )
+      for (const { owner_id, n } of zonedHexes.rows) {
+        const bonus = n * ZONE_BONUS_PER_HEX
+        await pool.query('UPDATE players SET gold = gold + $1 WHERE id = $2', [bonus, owner_id])
+        if (bonus > 0) console.log(`[tick] city zones: +${bonus}g for ${owner_id} (${n} zone hexes)`)
+      }
+    }
+
     if (CAPITAL_COUNTRY.size > 0) {
       const allHexes = await pool.query('SELECT h3_index, owner_id FROM hexes')
 
-      // Build: playerId → Map<countryName, count>
+      // Build: playerId → Map<countryName, count> (for country crowns)
       const playerCountry = new Map()
       for (const { h3_index, owner_id } of allHexes.rows) {
         const country = getCountry(h3_index)?.name
@@ -123,21 +136,12 @@ export async function runTick() {
         m.set(country, (m.get(country) || 0) + 1)
       }
 
-      // For each owned primary capital, award territory bonus
       const capitalList = Array.from(CAPITAL_COUNTRY.keys())
       const ownedCapitals = await pool.query(
         'SELECT h3_index, owner_id FROM hexes WHERE h3_index = ANY($1)',
         [capitalList]
       )
       const capitalOwner = new Map(ownedCapitals.rows.map(r => [r.h3_index, r.owner_id]))
-      for (const { h3_index, owner_id } of ownedCapitals.rows) {
-        const country = CAPITAL_COUNTRY.get(h3_index)
-        const total = playerCountry.get(owner_id)?.get(country) || 0
-        const N = Math.min(Math.max(0, total - 1), 60) // exclude capital, cap at 60 (1.1^60 = 304g)
-        const bonus = Math.floor(Math.pow(1.1, N))
-        await pool.query('UPDATE players SET gold = gold + $1 WHERE id = $2', [bonus, owner_id])
-        if (N > 0) console.log(`[tick] territory: +${bonus}g for ${h3_index} (${country}, N=${N})`)
-      }
 
       // Country crowns - own a country's capital + enough of its hexes to be its Ruler
       const names = await pool.query('SELECT id, username FROM players')
