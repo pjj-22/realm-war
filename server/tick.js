@@ -1,5 +1,6 @@
 import { pool } from './db.js'
 import {
+  DEV_MODE,
   TICK_INTERVAL_MS, BATTLE_ROUND_DAMAGE_RATE, FORT_DEFENSE_BONUS,
   GOLD_CAP_BASE, GOLD_CAP_PER_HEX, GOLD_CAP_PER_MINE, BUILDING_TIME_SECONDS,
   OCEAN_MARCH_MULTIPLIER, TROOP_STATS,
@@ -16,6 +17,10 @@ import { isOcean } from './terrain.js'
 import { sendPush } from './push.js'
 import { STRATEGIC_HEXES, STRATEGIC_BONUS_GOLD, STRATEGIC_DEFENSE_BONUS, CAPITAL_COUNTRY, CITY_ZONES, ZONE_BONUS_PER_HEX } from './strategic.js'
 import { getCountry } from './countries.js'
+import { defenseMultiplier, resolveRound, survivorCount } from './combat.js'
+
+// Per-tick/per-battle chatter is dev-only; errors always log via console.error
+const log = DEV_MODE ? console.log : () => {}
 
 function isNPC(username) {
   return username?.startsWith('BOT_') || username?.startsWith('WILD_')
@@ -68,7 +73,7 @@ const BATTLE_INTERVAL_MS = 15 * 1000
 const BASE_RATE = { gold: 1 }
 
 export async function runTick() {
-  console.log('[tick] Running resource tick...')
+  log('[tick] Running resource tick...')
   try {
     const result = await pool.query(`
       SELECT
@@ -93,7 +98,7 @@ export async function runTick() {
       goldGain += Number(sRes.rows[0].cnt) * STRATEGIC_BONUS_GOLD
       await pool.query('UPDATE players SET gold=gold+$1 WHERE id=$2', [goldGain, row.id])
     }
-    console.log(`[tick] Resources updated for ${result.rows.length} players.`)
+    log(`[tick] Resources updated for ${result.rows.length} players.`)
 
     // Record hex history - only when count changes, 30-day retention
     const lastSnaps = await pool.query(
@@ -111,16 +116,16 @@ export async function runTick() {
 
     // City zone income - each owned hex inside a city's zone pays a flat bonus.
     // Legible and fair across uneven country sizes; replaces the old 1.1^N territory bonus.
+    // Single batched UPDATE: one round-trip regardless of player count.
     if (CITY_ZONES.size > 0) {
-      const zonedHexes = await pool.query(
-        'SELECT owner_id, COUNT(*)::int AS n FROM hexes WHERE owner_id IS NOT NULL AND h3_index = ANY($1) GROUP BY owner_id',
-        [Array.from(CITY_ZONES.keys())]
-      )
-      for (const { owner_id, n } of zonedHexes.rows) {
-        const bonus = n * ZONE_BONUS_PER_HEX
-        await pool.query('UPDATE players SET gold = gold + $1 WHERE id = $2', [bonus, owner_id])
-        if (bonus > 0) console.log(`[tick] city zones: +${bonus}g for ${owner_id} (${n} zone hexes)`)
-      }
+      await pool.query(`
+        UPDATE players p SET gold = gold + z.n * $2
+        FROM (
+          SELECT owner_id, COUNT(*)::int AS n FROM hexes
+          WHERE owner_id IS NOT NULL AND h3_index = ANY($1) GROUP BY owner_id
+        ) z
+        WHERE p.id = z.owner_id
+      `, [Array.from(CITY_ZONES.keys()), ZONE_BONUS_PER_HEX])
     }
 
     if (CAPITAL_COUNTRY.size > 0) {
@@ -233,7 +238,7 @@ export async function processTraining() {
         )
         getIO()?.emit('armies:update')
         await insertEvent(job.owner_id, 'training_complete', `${job.quantity} troops marching to rally point`, job.h3_index)
-        console.log(`[training] ${job.quantity} troops auto-marching to rally ${job.rally_hex}`)
+        log(`[training] ${job.quantity} troops auto-marching to rally ${job.rally_hex}`)
       } else {
         const remaining = job.quantity - (job.delivered || 0)
         if (remaining > 0) {
@@ -241,7 +246,7 @@ export async function processTraining() {
           deposited = true
         }
         await insertEvent(job.owner_id, 'training_complete', `${job.quantity} troops finished training at ${job.h3_index}`, job.h3_index)
-        console.log(`[training] ${job.quantity} troops ready at ${job.h3_index}`)
+        log(`[training] ${job.quantity} troops ready at ${job.h3_index}`)
       }
     }
 
@@ -280,7 +285,7 @@ export async function processCombat() {
         await pool.query("UPDATE armies SET status='arrived' WHERE id=$1", [army.id])
         getIO()?.emit('armies:update')
         getIO()?.emit('hexes:update')
-        console.log(`[combat] ${army.owner_id} reinforced own hex ${army.to_hex}`)
+        log(`[combat] ${army.owner_id} reinforced own hex ${army.to_hex}`)
 
       } else if (!targetHex || !targetHex.owner_id) {
         // Unclaimed hex - deposit troops and auto-claim if it's land
@@ -291,7 +296,7 @@ export async function processCombat() {
             [army.to_hex, army.owner_id]
           )
           getIO()?.emit('hexes:update')
-          console.log(`[combat] ${army.owner_id} auto-claimed ${army.to_hex}`)
+          log(`[combat] ${army.owner_id} auto-claimed ${army.to_hex}`)
         }
         await pool.query("UPDATE armies SET status='arrived' WHERE id=$1", [army.id])
         getIO()?.emit('armies:update')
@@ -302,7 +307,7 @@ export async function processCombat() {
         await pool.query("UPDATE armies SET status='arrived' WHERE id=$1", [army.id])
         getIO()?.emit('armies:update')
         getIO()?.emit('hexes:update')
-        console.log(`[combat] ${army.owner_id} reinforced ally hex ${army.to_hex}`)
+        log(`[combat] ${army.owner_id} reinforced ally hex ${army.to_hex}`)
 
       } else {
         // Enemy hex - attack strength is simply troop count
@@ -330,7 +335,7 @@ export async function processCombat() {
           await pool.query("UPDATE armies SET status='in_battle' WHERE id=$1", [army.id])
           getIO()?.emit('battle:update')
           getIO()?.emit('armies:update')
-          console.log(`[battle] reinforcement joined battle ${battle.id} as ${side} (+${army.quantity} str)`)
+          log(`[battle] reinforcement joined battle ${battle.id} as ${side} (+${army.quantity} str)`)
 
         } else {
           // Start new battle
@@ -349,8 +354,14 @@ export async function processCombat() {
             'SELECT COUNT(*)::int AS cnt FROM hexes WHERE h3_index = ANY($1) AND owner_id=$2',
             [neighbors, targetHex.owner_id]
           )
-          const entrench = Math.min(friendly.rows[0].cnt, ENTRENCH_MAX_NEIGHBORS) * ENTRENCH_BONUS_PER_NEIGHBOR
-          const defMultiplier = 1 + forts * FORT_DEFENSE_BONUS + strategicBonus + entrench
+          const defMultiplier = defenseMultiplier({
+            forts,
+            fortBonus: FORT_DEFENSE_BONUS,
+            strategicBonus,
+            friendlyNeighbors: friendly.rows[0].cnt,
+            entrenchPerNeighbor: ENTRENCH_BONUS_PER_NEIGHBOR,
+            entrenchMaxNeighbors: ENTRENCH_MAX_NEIGHBORS,
+          })
           const defStr = defenders.rows.reduce((s, t) => s + t.quantity, 0) * defMultiplier
 
           if (defStr === 0) {
@@ -367,7 +378,7 @@ export async function processCombat() {
             }
             getIO()?.emit('hexes:update')
             getIO()?.emit('armies:update')
-            console.log(`[combat] ${army.to_hex} taken unopposed`)
+            log(`[combat] ${army.to_hex} taken unopposed`)
           } else {
             const battle = await pool.query(
               `INSERT INTO battles (h3_index, attacker_id, defender_id, attacker_strength, defender_strength)
@@ -397,7 +408,7 @@ export async function processCombat() {
 
             getIO()?.emit('battle:update')
             getIO()?.emit('armies:update')
-            console.log(`[battle] started at ${army.to_hex}: ${attackStr} atk vs ${defStr.toFixed(1)} def`)
+            log(`[battle] started at ${army.to_hex}: ${attackStr} atk vs ${defStr.toFixed(1)} def`)
           }
         }
       }
@@ -415,13 +426,9 @@ export async function processBattleRounds() {
       const atkStr = Number(battle.attacker_strength)
       const defStr = Number(battle.defender_strength)
 
-      const atkDmg = atkStr * BATTLE_ROUND_DAMAGE_RATE
-      const defDmg = defStr * BATTLE_ROUND_DAMAGE_RATE
+      const { atkDmg, defDmg, newAtkStr, newDefStr, over } = resolveRound(atkStr, defStr, BATTLE_ROUND_DAMAGE_RATE)
 
-      const newAtkStr = Math.max(0, atkStr - defDmg)
-      const newDefStr = Math.max(0, defStr - atkDmg)
-
-      if (newAtkStr <= 0 || newDefStr <= 0) {
+      if (over) {
         // Battle over
         const attackerWon = newAtkStr > newDefStr
 
@@ -442,14 +449,13 @@ export async function processBattleRounds() {
               [battle.id]
             )
             const totalAtkQty = Number(atk.rows[0]?.qty || 0)
-            const survivalRate = totalAtkQty > 0 ? newAtkStr / atkStr : 0
-            const survivors = Math.round(totalAtkQty * survivalRate)
+            const survivors = survivorCount(totalAtkQty, newAtkStr, atkStr)
             if (survivors > 0) {
               await depositTroops(battle.attacker_id, battle.h3_index, 'troop', survivors)
-              console.log(`[battle] ${battle.id} ATTACKER WINS at ${battle.h3_index} (${survivors} troops survive)`)
+              log(`[battle] ${battle.id} ATTACKER WINS at ${battle.h3_index} (${survivors} troops survive)`)
             }
           } else {
-            console.log(`[battle] ${battle.id} ATTACKER WINS at ${battle.h3_index} (no survivors)`)
+            log(`[battle] ${battle.id} ATTACKER WINS at ${battle.h3_index} (no survivors)`)
           }
         } else {
           // Defender wins - restore defender remnants
@@ -460,14 +466,13 @@ export async function processBattleRounds() {
               [battle.id]
             )
             const totalDefQty = Number(def.rows[0]?.qty || 0)
-            const survivalRate = totalDefQty > 0 ? newDefStr / defStr : 0
-            const survivors = Math.round(totalDefQty * survivalRate)
+            const survivors = survivorCount(totalDefQty, newDefStr, defStr)
             if (survivors > 0) {
               await depositTroops(battle.defender_id, battle.h3_index, 'troop', survivors)
-              console.log(`[battle] ${battle.id} DEFENDER WINS at ${battle.h3_index} (${survivors} troops survive)`)
+              log(`[battle] ${battle.id} DEFENDER WINS at ${battle.h3_index} (${survivors} troops survive)`)
             }
           } else {
-            console.log(`[battle] ${battle.id} DEFENDER WINS at ${battle.h3_index} (no survivors)`)
+            log(`[battle] ${battle.id} DEFENDER WINS at ${battle.h3_index} (no survivors)`)
           }
         }
 
@@ -489,7 +494,7 @@ export async function processBattleRounds() {
             await insertEvent(battle.defender_id, 'capital_lost', `Your capital has fallen! All is not lost - claim any free hex to found a new capital and rebuild.`, battle.h3_index)
             insertWorldEvent('capital', `${defName}'s capital has fallen to ${atkName}!`, battle.h3_index, battle.attacker_id)
             sendPush(battle.defender_id, 'Your capital has fallen!', 'All is not lost - claim any free hex to found a new capital and rebuild.', { hex: battle.h3_index })
-            console.log(`[battle] ${battle.defender_id} lost their capital at ${battle.h3_index}`)
+            log(`[battle] ${battle.defender_id} lost their capital at ${battle.h3_index}`)
           } else if (!isWild(defName)) {
             insertWorldEvent('battle', `${atkName} seized ${countryName} territory from ${defName}`, battle.h3_index, battle.attacker_id)
           }
@@ -523,7 +528,7 @@ export async function processBattleRounds() {
           WHERE id=$5
         `, [newAtkStr, newDefStr, defDmg, atkDmg, battle.id])
         getIO()?.emit('battle:update')
-        console.log(`[battle] round ${battle.round_number + 1} at ${battle.h3_index}: ${newAtkStr.toFixed(1)} vs ${newDefStr.toFixed(1)}`)
+        log(`[battle] round ${battle.round_number + 1} at ${battle.h3_index}: ${newAtkStr.toFixed(1)} vs ${newDefStr.toFixed(1)}`)
       }
     }
   } catch (err) {
@@ -538,7 +543,7 @@ export async function processUpgrades() {
       await pool.query('UPDATE hexes SET upgrade_level=upgrade_level+1 WHERE h3_index=$1', [job.h3_index])
       await pool.query('DELETE FROM upgrade_queue WHERE id=$1', [job.id])
       const newLevel = await pool.query('SELECT upgrade_level FROM hexes WHERE h3_index=$1', [job.h3_index])
-      console.log(`[upgrade] ${job.h3_index} upgraded to level ${newLevel.rows[0]?.upgrade_level ?? '?'}`)
+      log(`[upgrade] ${job.h3_index} upgraded to level ${newLevel.rows[0]?.upgrade_level ?? '?'}`)
     }
   } catch (err) {
     console.error('[upgrade] Error:', err.message)
@@ -586,7 +591,7 @@ export async function processDecay() {
       if (lost > 0) {
         anyLost = true
         insertEvent(player.id, 'decay', `${lost} unguarded border hex${lost > 1 ? 'es' : ''} slipped from your control. Garrison or build to hold the frontier.`)
-        console.log(`[decay] ${player.username} lost ${lost} border hexes`)
+        log(`[decay] ${player.username} lost ${lost} border hexes`)
       }
     }
     if (anyLost) getIO()?.emit('hexes:update')

@@ -1,7 +1,10 @@
 import { pool } from './db.js'
 import { latLngToCell, gridDisk, gridDistance } from 'h3-js'
 import { getIO } from './socket.js'
-import { STARTING_GOLD, STARTING_MANA, STARTING_TROOPS, TROOP_STATS, BUILDING_COSTS, OCEAN_MARCH_MULTIPLIER, BUILDING_TIME_SECONDS } from './config.js'
+import { DEV_MODE, STARTING_GOLD, STARTING_MANA, STARTING_TROOPS, TROOP_STATS, BUILDING_COSTS, OCEAN_MARCH_MULTIPLIER, BUILDING_TIME_SECONDS } from './config.js'
+
+// Per-tick bot chatter is dev-only; creation/respawn logs stay
+const log = DEV_MODE ? console.log : () => {}
 import { isOcean } from './terrain.js'
 import { notifyIncomingAttack } from './notify.js'
 
@@ -126,7 +129,7 @@ async function botClaim(bot) {
         'INSERT INTO hexes (h3_index, owner_id, claimed_at) VALUES ($1,$2,NOW()) ON CONFLICT DO NOTHING',
         [h3_index, bot.id]
       )
-      console.log(`[bot] ${bot.username} claimed ${h3_index}`)
+      log(`[bot] ${bot.username} claimed ${h3_index}`)
     }
   }
 }
@@ -165,7 +168,7 @@ async function botBuild(bot) {
       if (!inserted.rows[0]) break  // another process beat us - skip this hex
       await pool.query('UPDATE players SET gold=gold-$1 WHERE id=$2', [cost.gold, bot.id])
       gold -= cost.gold
-      console.log(`[bot] ${bot.username} built ${type} at ${h3_index}`)
+      log(`[bot] ${bot.username} built ${type} at ${h3_index}`)
       break
     }
   }
@@ -201,7 +204,7 @@ async function botTrain(bot) {
     'INSERT INTO training_queue (owner_id, h3_index, type, quantity, started_at, completes_at) VALUES ($1,$2,$3,$4,NOW(),$5)',
     [bot.id, bot.capital_hex, 'troop', qty, completesAt]
   )
-  console.log(`[bot] ${bot.username} queued ${qty} troops`)
+  log(`[bot] ${bot.username} queued ${qty} troops`)
 }
 
 // March troops to expand territory or attack enemy hexes
@@ -326,7 +329,7 @@ async function botMarch(bot) {
       [bot.id, source.h3_index, target, 'troop', sendQty, arrivesAt]
     )
     notifyIncomingAttack(bot.id, target, sendQty, arrivesAt)
-    console.log(`[bot] ${bot.username} marching ${sendQty} troops → ${target}`)
+    log(`[bot] ${bot.username} marching ${sendQty} troops → ${target}`)
   }
 }
 

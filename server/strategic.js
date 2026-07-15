@@ -62,7 +62,9 @@ export const ZONE_BONUS_PER_HEX  = 2  // +2g per tick for each owned hex in a zo
 export const STRATEGIC_HEXES = new Map(
   DEFS.map(def => [
     latLngToCell(def.lat, def.lng, HEX_RES),
-    { name: def.name, primary: def.primary },
+    // `zone` = has a city zone (every non-chokepoint city); drives the map's "+zone" label.
+    // `primary` alone can't distinguish secondary cities (zoned) from chokepoints (not).
+    { name: def.name, primary: def.primary, zone: !def.chokepoint },
   ])
 )
 

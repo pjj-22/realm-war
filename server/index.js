@@ -1,6 +1,7 @@
 import http from 'http'
 import express from 'express'
 import cors from 'cors'
+import helmet from 'helmet'
 import dotenv from 'dotenv'
 import playerRoutes from './routes/players.js'
 import hexRoutes from './routes/hexes.js'
@@ -23,8 +24,38 @@ import { initSocket } from './socket.js'
 
 dotenv.config()
 
+// ─── Boot-time environment guards ─────────────────────────────────────────────
+// Fail fast on misconfiguration instead of silently running with dev settings.
+const PROD = process.env.NODE_ENV === 'production'
+const PLACEHOLDER_SECRETS = ['change_this_to_a_random_secret', 'realmwar_dev_secret_change_in_production', 'dev_admin_1234']
+
+function assertEnv() {
+  const problems = []
+  if (!process.env.JWT_SECRET) problems.push('JWT_SECRET is not set (auth would break at runtime)')
+  if (PROD) {
+    if (DEV_MODE) problems.push('DEV_MODE must be set to false in production (dev balance: 9999 gold, 30s ticks)')
+    if (PLACEHOLDER_SECRETS.includes(process.env.JWT_SECRET)) problems.push('JWT_SECRET is a known placeholder - generate one: openssl rand -base64 32')
+    if (process.env.ADMIN_SECRET && (PLACEHOLDER_SECRETS.includes(process.env.ADMIN_SECRET) || process.env.ADMIN_SECRET.length < 16))
+      problems.push('ADMIN_SECRET is a placeholder or under 16 chars - generate one: openssl rand -base64 32')
+    if (!process.env.CLIENT_ORIGIN) problems.push('CLIENT_ORIGIN is not set (CORS would be wide open)')
+  }
+  if (problems.length) {
+    console.error('[boot] Refusing to start:')
+    for (const p of problems) console.error(`  - ${p}`)
+    process.exit(1)
+  }
+}
+assertEnv()
+
+// Comma-separated list of allowed browser origins, e.g. https://realmwar.example.com
+const CORS_ORIGIN = process.env.CLIENT_ORIGIN ? process.env.CLIENT_ORIGIN.split(',').map(s => s.trim()) : '*'
+
 const app = express()
-app.use(cors())
+// Behind nginx/Cloudflare set TRUST_PROXY=1 (number of hops) so req.ip is the
+// real client address; without a proxy leave it unset so x-forwarded-for is ignored.
+if (process.env.TRUST_PROXY) app.set('trust proxy', Number(process.env.TRUST_PROXY) || 1)
+app.use(helmet())
+app.use(cors({ origin: CORS_ORIGIN }))
 app.use(express.json())
 
 app.use('/api/players', playerRoutes)
@@ -56,7 +87,7 @@ if (DEV_MODE) {
 }
 
 const httpServer = http.createServer(app)
-initSocket(httpServer)
+initSocket(httpServer, CORS_ORIGIN)
 
 async function runMigrations() {
   await pool.query('ALTER TABLE hexes ADD COLUMN IF NOT EXISTS rally_hex TEXT')

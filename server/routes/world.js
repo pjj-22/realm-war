@@ -1,11 +1,12 @@
 import { Router } from 'express'
 import { pool } from '../db.js'
-import { CITY_ZONE_LIST } from '../strategic.js'
+import { CITY_ZONE_LIST, ZONE_BONUS_PER_HEX } from '../strategic.js'
 
 const router = Router()
 
-// City zones - static ring of influence hexes around each city (for map shading)
-router.get('/zones', (req, res) => res.json(CITY_ZONE_LIST))
+// City zones - static ring of influence hexes around each city (for map shading).
+// `bonus` ships the server's per-hex gold value so the client never hardcodes it.
+router.get('/zones', (req, res) => res.json({ bonus: ZONE_BONUS_PER_HEX, hexes: CITY_ZONE_LIST }))
 
 // The Realm Herald - public global news feed
 router.get('/events', async (req, res) => {

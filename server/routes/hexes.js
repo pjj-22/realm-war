@@ -8,6 +8,7 @@ import { getCountry } from '../countries.js'
 import { STARTING_TROOPS, PROJECTION_GARRISON, PROJECTION_EMPIRE } from '../config.js'
 import { STRATEGIC_HEXES, STRATEGIC_BONUS_GOLD } from '../strategic.js'
 import { seedCampsAround } from '../wild.js'
+import { foundCapital } from '../founding.js'
 
 const router = Router()
 
@@ -61,7 +62,7 @@ router.get('/strategic', async (req, res) => {
     const result = indexes.map(h3 => {
       const def = STRATEGIC_HEXES.get(h3)
       const owner = ownerMap.get(h3) || null
-      return { h3_index: h3, name: def.name, primary: def.primary, bonus_gold: STRATEGIC_BONUS_GOLD, owner }
+      return { h3_index: h3, name: def.name, primary: def.primary, zone: def.zone, bonus_gold: STRATEGIC_BONUS_GOLD, owner }
     })
     res.json(result)
   } catch { res.status(500).json({ error: 'Server error' }) }
@@ -141,30 +142,12 @@ router.post('/claim', requireAuth, async (req, res) => {
     )
 
     if (isFirstHex) {
-      // Claim the capital atomically - only the first of any concurrent (e.g. double-click)
-      // requests wins. The losers update 0 rows and skip the one-time starter gifts,
-      // so founding can't double the troops/mine/camps.
-      const won = await pool.query(
-        'UPDATE players SET capital_hex = $1 WHERE id = $2 AND capital_hex IS NULL RETURNING id',
-        [h3Index, req.player.id]
-      )
-      if (won.rows.length > 0) {
-        await pool.query(
-          `INSERT INTO troops (owner_id, h3_index, type, quantity)
-           VALUES ($1, $2, 'troop', $3)
-           ON CONFLICT (owner_id, h3_index, type) DO UPDATE SET quantity = troops.quantity + EXCLUDED.quantity`,
-          [req.player.id, h3Index, STARTING_TROOPS]
-        )
-        // Starter mine - guarded insert (buildings has no unique index on h3_index);
-        // ::text keeps the param type unambiguous on varchar-h3 databases
-        await pool.query(
-          `INSERT INTO buildings (h3_index, type) SELECT $1::text, 'mine'
-           WHERE NOT EXISTS (SELECT 1 FROM buildings WHERE h3_index = $1::text AND type = 'mine')`,
-          [h3Index]
-        )
-        // PvE on-ramp: garrisoned neutral camps nearby to fight (and plunder)
-        seedCampsAround(h3Index)
-      }
+      // Atomic founding: only the first of any concurrent (double-click) claims wins
+      // and hands out the one-time starter gifts. See server/founding.js.
+      await foundCapital(pool, req.player.id, h3Index, {
+        startingTroops: STARTING_TROOPS,
+        onWin: seedCampsAround,
+      })
     }
 
     getIO()?.emit('hexes:update')

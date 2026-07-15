@@ -345,6 +345,8 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
 
   const strategicRef = useRef({})
   const zonesRef = useRef(new Map()) // h3 → city name, for click enrichment
+  const zoneBonusRef = useRef(2)     // server's ZONE_BONUS_PER_HEX, for click enrichment
+  const [zoneBonus, setZoneBonus] = useState(2) // same value, for the legend re-render
 
   const loadStrategic = useCallback(async () => {
     if (!map.current?.getSource('strategic')) return
@@ -364,6 +366,7 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
           properties: {
             name: h.name,
             primary: h.primary || false,
+            zone: h.zone || false,
             bonus_gold: h.bonus_gold,
             owner_color: h.owner?.color || null,
             owner_username: h.owner?.username || null,
@@ -379,7 +382,9 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
   const loadZones = useCallback(async () => {
     if (!map.current?.getSource('zones')) return
     try {
-      const zones = await api.getZones()
+      const { bonus, hexes: zones } = await api.getZones()
+      zoneBonusRef.current = bonus
+      setZoneBonus(bonus)
       zonesRef.current = new Map(zones.map(z => [z.h3, z.city]))
       const features = zones.map(z => {
         const boundary = cellToBoundary(z.h3)
@@ -510,6 +515,7 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
         id: 'zone-fill',
         type: 'fill',
         source: 'zones',
+        minzoom: 4,
         paint: { 'fill-color': '#e0b84a', 'fill-opacity': 0.16 },
       })
       map.current.addLayer({
@@ -752,7 +758,7 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
           'text-field': ['concat',
             ['get', 'name'],
             '\n+', ['to-string', ['get', 'bonus_gold']], 'g',
-            ['case', ['boolean', ['get', 'primary'], false], ' +zone', ''],
+            ['case', ['boolean', ['get', 'zone'], false], ' +zone', ''],
           ],
           'text-size': ['interpolate', ['linear'], ['zoom'], 4, 9, 8, 13],
           'text-allow-overlap': false,
@@ -864,6 +870,7 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
         const enriched = {
           ...hex,
           zone_city: zonesRef.current.get(hex.h3) || null,
+          zone_bonus: zoneBonusRef.current,
           ...(strategic ? {
             strategic_name: strategic.name,
             strategic_bonus: strategic.bonus_gold,
@@ -1321,7 +1328,7 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
           fontFamily: 'Georgia, serif', fontSize: 12, color: '#cdb98a', letterSpacing: 0.5,
         }}>
           <span style={{ width: 13, height: 13, borderRadius: 3, background: 'rgba(224,184,74,0.35)', border: '1px solid rgba(224,184,74,0.7)' }} />
-          City zone — <span style={{ color: '#e0b84a' }}>+2g</span> per hex you hold
+          City zone — <span style={{ color: '#e0b84a' }}>+{zoneBonus}g</span> per hex you hold
         </div>
       )}
 

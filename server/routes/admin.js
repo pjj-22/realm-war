@@ -1,5 +1,7 @@
 import { Router } from 'express'
+import { timingSafeEqual } from 'crypto'
 import { pool } from '../db.js'
+import { rateLimit } from '../ratelimit.js'
 import { runTick } from '../tick.js'
 import { ensureBots } from '../bots.js'
 import { getCurrentSeason, processSeason } from '../season.js'
@@ -9,13 +11,22 @@ import { GM_EVENTS, triggerEvent } from '../gmEvents.js'
 
 const router = Router()
 
+function secretsMatch(given, secret) {
+  const a = Buffer.from(String(given ?? ''))
+  const b = Buffer.from(secret)
+  // length leaks through timingSafeEqual's precondition; compare a against
+  // itself when lengths differ so the work done is identical either way
+  return a.length === b.length ? timingSafeEqual(a, b) : (timingSafeEqual(a, a), false)
+}
+
 function requireAdmin(req, res, next) {
   const secret = process.env.ADMIN_SECRET
   if (!secret) return res.status(503).json({ error: 'Admin not configured (set ADMIN_SECRET)' })
-  if (req.headers['x-admin-secret'] !== secret) return res.status(403).json({ error: 'Forbidden' })
+  if (!secretsMatch(req.headers['x-admin-secret'], secret)) return res.status(403).json({ error: 'Forbidden' })
   next()
 }
 
+router.use(rateLimit({ windowMs: 60 * 1000, max: DEV_MODE ? 1000 : 60, message: 'Too many admin requests' }))
 router.use(requireAdmin)
 
 // Server overview

@@ -311,3 +311,51 @@ export function BotIcon({ size = 14, color = '#c9b99a' }) {
     </Svg>
   )
 }
+
+// Plague doctor mask - hooded head with the long beak
+export function PlagueIcon({ size = 14, color = '#9ab080' }) {
+  return (
+    <Svg size={size}>
+      <path d="M4 3.5a4.5 4.5 0 0 1 6.5 1.2l3.6 4.6-4.9-1.1c-.4 2.6-2.3 4.3-5.2 4.3-1.5-2.8-1.6-6.5 0-9Z" fill={color} />
+      <circle cx="6.8" cy="6.4" r="1" fill="#14101e" />
+      <line x1="10.6" y1="7.4" x2="13" y2="8.6" stroke="#14101e" strokeWidth="0.7" opacity="0.5" />
+    </Svg>
+  )
+}
+
+// Falling comet with motion streaks
+export function MeteorIcon({ size = 14, color = '#e09050' }) {
+  return (
+    <Svg size={size}>
+      <circle cx="10.8" cy="10.8" r="2.8" fill={color} />
+      <circle cx="10" cy="10" r="0.8" fill="#f0d080" />
+      <line x1="1.5" y1="1.5" x2="7.8" y2="7.8" stroke={color} strokeWidth="1.4" strokeLinecap="round" />
+      <line x1="6" y1="2" x2="9.8" y2="5.8" stroke={color} strokeWidth="1" strokeLinecap="round" opacity="0.6" />
+      <line x1="2" y1="6" x2="5.8" y2="9.8" stroke={color} strokeWidth="1" strokeLinecap="round" opacity="0.6" />
+    </Svg>
+  )
+}
+
+// Withered wheat stalk, drooping and shedding a grain
+export function FamineIcon({ size = 14, color = '#b09050' }) {
+  return (
+    <Svg size={size}>
+      <path d="M8 14C8 9 8.5 6 11 3.5" fill="none" stroke={color} strokeWidth="1.3" strokeLinecap="round" />
+      <path d="M9.2 8.2c-1.5-.3-2.4-1.2-2.7-2.7 1.5.3 2.4 1.2 2.7 2.7Z" fill={color} />
+      <path d="M9.8 5.9c-1.3-.6-1.9-1.6-1.9-3.1 1.3.6 1.9 1.6 1.9 3.1Z" fill={color} />
+      <path d="M10 6.2c.2-1.4 1-2.3 2.4-2.8-.2 1.4-1 2.3-2.4 2.8Z" fill={color} opacity="0.7" />
+      <circle cx="4.8" cy="12.2" r="0.9" fill={color} opacity="0.6" />
+    </Svg>
+  )
+}
+
+// Raised pitchfork - peasant revolt
+export function RevoltIcon({ size = 14, color = '#c07050' }) {
+  return (
+    <Svg size={size}>
+      <line x1="8" y1="14" x2="8" y2="5.5" stroke={color} strokeWidth="1.4" strokeLinecap="round" />
+      <path d="M4.6 1.8v3.4a1.2 1.2 0 0 0 1.2 1.2h4.4a1.2 1.2 0 0 0 1.2-1.2V1.8" fill="none" stroke={color} strokeWidth="1.3" strokeLinecap="round" />
+      <line x1="8" y1="1.8" x2="8" y2="5.5" stroke={color} strokeWidth="1.3" strokeLinecap="round" />
+    </Svg>
+  )
+}

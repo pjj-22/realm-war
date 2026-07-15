@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
+import { PlagueIcon, MeteorIcon, FamineIcon, RevoltIcon, GoldIcon, SwordsIcon, BotIcon, BoltIcon } from './Icons'
 
 const BASE = (import.meta.env.VITE_API_URL || 'http://localhost:3001') + '/api/admin'
 
@@ -62,7 +63,11 @@ const EVENT_COLOR = {
 const eventColor = t => EVENT_COLOR[t] || '#8a7a9a'
 
 // Game-master event flavor (admin-only UI)
-const EVENT_ICON = { plague: '🦠', meteor: '☄️', gold_rush: '💰', famine: '🍂', marauder_surge: '⚔️', revolt: '🚩' }
+const EVENT_ICON = { plague: PlagueIcon, meteor: MeteorIcon, gold_rush: GoldIcon, famine: FamineIcon, marauder_surge: SwordsIcon, revolt: RevoltIcon }
+const GmEventIcon = ({ type, size }) => {
+  const Icon = EVENT_ICON[type] || BoltIcon
+  return <Icon size={size} />
+}
 const EVENT_DESC = {
   plague: 'Kills a share of every army across the realm.',
   meteor: 'Razes a share of all buildings, everywhere.',
@@ -402,7 +407,7 @@ export default function AdminPortal() {
                     const soon = arrivingSoon(a.arrives_at)
                     return (
                       <tr key={a.id} style={ROW}>
-                        <td style={TD}>{dot(a.color)} <span style={{ marginLeft: 6 }}>{a.username.replace(/^BOT_/, '🤖 ')}</span></td>
+                        <td style={TD}>{dot(a.color)} <span style={{ marginLeft: 6 }}>{a.username.startsWith('BOT_') ? <><BotIcon size={13} /> {a.username.slice(4)}</> : a.username}</span></td>
                         <td style={{ ...TD, color: '#8a7a9a' }}>{a.type}</td>
                         <td style={{ ...TD, color: '#ff8a6a' }}>{a.quantity}</td>
                         <td style={{ ...TD, fontFamily: 'monospace', color: '#6a5878' }}>{hex(a.from_hex)}</td>
@@ -430,7 +435,7 @@ export default function AdminPortal() {
               return (
                 <div key={type} style={{ ...CARD_STYLE }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
-                    <span style={{ fontSize: 22 }}>{EVENT_ICON[type] || '✦'}</span>
+                    <GmEventIcon type={type} size={22} />
                     <span style={{ fontSize: 17, color: eventColor(type), fontFamily: 'Georgia, serif' }}>{def.name}</span>
                   </div>
                   <div style={{ fontSize: 12, color: '#8a7a9a', minHeight: 32, marginBottom: 12 }}>{EVENT_DESC[type]}</div>
@@ -462,7 +467,7 @@ export default function AdminPortal() {
             : <div style={{ ...CARD_STYLE, padding: 0 }}>
               {eventLog.map((e, i) => (
                 <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 16px', borderTop: i ? '1px solid rgba(74,58,122,0.2)' : 'none' }}>
-                  <span style={{ fontSize: 16 }}>{EVENT_ICON[e.type] || '✦'}</span>
+                  <GmEventIcon type={e.type} size={16} />
                   <span style={{ flex: 1, fontSize: 13, color: '#c9b99a' }}>{e.headline}</span>
                   {e.notified > 0 && <span style={{ fontSize: 11, color: '#6a9a6a' }}>{e.notified} notified</span>}
                   <span style={{ fontSize: 11, color: '#6a5878', width: 70, textAlign: 'right' }}>{ago(e.at)}</span>

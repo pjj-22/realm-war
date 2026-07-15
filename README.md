@@ -78,10 +78,10 @@ npm run dev            # Vite on port 5173
 
 ## Configuration
 
-`server/config.js` has a `DEV_MODE` flag at the top:
+`server/config.js` derives a `DEV_MODE` flag from the environment:
 
 ```js
-export const DEV_MODE = true
+export const DEV_MODE = process.env.DEV_MODE !== 'false'
 ```
 
 | Setting | Dev | Prod |
@@ -92,7 +92,7 @@ export const DEV_MODE = true
 | Starting gold | 9999 | 100 |
 | Gold cap | effectively unlimited | 500 + 100/hex |
 
-`DEV_MODE` defaults to `true`; set the environment variable `DEV_MODE=false` before deploying (no code edit needed).
+`DEV_MODE` defaults to `true`; production (`NODE_ENV=production`) refuses to boot unless `DEV_MODE=false` is set explicitly. Full deployment guide: `server/DEPLOY.md`.
 
 ## Sounds
 

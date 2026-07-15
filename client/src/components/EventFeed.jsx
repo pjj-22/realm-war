@@ -7,7 +7,8 @@ import { stripEmoji } from '../text.js'
 import {
   TrophyIcon, SkullIcon, CheckIcon, FallenCrownIcon, BowIcon, FlameIcon,
   CrownIcon, GoldIcon, LeafIcon, BannerIcon, BellIcon, BellOffIcon,
-  SpeakerIcon, SpeakerOffIcon, ScrollIcon,
+  SpeakerIcon, SpeakerOffIcon, ScrollIcon, SwordsIcon,
+  PlagueIcon, MeteorIcon, FamineIcon, RevoltIcon, TentIcon,
 } from './Icons'
 import { toast } from './Toast'
 
@@ -23,6 +24,16 @@ const TYPE_ICONS = {
   plunder:           GoldIcon,
   decay:             LeafIcon,
   season:            BannerIcon,
+  // World events (The Herald)
+  battle:            SwordsIcon,
+  capital:           FallenCrownIcon,
+  crown_lost:        FallenCrownIcon,
+  plague:            PlagueIcon,
+  meteor:            MeteorIcon,
+  gold_rush:         GoldIcon,
+  famine:            FamineIcon,
+  marauder_surge:    TentIcon,
+  revolt:            RevoltIcon,
 }
 
 function EventIcon({ type, size = 14 }) {

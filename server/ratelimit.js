@@ -12,7 +12,9 @@ setInterval(() => {
 
 export function rateLimit({ windowMs, max, key, message = 'Slow down - too many requests' }) {
   return (req, res, next) => {
-    const k = key ? key(req) : (req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'unknown')
+    // req.ip respects Express "trust proxy" - never key on raw x-forwarded-for,
+    // which clients can spoof to mint themselves fresh buckets
+    const k = key ? key(req) : (req.ip || req.socket.remoteAddress || 'unknown')
     const now = Date.now()
     let bucket = buckets.get(k)
     if (!bucket || now > bucket.reset) {

@@ -8,6 +8,8 @@ RealmWar is a persistent real-time multiplayer strategy game on a real-world map
 
 Two independent npm packages: `server/` (Node/Express + Socket.io + PostgreSQL, ES modules, no ORM) and `client/` (React 19 + Vite + MapLibre GL). Game design doc: `docs/design.md`.
 
+**Deploying**: `server/DEPLOY.md` is the droplet guide (systemd, nginx, TLS, env); `PRODTODO.md` tracks go-live status. Production boot (`NODE_ENV=production`) refuses to start unless `DEV_MODE=false`, real (non-placeholder) `JWT_SECRET`/`ADMIN_SECRET`, and `CLIENT_ORIGIN` are set — CORS locks to `CLIENT_ORIGIN`, admin routes are rate-limited with a timing-safe secret compare, and the rate limiter keys off `req.ip` (`TRUST_PROXY=1` behind a proxy).
+
 ## Commands
 
 ```bash

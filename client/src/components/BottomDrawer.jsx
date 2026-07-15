@@ -354,8 +354,8 @@ export default function BottomDrawer({ hex, player, stats, onClaim, onLoginRequi
   // ── tab panels ───────────────────────────────────────────────
 
   function TerritoryPanel() {
-    const ZONE_BONUS = 2 // keep in sync with server ZONE_BONUS_PER_HEX
     const inZone = !!hex.zone_city
+    const ZONE_BONUS = hex.zone_bonus ?? 2 // server value from click enrichment; 2 = fallback
     const troops = Object.entries(troopMap).filter(([, n]) => n > 0)
     const totalTroops = troops.reduce((s, [, n]) => s + n, 0)
     const totalIncome = income.gold + (hex.strategic_bonus || 0) + (inZone ? ZONE_BONUS : 0)

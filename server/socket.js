@@ -2,16 +2,13 @@ import { Server } from 'socket.io'
 
 let io = null
 
-export function initSocket(httpServer) {
+export function initSocket(httpServer, origin = '*') {
   io = new Server(httpServer, {
-    cors: { origin: '*' },
+    cors: { origin },
   })
 
   io.on('connection', (socket) => {
-    console.log(`[socket] client connected: ${socket.id}`)
-    socket.on('disconnect', () => {
-      console.log(`[socket] client disconnected: ${socket.id}`)
-    })
+    socket.on('disconnect', () => {})
   })
 
   return io
