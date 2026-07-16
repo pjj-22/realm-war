@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { api } from '../api/client'
-import { GoldIcon, PickaxeIcon, SwordsIcon, ShieldIcon } from './Icons'
+import { GoldIcon, PickaxeIcon, SwordsIcon, ShieldIcon, GearIcon } from './Icons'
 import { MineArt, BarracksArt, FortArt, BuildingIcon } from './BuildingArt'
 import { useIsMobile } from '../hooks/useIsMobile'
 import { useSocket } from '../hooks/useSocket'
@@ -609,7 +609,7 @@ export default function BottomDrawer({ hex, player, stats, onClaim, onLoginRequi
                   <Btn onClick={() => onMarchStart?.(hex.h3, { troop: totalTroops })} danger>
                     → March All ({totalTroops})
                   </Btn>
-                  <Btn onClick={() => setTab('military')} muted>⚙ More</Btn>
+                  <Btn onClick={() => setTab('military')} muted><GearIcon size={12} /> More</Btn>
                 </>
               )}
             </div>

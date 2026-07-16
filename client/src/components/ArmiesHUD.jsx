@@ -4,7 +4,7 @@ import { api } from '../api/client'
 import { useIsMobile } from '../hooks/useIsMobile'
 import { toast } from './Toast'
 import { TroopFigure } from './BuildingArt'
-import { SwordsIcon } from './Icons'
+import { SwordsIcon, WarningIcon } from './Icons'
 
 
 function parseTypes(types) {
@@ -159,7 +159,7 @@ export default function ArmiesHUD({ armies, activeBattles = [], player, claimedR
             {ownedHexes.length}▲
           </span>
         )}
-        {threats.length > 0 && <span style={{ color: '#ff6060', fontSize: 12 }}>⚠{threats.length}</span>}
+        {threats.length > 0 && <span style={{ color: '#ff6060', fontSize: 12 }}><WarningIcon size={12} color="#ff6060" />{threats.length}</span>}
         {activeBattles.length > 0 && <span style={{ color: '#ff4444', fontSize: 12 }}><SwordsIcon size={11} color="#ff4444" />{activeBattles.length}</span>}
       </button>
 
@@ -177,7 +177,7 @@ export default function ArmiesHUD({ armies, activeBattles = [], player, claimedR
           {/* Threats */}
           {threats.length > 0 && (
             <>
-              <SectionLabel color="#c06060">⚠ Incoming ({threats.length})</SectionLabel>
+              <SectionLabel color="#c06060"><WarningIcon size={12} color="#c06060" /> Incoming ({threats.length})</SectionLabel>
               {threats.map(a => (
                 <MarchRow key={a.id} army={a} isOwn={false} canRecall={false} showDistance />
               ))}

@@ -359,3 +359,26 @@ export function RevoltIcon({ size = 14, color = '#c07050' }) {
     </Svg>
   )
 }
+
+// Warning triangle - replaces ⚠ (renders as color emoji on some platforms)
+export function WarningIcon({ size = 14, color = '#e0a040' }) {
+  return (
+    <Svg size={size}>
+      <path d="M8 2.2 14.4 13.3H1.6Z" fill="none" stroke={color} strokeWidth="1.4" strokeLinejoin="round" />
+      <line x1="8" y1="6.2" x2="8" y2="9.6" stroke={color} strokeWidth="1.5" strokeLinecap="round" />
+      <circle cx="8" cy="11.6" r="0.9" fill={color} />
+    </Svg>
+  )
+}
+
+// Gear - replaces ⚙ (renders as color emoji on some platforms)
+export function GearIcon({ size = 14, color = '#c9b99a' }) {
+  return (
+    <Svg size={size}>
+      <g stroke={color} strokeWidth="1.4" strokeLinecap="round" fill="none">
+        <circle cx="8" cy="8" r="3" />
+        <path d="M8 1.8v2.2M8 12v2.2M1.8 8H4M12 8h2.2M3.6 3.6l1.6 1.6M10.8 10.8l1.6 1.6M12.4 3.6l-1.6 1.6M5.2 10.8l-1.6 1.6" />
+      </g>
+    </Svg>
+  )
+}

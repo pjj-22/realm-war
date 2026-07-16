@@ -16,7 +16,7 @@ import SeasonPanel, { SeasonChip, SeasonEndOverlay } from './SeasonPanel'
 import { useResourceTicker } from '../hooks/useResourceTicker'
 import { useIsMobile } from '../hooks/useIsMobile'
 import { api } from '../api/client'
-import { GoldIcon, SearchIcon, AllianceIcon, SwordsIcon } from './Icons'
+import { GoldIcon, SearchIcon, AllianceIcon, SwordsIcon, WarningIcon } from './Icons'
 
 
 const HEX_RESOLUTION = 7
@@ -612,6 +612,7 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
             ['>', ['get', 'troop_count'], 0], ['to-string', ['get', 'troop_count']],
             ''
           ],
+          'text-font': ['Noto Sans Regular'],
           'text-size': 15,
           'text-allow-overlap': false,
           'text-anchor': 'left',
@@ -684,7 +685,7 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
           'circle-color': ['get', 'color'],
           'circle-opacity': 0.9,
           'circle-stroke-width': 2,
-          'circle-stroke-color': ['case', ['get', 'isEnemy'], '#ff4444', '#ffffff'],
+          'circle-stroke-color': ['case', ['==', ['get', 'isEnemy'], 1], '#ff4444', '#ffffff'],
         },
       })
       map.current.addLayer({
@@ -694,6 +695,7 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
         minzoom: 5,
         layout: {
           'text-field': ['get', 'label'],
+          'text-font': ['Noto Sans Regular'],
           'text-size': 12,
           'text-anchor': 'left',
           'text-offset': [0.55, 0.05],
@@ -760,6 +762,7 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
             '\n+', ['to-string', ['get', 'bonus_gold']], 'g',
             ['case', ['boolean', ['get', 'zone'], false], ' +zone', ''],
           ],
+          'text-font': ['Noto Sans Regular'],
           'text-size': ['interpolate', ['linear'], ['zoom'], 4, 9, 8, 13],
           'text-allow-overlap': false,
           'text-anchor': 'center',
@@ -1233,7 +1236,7 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
               </span>
               {goldCap !== null && (goldOverCap || !isMobile) && (
                 <span style={{ fontSize: 11, color: goldOverCap ? '#8a5818' : '#7a6890' }}>
-                  {goldOverCap ? '⚠' : `/ ${goldCap}`}
+                  {goldOverCap ? <WarningIcon size={11} color="#e8a020" /> : `/ ${goldCap}`}
                 </span>
               )}
               {stats && !isMobile && <GoldIncomeTooltip hexCount={stats.hex_count || 0} mines={stats.mines || 0} incomeByCountry={stats.income_by_country} />}
@@ -1321,7 +1324,8 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
       {/* ── City-zone legend ─────────────────────────────────────── */}
       {zoom >= 5 && !isMobile && (
         <div style={{
-          position: 'absolute', bottom: 16, left: 16, pointerEvents: 'none',
+          // chat bubble (ChatPanel) occupies bottom-left 16px when logged in
+          position: 'absolute', bottom: 16, left: player ? 74 : 16, pointerEvents: 'none',
           display: 'flex', alignItems: 'center', gap: 8,
           background: 'rgba(20,15,40,0.82)', border: '1px solid rgba(224,184,74,0.35)',
           borderRadius: 6, padding: '6px 11px',
