@@ -2,7 +2,7 @@ import { Router } from 'express'
 import { pool, withTransaction, httpError } from '../db.js'
 import { requireAuth } from '../auth.js'
 import { gridDistance } from 'h3-js'
-import { TROOP_STATS, OCEAN_MARCH_MULTIPLIER, BUILDING_TIME_SECONDS, PROJECTION_GARRISON, PROJECTION_EMPIRE } from '../config.js'
+import { TROOP_STATS, OCEAN_MARCH_MULTIPLIER, BUILDING_TIME_SECONDS, NO_BARRACKS_TRAIN_MULT, PROJECTION_GARRISON, PROJECTION_EMPIRE } from '../config.js'
 import { getIO } from '../socket.js'
 import { isOcean } from '../terrain.js'
 import { notifyIncomingAttack } from '../notify.js'
@@ -45,14 +45,15 @@ router.post('/train', requireAuth, async (req, res) => {
       const current = player.rows[0].gold
       if (current < totalGold) throw httpError(400, `Need ${totalGold}g, have ${current}g`)
 
-      // Check for barracks (halves train time)
+      // Barracks halves train time; without one training runs at
+      // NO_BARRACKS_TRAIN_MULT × base (10× slower than a barracks hex)
       const building = await tx.query(
         'SELECT type, created_at FROM buildings WHERE h3_index=$1', [h3Index]
       )
       const hasBarracks = building.rows.some(b =>
         b.type === 'barracks' && (Date.now() - new Date(b.created_at).getTime() >= BUILDING_TIME_SECONDS * 1000)
       )
-      const trainMinutes = hasBarracks ? stats.trainMinutes / 2 : stats.trainMinutes
+      const trainMinutes = hasBarracks ? stats.trainMinutes / 2 : stats.trainMinutes * NO_BARRACKS_TRAIN_MULT
 
       // Chain after the last queued job on this hex so jobs don't overlap
       const lastJob = await tx.query(

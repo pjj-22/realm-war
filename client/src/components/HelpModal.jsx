@@ -95,8 +95,8 @@ export default function HelpModal({ onClose }) {
           <div style={S.sectionTitle}>Getting Started</div>
           <Row icon={<b style={{ color: '#b08040' }}>1</b>} label="Claim your first hex"
             desc="Click any unclaimed hex on the map and claim it. This becomes your capital. You start with troops already stationed there." />
-          <Row icon={<b style={{ color: '#b08040' }}>2</b>} label="Build on your hex"
-            desc="Open the Buildings tab. Each hex holds one building - choose Mine for income, Barracks to train more troops, or Fort for defense." />
+          <Row icon={<b style={{ color: '#b08040' }}>2</b>} label="Build on your hexes"
+            desc="Your capital comes with a free Mine, and each hex holds one building. As you claim more hexes, add Mines for income, a Barracks for fast training, or Forts for defense." />
           <Row icon={<b style={{ color: '#b08040' }}>3</b>} label="March your troops"
             desc="Go to the Military tab. Select how many troops to send, click March, then click the target hex on the map." />
         </div>
@@ -113,8 +113,8 @@ export default function HelpModal({ onClose }) {
           <div style={S.sectionTitle}>Buildings - one per hex</div>
           <Row icon={<PickaxeIcon size={15} />} label="Mine - +3 gold/tick"
             desc="The backbone of your economy. Build these on as many hexes as you can." />
-          <Row icon={<KeepIcon size={15} />} label="Barracks - enables training"
-            desc="Required to train new troops on that hex. Without one, you can't recruit soldiers there." />
+          <Row icon={<KeepIcon size={15} />} label="Barracks - 10× faster training"
+            desc="You can train anywhere you hold, but without a barracks recruits trickle in painfully slowly. A barracks speeds training tenfold on that hex." />
           <Row icon={<ShieldIcon size={15} />} label="Fort - +40% defender strength"
             desc="Makes your troops significantly harder to defeat when defending that hex." />
         </div>
@@ -161,7 +161,7 @@ export default function HelpModal({ onClose }) {
 
         <div style={S.section}>
           <div style={S.sectionTitle}>Tips</div>
-          <div style={S.tip}>Build a Mine on your capital first - gold is everything early on.</div>
+          <div style={S.tip}>Your capital starts with a free Mine - claim nearby hexes early and get a Barracks up fast.</div>
           <div style={S.tip}>Raid the marauder camps near your capital for early gold.</div>
           <div style={S.tip}>Always keep some troops at home. An empty hex is easy to capture.</div>
           <div style={S.tip}>Forts are cheap and make your hexes much harder to take.</div>

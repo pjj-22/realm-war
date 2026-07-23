@@ -28,8 +28,8 @@ const BUILDING_DEFS = [
   },
   {
     type: 'barracks', label: 'Barracks', color: '#a84040', goldCost: 10,
-    effect: 'Enables training · halves train time',
-    desc: 'Without a barracks you cannot train troops on this hex. Building one also cuts all training times in half. Only one barracks per hex.',
+    effect: '10× faster troop training',
+    desc: 'Troops train 10× faster on a hex with a barracks. Only one barracks per hex.',
   },
   {
     type: 'fort', label: 'Fort', color: '#5a9840', goldCost: 10,
@@ -836,7 +836,7 @@ export default function BottomDrawer({ hex, player, stats, onClaim, onLoginRequi
                 padding: '4px 10px', borderRadius: 3, fontSize: 14, fontFamily: 'Georgia, serif', cursor: 'pointer',
                 background: trainQty === n ? 'rgba(180,130,30,0.3)' : 'rgba(255,255,255,0.04)',
                 border: `1px solid ${trainQty === n ? 'rgba(200,150,40,0.6)' : 'rgba(255,255,255,0.09)'}`,
-                color: trainQty === n ? '#d4b870' : '#6a5848',
+                color: trainQty === n ? '#d4b870' : '#9a8468',
               }}>{n}</button>
             ))}
           </div>
@@ -844,8 +844,8 @@ export default function BottomDrawer({ hex, player, stats, onClaim, onLoginRequi
             Train {trainQty}
           </Btn>
           {!buildingData?.buildings?.some(b => b.type === 'barracks') && (
-            <div style={{ fontSize: 14, color: '#8a6040', marginTop: 8 }}>
-              Build a Barracks first to train troops here.
+            <div style={{ fontSize: 14, color: '#a3764e', marginTop: 8 }}>
+              No Barracks - training here is 10× slower.
             </div>
           )}
 
@@ -938,20 +938,21 @@ export default function BottomDrawer({ hex, player, stats, onClaim, onLoginRequi
         <>
           <div style={{
             display: 'flex', alignItems: 'flex-end', gap: 2,
-            padding: isMobile ? '8px 16px 0' : '10px 28px 0',
+            padding: isMobile ? '8px 12px 0' : '10px 28px 0',
             borderBottom: '1px solid rgba(160,110,30,0.2)',
+            overflowX: 'auto',
           }}>
             {tabs.map(t => (
               <button key={t} onClick={() => setTab(t)} style={{
-                padding: isMobile ? '10px 16px 12px' : '8px 20px 10px',
+                padding: isMobile ? '10px 12px 12px' : '8px 20px 10px',
                 background: tab === t ? 'rgba(160,110,30,0.12)' : 'none',
                 border: tab === t ? '1px solid rgba(160,110,30,0.3)' : '1px solid transparent',
                 borderBottom: tab === t ? '1px solid rgba(18,12,4,0.98)' : '1px solid transparent',
                 borderRadius: '6px 6px 0 0',
-                color: tab === t ? '#e0c070' : '#6a5838',
-                cursor: 'pointer', fontSize: 14, letterSpacing: 3,
+                color: tab === t ? '#e0c070' : '#94805c',
+                cursor: 'pointer', fontSize: isMobile ? 13 : 14, letterSpacing: isMobile ? 1.5 : 3,
                 textTransform: 'uppercase', fontFamily: 'Georgia, serif',
-                marginBottom: -1,
+                marginBottom: -1, whiteSpace: 'nowrap',
               }}>
                 {t}
               </button>

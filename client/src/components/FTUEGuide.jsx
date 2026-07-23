@@ -10,15 +10,9 @@ const STEPS = [
     icon: BannerIcon,
   },
   {
-    id: 'build',
-    title: 'Build a Barracks',
-    body: 'Click your hex → Buildings tab → build a Barracks. It unlocks troop training and halves train time. You already have a free Mine for gold income.',
-    icon: KeepIcon,
-  },
-  {
     id: 'train',
     title: 'Train your troops',
-    body: 'Open the Military tab on your hex and train some troops. They\'ll be ready in seconds.',
+    body: 'Open the Military tab on your hex and queue some troops. Training is slow without a Barracks - we\'ll fix that next.',
     icon: SwordsIcon,
   },
   {
@@ -26,6 +20,12 @@ const STEPS = [
     title: 'Expand your empire',
     body: 'Select troops in the Military tab, hit March, then click an adjacent hex. Claim it to grow your territory.',
     icon: BoltIcon,
+  },
+  {
+    id: 'build',
+    title: 'Build a Barracks',
+    body: 'Each hex holds one building, and your capital\'s slot is taken by its free Mine. On a hex you just claimed, open Buildings and add a Barracks - troops train 10× faster there.',
+    icon: KeepIcon,
   },
 ]
 
@@ -38,7 +38,7 @@ export default function FTUEGuide({ player, onDismiss }) {
   // Auto-advance from 'claim' step once player has a capital hex
   useEffect(() => {
     if (stepId === 'claim' && player?.capital_hex) {
-      advance('build')
+      advance('train')
     }
   }, [player?.capital_hex, stepId])
 
