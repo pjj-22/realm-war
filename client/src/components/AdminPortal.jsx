@@ -284,7 +284,7 @@ export default function AdminPortal() {
   const bots = players.filter(p => p.username.startsWith('BOT_'))
 
   return (
-    <div style={{ minHeight: '100vh', background: '#0a0818', color: '#c9b99a', fontFamily: 'Georgia, serif', padding: '24px 32px' }}>
+    <div style={{ height: '100vh', overflowY: 'auto', background: '#0a0818', color: '#c9b99a', fontFamily: 'Georgia, serif', padding: '24px 32px' }}>
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20, flexWrap: 'wrap', gap: 10 }}>
         <div>

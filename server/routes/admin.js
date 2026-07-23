@@ -147,12 +147,11 @@ router.get('/players', async (req, res) => {
     const result = await pool.query(`
       SELECT p.id, p.username, p.color, p.gold, p.capital_hex, p.login_streak,
         p.last_login_date, p.created_at,
-        COUNT(DISTINCT h.h3_index)::integer AS hex_count,
-        COALESCE(SUM(t.quantity), 0)::integer AS total_troops
+        COALESCE(h.hex_count, 0)::integer AS hex_count,
+        COALESCE(t.total_troops, 0)::integer AS total_troops
       FROM players p
-      LEFT JOIN hexes h ON h.owner_id = p.id
-      LEFT JOIN troops t ON t.owner_id = p.id
-      GROUP BY p.id
+      LEFT JOIN (SELECT owner_id, COUNT(*) AS hex_count FROM hexes GROUP BY owner_id) h ON h.owner_id = p.id
+      LEFT JOIN (SELECT owner_id, SUM(quantity) AS total_troops FROM troops GROUP BY owner_id) t ON t.owner_id = p.id
       ORDER BY hex_count DESC, p.gold DESC
     `)
     res.json(result.rows)
@@ -248,6 +247,7 @@ router.post('/event', async (req, res) => {
     io?.emit('armies:update')
     io?.emit('events:new')
     io?.emit('world:new')
+    io?.emit('tick') // gold/troops changed (famine, gold rush, plague) - refresh the resource bar
     res.json(result)
   } catch (err) { res.status(400).json({ error: err.message }) }
 })
