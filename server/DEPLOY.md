@@ -79,6 +79,7 @@ cat > .env.production <<EOF
 VITE_MAPBOX_TOKEN=<your token>
 VITE_API_URL=https://yourdomain.com
 VITE_SOCKET_URL=https://yourdomain.com
+VITE_PUBLIC_URL=https://yourdomain.com
 EOF
 npm ci && npm run build         # → dist/
 cp -r dist/* /var/www/realmwar/
