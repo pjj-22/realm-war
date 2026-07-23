@@ -31,9 +31,15 @@ export function resolveRound(atkStr, defStr, damageRate) {
   return { atkDmg, defDmg, newAtkStr, newDefStr, over, attackerWon: over ? newAtkStr > newDefStr : null }
 }
 
-// Troops the winning side keeps after a decisive round: proportional to the fraction
-// of strength that survived. Guards keep it at 0 for empty/annihilated stacks.
-export function survivorCount(totalQty, remainingStr, originalStr) {
+// Real troop count remaining after a strength pool shrinks from originalStr to
+// remainingStr - proportional to the fraction of strength that survived.
+// Called every round (not just at the end) so troop counts stay in lockstep
+// with strength no matter how many rounds pass or how often a side is
+// reinforced. Returns a fraction on purpose - round only where a whole troop
+// count is actually needed (e.g. the final deposit), not on every round, or
+// rounding error compounds round over round. Guards keep it at 0 for
+// empty/annihilated stacks.
+export function decayTroops(totalQty, remainingStr, originalStr) {
   if (totalQty <= 0 || originalStr <= 0 || remainingStr <= 0) return 0
-  return Math.round(totalQty * (remainingStr / originalStr))
+  return totalQty * (remainingStr / originalStr)
 }

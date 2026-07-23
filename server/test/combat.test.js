@@ -3,7 +3,7 @@
 // a regression here is a live-game exploit (invincible defenders, doubled survivors).
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { defenseMultiplier, resolveRound, survivorCount } from '../combat.js'
+import { defenseMultiplier, resolveRound, decayTroops } from '../combat.js'
 
 // Real balance constants (config.js / strategic.js) - kept explicit so the tests
 // document the intended numbers, and break loudly if someone retunes them by accident.
@@ -78,18 +78,21 @@ test('resolveRound: attacker wins when it ends with more strength', () => {
   assert.equal(r.newDefStr, 0)
 })
 
-test('survivorCount: proportional to fraction of strength surviving', () => {
+test('decayTroops: proportional to fraction of strength surviving', () => {
   // 100 troops, strength fell 200 -> 150 => 75% survive => 75
-  assert.equal(survivorCount(100, 150, 200), 75)
+  assert.equal(decayTroops(100, 150, 200), 75)
 })
 
-test('survivorCount: rounds to whole troops', () => {
-  assert.equal(survivorCount(10, 1, 3), 3) // 10 * 1/3 = 3.33 -> 3
-  assert.equal(survivorCount(10, 2, 3), 7) // 10 * 2/3 = 6.66 -> 7
+test('decayTroops: returns the precise fraction, not rounded', () => {
+  // Called every round now, not just once at the end - rounding here would
+  // compound error round over round on a long battle. Callers round only
+  // where a whole troop count is actually needed (the final deposit).
+  assert.ok(near(decayTroops(10, 1, 3), 10 / 3))   // 3.333...
+  assert.ok(near(decayTroops(10, 2, 3), 20 / 3))   // 6.666...
 })
 
-test('survivorCount: guards return 0 for empty or annihilated stacks', () => {
-  assert.equal(survivorCount(0, 50, 100), 0)  // no troops
-  assert.equal(survivorCount(100, 0, 100), 0) // no strength left
-  assert.equal(survivorCount(100, 50, 0), 0)  // no original strength (avoid /0)
+test('decayTroops: guards return 0 for empty or annihilated stacks', () => {
+  assert.equal(decayTroops(0, 50, 100), 0)  // no troops
+  assert.equal(decayTroops(100, 0, 100), 0) // no strength left
+  assert.equal(decayTroops(100, 50, 0), 0)  // no original strength (avoid /0)
 })

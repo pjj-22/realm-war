@@ -1,7 +1,7 @@
 import { pool } from './db.js'
 import {
   DEV_MODE,
-  TICK_INTERVAL_MS, BATTLE_ROUND_DAMAGE_RATE, FORT_DEFENSE_BONUS,
+  TICK_INTERVAL_MS, BATTLE_ROUND_DAMAGE_RATE, BATTLE_INTERVAL_MS, FORT_DEFENSE_BONUS,
   GOLD_CAP_BASE, GOLD_CAP_PER_HEX, GOLD_CAP_PER_MINE, BUILDING_TIME_SECONDS,
   OCEAN_MARCH_MULTIPLIER, TROOP_STATS,
   ENTRENCH_BONUS_PER_NEIGHBOR, ENTRENCH_MAX_NEIGHBORS,
@@ -17,13 +17,27 @@ import { isOcean } from './terrain.js'
 import { sendPush } from './push.js'
 import { STRATEGIC_HEXES, STRATEGIC_BONUS_GOLD, STRATEGIC_DEFENSE_BONUS, CAPITAL_COUNTRY, CITY_ZONES, ZONE_BONUS_PER_HEX } from './strategic.js'
 import { getCountry } from './countries.js'
-import { defenseMultiplier, resolveRound, survivorCount } from './combat.js'
+import { defenseMultiplier, resolveRound, decayTroops } from './combat.js'
 
 // Per-tick/per-battle chatter is dev-only; errors always log via console.error
 const log = DEV_MODE ? console.log : () => {}
 
 function isNPC(username) {
   return username?.startsWith('BOT_') || username?.startsWith('WILD_')
+}
+
+// Flat per-hex gold bonus for owning any hex in a given list (city zones,
+// wonders). Single batched UPDATE: one round-trip regardless of player count.
+async function applyPerHexBonus(hexList, bonusPerHex) {
+  if (hexList.length === 0) return
+  await pool.query(`
+    UPDATE players p SET gold = gold + z.n * $2
+    FROM (
+      SELECT owner_id, COUNT(*)::int AS n FROM hexes
+      WHERE owner_id IS NOT NULL AND h3_index = ANY($1) GROUP BY owner_id
+    ) z
+    WHERE p.id = z.owner_id
+  `, [hexList, bonusPerHex])
 }
 
 function isWild(username) {
@@ -59,7 +73,7 @@ export async function insertWorldEvent(type, message, hexIndex = null, playerId 
 async function sameAlliance(aId, bId) {
   if (!aId || !bId || aId === bId) return false
   try {
-    const r = await pool.query('SELECT alliance_id FROM players WHERE id = ANY($1)', [[aId, bId]])
+    const r = await pool.query('SELECT alliance_id FROM players WHERE id IN ($1, $2)', [aId, bId])
     if (r.rows.length < 2) return false
     return r.rows[0].alliance_id != null && r.rows[0].alliance_id === r.rows[1].alliance_id
   } catch {
@@ -69,7 +83,6 @@ async function sameAlliance(aId, bId) {
 
 const COMBAT_INTERVAL_MS = 15 * 1000
 const TRAINING_INTERVAL_MS = 15 * 1000
-const BATTLE_INTERVAL_MS = 15 * 1000
 const BASE_RATE = { gold: 1 }
 
 export async function runTick() {
@@ -116,17 +129,7 @@ export async function runTick() {
 
     // City zone income - each owned hex inside a city's zone pays a flat bonus.
     // Legible and fair across uneven country sizes; replaces the old 1.1^N territory bonus.
-    // Single batched UPDATE: one round-trip regardless of player count.
-    if (CITY_ZONES.size > 0) {
-      await pool.query(`
-        UPDATE players p SET gold = gold + z.n * $2
-        FROM (
-          SELECT owner_id, COUNT(*)::int AS n FROM hexes
-          WHERE owner_id IS NOT NULL AND h3_index = ANY($1) GROUP BY owner_id
-        ) z
-        WHERE p.id = z.owner_id
-      `, [Array.from(CITY_ZONES.keys()), ZONE_BONUS_PER_HEX])
-    }
+    await applyPerHexBonus(Array.from(CITY_ZONES.keys()), ZONE_BONUS_PER_HEX)
 
     if (CAPITAL_COUNTRY.size > 0) {
       const allHexes = await pool.query('SELECT h3_index, owner_id FROM hexes')
@@ -279,7 +282,49 @@ export async function processCombat() {
       const hexResult = await pool.query('SELECT owner_id FROM hexes WHERE h3_index=$1', [army.to_hex])
       const targetHex = hexResult.rows[0]
 
-      if (targetHex?.owner_id === army.owner_id) {
+      // A battle already raging at this hex takes priority over the normal
+      // own/ally/unclaimed/enemy routing below - the owner or an ally
+      // sending help is a reinforcement, not a deposit that gets silently
+      // wiped out by the DELETE FROM troops when the battle resolves.
+      const existingBattle = await pool.query(
+        "SELECT * FROM battles WHERE h3_index=$1 AND status='active'", [army.to_hex]
+      )
+
+      if (existingBattle.rows[0]) {
+        const battle = existingBattle.rows[0]
+        let side
+        if (army.owner_id === battle.attacker_id) side = 'attacker'
+        else if (army.owner_id === battle.defender_id) side = 'defender'
+        else if (await sameAlliance(army.owner_id, battle.defender_id)) side = 'defender'
+        else side = 'attacker' // unaffiliated third party joins the attacker
+
+        // Strength and troop count are tracked separately: attackers have no
+        // multiplier (troops === strength), but defenders fight at a bonus
+        // (forts/entrenchment/strategic) - reinforcements must get the SAME
+        // multiplier the original garrison got, frozen at battle start, or
+        // they'd silently fight under-strength next to their own allies.
+        const strAdded = side === 'attacker' ? army.quantity : army.quantity * Number(battle.def_multiplier)
+        if (side === 'attacker') {
+          await pool.query(
+            'UPDATE battles SET attacker_strength = attacker_strength + $1, attacker_troops = attacker_troops + $1 WHERE id=$2',
+            [army.quantity, battle.id]
+          )
+        } else {
+          await pool.query(
+            'UPDATE battles SET defender_strength = defender_strength + $1, defender_troops = defender_troops + $2 WHERE id=$3',
+            [strAdded, army.quantity, battle.id]
+          )
+        }
+        await pool.query(
+          'INSERT INTO battle_participants (battle_id, player_id, side, troop_type, quantity) VALUES ($1,$2,$3,$4,$5)',
+          [battle.id, army.owner_id, side, army.type, army.quantity]
+        )
+        await pool.query("UPDATE armies SET status='in_battle' WHERE id=$1", [army.id])
+        getIO()?.emit('battle:update')
+        getIO()?.emit('armies:update')
+        log(`[battle] reinforcement joined battle ${battle.id} as ${side} (+${army.quantity} troops, +${strAdded.toFixed(1)} str)`)
+
+      } else if (targetHex?.owner_id === army.owner_id) {
         // Own hex - deposit troops
         await depositTroops(army.owner_id, army.to_hex, army.type, army.quantity)
         await pool.query("UPDATE armies SET status='arrived' WHERE id=$1", [army.id])
@@ -310,106 +355,80 @@ export async function processCombat() {
         log(`[combat] ${army.owner_id} reinforced ally hex ${army.to_hex}`)
 
       } else {
-        // Enemy hex - attack strength is simply troop count
+        // Enemy hex, no battle yet - attack strength is simply troop count
         const attackStr = army.quantity
 
-        const existingBattle = await pool.query(
-          "SELECT * FROM battles WHERE h3_index=$1 AND status='active'", [army.to_hex]
+        const defenders = await pool.query(
+          'SELECT type, quantity FROM troops WHERE h3_index=$1', [army.to_hex]
         )
+        const fortsRes = await pool.query(
+          "SELECT COUNT(*) AS cnt FROM buildings WHERE h3_index=$1 AND type='fort' AND EXTRACT(EPOCH FROM NOW()) - EXTRACT(EPOCH FROM created_at) >= $2",
+          [army.to_hex, BUILDING_TIME_SECONDS]
+        )
+        const forts = Number(fortsRes.rows[0]?.cnt || 0)
+        const strategicBonus = STRATEGIC_HEXES.has(army.to_hex) ? STRATEGIC_DEFENSE_BONUS : 0
+        // Entrenchment - compact borders defend better
+        const neighbors = gridDisk(army.to_hex, 1).filter(h => h !== army.to_hex)
+        const friendly = await pool.query(
+          'SELECT COUNT(*)::int AS cnt FROM hexes WHERE h3_index = ANY($1) AND owner_id=$2',
+          [neighbors, targetHex.owner_id]
+        )
+        const defMultiplier = defenseMultiplier({
+          forts,
+          fortBonus: FORT_DEFENSE_BONUS,
+          strategicBonus,
+          friendlyNeighbors: friendly.rows[0].cnt,
+          entrenchPerNeighbor: ENTRENCH_BONUS_PER_NEIGHBOR,
+          entrenchMaxNeighbors: ENTRENCH_MAX_NEIGHBORS,
+        })
+        const defTroopCount = defenders.rows.reduce((s, t) => s + t.quantity, 0)
+        const defStr = defTroopCount * defMultiplier
 
-        if (existingBattle.rows[0]) {
-          // Join existing battle as reinforcement
-          const battle = existingBattle.rows[0]
-          let side
-          if (army.owner_id === battle.attacker_id) side = 'attacker'
-          else if (army.owner_id === battle.defender_id) side = 'defender'
-          else if (await sameAlliance(army.owner_id, battle.defender_id)) side = 'defender'
-          else side = 'attacker' // unaffiliated third party joins the attacker
-
-          const col = side === 'attacker' ? 'attacker_strength' : 'defender_strength'
-          await pool.query(`UPDATE battles SET ${col}=${col}+$1 WHERE id=$2`, [army.quantity, battle.id])
+        if (defStr === 0) {
+          // No defenders - take hex directly
+          const prevOwner = await pool.query('SELECT owner_id FROM hexes WHERE h3_index=$1', [army.to_hex])
+          await pool.query(
+            'UPDATE hexes SET owner_id=$1, claimed_at=NOW() WHERE h3_index=$2',
+            [army.owner_id, army.to_hex]
+          )
+          await depositTroops(army.owner_id, army.to_hex, army.type, army.quantity)
+          await pool.query("UPDATE armies SET status='arrived' WHERE id=$1", [army.id])
+          if (prevOwner.rows[0]?.owner_id) {
+            await insertEvent(prevOwner.rows[0].owner_id, 'hex_lost', `Your hex ${army.to_hex} was captured unopposed`, army.to_hex)
+          }
+          getIO()?.emit('hexes:update')
+          getIO()?.emit('armies:update')
+          log(`[combat] ${army.to_hex} taken unopposed`)
+        } else {
+          const battle = await pool.query(
+            `INSERT INTO battles (h3_index, attacker_id, defender_id, attacker_strength, defender_strength, attacker_troops, defender_troops, def_multiplier)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+            [army.to_hex, army.owner_id, targetHex.owner_id, attackStr, defStr, attackStr, defTroopCount, defMultiplier]
+          )
+          const bid = battle.rows[0].id
           await pool.query(
             'INSERT INTO battle_participants (battle_id, player_id, side, troop_type, quantity) VALUES ($1,$2,$3,$4,$5)',
-            [battle.id, army.owner_id, side, army.type, army.quantity]
+            [bid, army.owner_id, 'attacker', army.type, army.quantity]
           )
-          await pool.query("UPDATE armies SET status='in_battle' WHERE id=$1", [army.id])
-          getIO()?.emit('battle:update')
-          getIO()?.emit('armies:update')
-          log(`[battle] reinforcement joined battle ${battle.id} as ${side} (+${army.quantity} str)`)
-
-        } else {
-          // Start new battle
-          const defenders = await pool.query(
-            'SELECT type, quantity FROM troops WHERE h3_index=$1', [army.to_hex]
-          )
-          const fortsRes = await pool.query(
-            "SELECT COUNT(*) AS cnt FROM buildings WHERE h3_index=$1 AND type='fort' AND EXTRACT(EPOCH FROM (NOW() - created_at)) >= $2",
-            [army.to_hex, BUILDING_TIME_SECONDS]
-          )
-          const forts = Number(fortsRes.rows[0]?.cnt || 0)
-          const strategicBonus = STRATEGIC_HEXES.has(army.to_hex) ? STRATEGIC_DEFENSE_BONUS : 0
-          // Entrenchment - compact borders defend better
-          const neighbors = gridDisk(army.to_hex, 1).filter(h => h !== army.to_hex)
-          const friendly = await pool.query(
-            'SELECT COUNT(*)::int AS cnt FROM hexes WHERE h3_index = ANY($1) AND owner_id=$2',
-            [neighbors, targetHex.owner_id]
-          )
-          const defMultiplier = defenseMultiplier({
-            forts,
-            fortBonus: FORT_DEFENSE_BONUS,
-            strategicBonus,
-            friendlyNeighbors: friendly.rows[0].cnt,
-            entrenchPerNeighbor: ENTRENCH_BONUS_PER_NEIGHBOR,
-            entrenchMaxNeighbors: ENTRENCH_MAX_NEIGHBORS,
-          })
-          const defStr = defenders.rows.reduce((s, t) => s + t.quantity, 0) * defMultiplier
-
-          if (defStr === 0) {
-            // No defenders - take hex directly
-            const prevOwner = await pool.query('SELECT owner_id FROM hexes WHERE h3_index=$1', [army.to_hex])
-            await pool.query(
-              'UPDATE hexes SET owner_id=$1, claimed_at=NOW() WHERE h3_index=$2',
-              [army.owner_id, army.to_hex]
-            )
-            await depositTroops(army.owner_id, army.to_hex, army.type, army.quantity)
-            await pool.query("UPDATE armies SET status='arrived' WHERE id=$1", [army.id])
-            if (prevOwner.rows[0]?.owner_id) {
-              await insertEvent(prevOwner.rows[0].owner_id, 'hex_lost', `Your hex ${army.to_hex} was captured unopposed`, army.to_hex)
-            }
-            getIO()?.emit('hexes:update')
-            getIO()?.emit('armies:update')
-            log(`[combat] ${army.to_hex} taken unopposed`)
-          } else {
-            const battle = await pool.query(
-              `INSERT INTO battles (h3_index, attacker_id, defender_id, attacker_strength, defender_strength)
-               VALUES ($1,$2,$3,$4,$5) RETURNING *`,
-              [army.to_hex, army.owner_id, targetHex.owner_id, attackStr, defStr]
-            )
-            const bid = battle.rows[0].id
+          for (const t of defenders.rows) {
             await pool.query(
               'INSERT INTO battle_participants (battle_id, player_id, side, troop_type, quantity) VALUES ($1,$2,$3,$4,$5)',
-              [bid, army.owner_id, 'attacker', army.type, army.quantity]
+              [bid, targetHex.owner_id, 'defender', t.type, t.quantity]
             )
-            for (const t of defenders.rows) {
-              await pool.query(
-                'INSERT INTO battle_participants (battle_id, player_id, side, troop_type, quantity) VALUES ($1,$2,$3,$4,$5)',
-                [bid, targetHex.owner_id, 'defender', t.type, t.quantity]
-              )
-            }
-            await pool.query("UPDATE armies SET status='in_battle' WHERE id=$1", [army.id])
-
-            // Warn the defender - reinforcements can still turn the battle
-            const defenderInfo = await pool.query('SELECT username FROM players WHERE id=$1', [targetHex.owner_id])
-            const defName = defenderInfo.rows[0]?.username
-            if (!isNPC(defName)) {
-              insertEvent(targetHex.owner_id, 'under_attack', `Battle started at your hex - ${attackStr} enemy troops attacking`, army.to_hex)
-              sendPush(targetHex.owner_id, 'You are under attack!', `${attackStr} enemy troops are assaulting your territory. Send reinforcements!`, { hex: army.to_hex })
-            }
-
-            getIO()?.emit('battle:update')
-            getIO()?.emit('armies:update')
-            log(`[battle] started at ${army.to_hex}: ${attackStr} atk vs ${defStr.toFixed(1)} def`)
           }
+          await pool.query("UPDATE armies SET status='in_battle' WHERE id=$1", [army.id])
+
+          // Warn the defender - reinforcements can still turn the battle
+          const defenderInfo = await pool.query('SELECT username FROM players WHERE id=$1', [targetHex.owner_id])
+          const defName = defenderInfo.rows[0]?.username
+          if (!isNPC(defName)) {
+            insertEvent(targetHex.owner_id, 'under_attack', `Battle started at your hex - ${attackStr} enemy troops attacking`, army.to_hex)
+            sendPush(targetHex.owner_id, 'You are under attack!', `${attackStr} enemy troops are assaulting your territory. Send reinforcements!`, { hex: army.to_hex })
+          }
+
+          getIO()?.emit('battle:update')
+          getIO()?.emit('armies:update')
+          log(`[battle] started at ${army.to_hex}: ${attackStr} atk vs ${defStr.toFixed(1)} def`)
         }
       }
     }
@@ -425,14 +444,22 @@ export async function processBattleRounds() {
     for (const battle of active.rows) {
       const atkStr = Number(battle.attacker_strength)
       const defStr = Number(battle.defender_strength)
+      const atkTroops = Number(battle.attacker_troops)
+      const defTroops = Number(battle.defender_troops)
 
       const { atkDmg, defDmg, newAtkStr, newDefStr, over } = resolveRound(atkStr, defStr, BATTLE_ROUND_DAMAGE_RATE)
+      // Real troop counts decay by the same fraction their strength pool did
+      // this round, every round - not just reconstructed once at the end from
+      // an all-time participant total, which ignores losses from every round
+      // but the last and only gets worse the more reinforcement waves land.
+      const newAtkTroops = decayTroops(atkTroops, newAtkStr, atkStr)
+      const newDefTroops = decayTroops(defTroops, newDefStr, defStr)
 
       if (over) {
         // Battle over
         const attackerWon = newAtkStr > newDefStr
 
-        const pNames = await pool.query('SELECT id, username FROM players WHERE id = ANY($1)', [[battle.attacker_id, battle.defender_id]])
+        const pNames = await pool.query('SELECT id, username FROM players WHERE id IN ($1, $2)', [battle.attacker_id, battle.defender_id])
         const nameOf = new Map(pNames.rows.map(r => [r.id, r.username]))
         const atkName = nameOf.get(battle.attacker_id)
         const defName = nameOf.get(battle.defender_id)
@@ -443,34 +470,20 @@ export async function processBattleRounds() {
           await pool.query('DELETE FROM buildings WHERE h3_index=$1', [battle.h3_index])
           await pool.query('UPDATE hexes SET owner_id=$1, claimed_at=NOW() WHERE h3_index=$2',
             [battle.attacker_id, battle.h3_index])
-          if (newAtkStr > 0) {
-            const atk = await pool.query(
-              "SELECT SUM(quantity) AS qty FROM battle_participants WHERE battle_id=$1 AND side='attacker'",
-              [battle.id]
-            )
-            const totalAtkQty = Number(atk.rows[0]?.qty || 0)
-            const survivors = survivorCount(totalAtkQty, newAtkStr, atkStr)
-            if (survivors > 0) {
-              await depositTroops(battle.attacker_id, battle.h3_index, 'troop', survivors)
-              log(`[battle] ${battle.id} ATTACKER WINS at ${battle.h3_index} (${survivors} troops survive)`)
-            }
+          const atkSurvivors = Math.round(newAtkTroops)
+          if (atkSurvivors > 0) {
+            await depositTroops(battle.attacker_id, battle.h3_index, 'troop', atkSurvivors)
+            log(`[battle] ${battle.id} ATTACKER WINS at ${battle.h3_index} (${atkSurvivors} troops survive)`)
           } else {
             log(`[battle] ${battle.id} ATTACKER WINS at ${battle.h3_index} (no survivors)`)
           }
         } else {
           // Defender wins - restore defender remnants
           await pool.query('DELETE FROM troops WHERE h3_index=$1', [battle.h3_index])
-          if (newDefStr > 0) {
-            const def = await pool.query(
-              "SELECT SUM(quantity) AS qty FROM battle_participants WHERE battle_id=$1 AND side='defender'",
-              [battle.id]
-            )
-            const totalDefQty = Number(def.rows[0]?.qty || 0)
-            const survivors = survivorCount(totalDefQty, newDefStr, defStr)
-            if (survivors > 0) {
-              await depositTroops(battle.defender_id, battle.h3_index, 'troop', survivors)
-              log(`[battle] ${battle.id} DEFENDER WINS at ${battle.h3_index} (${survivors} troops survive)`)
-            }
+          const defSurvivors = Math.round(newDefTroops)
+          if (defSurvivors > 0) {
+            await depositTroops(battle.defender_id, battle.h3_index, 'troop', defSurvivors)
+            log(`[battle] ${battle.id} DEFENDER WINS at ${battle.h3_index} (${defSurvivors} troops survive)`)
           } else {
             log(`[battle] ${battle.id} DEFENDER WINS at ${battle.h3_index} (no survivors)`)
           }
@@ -510,8 +523,8 @@ export async function processBattleRounds() {
         }
 
         await pool.query(
-          "UPDATE battles SET status=$1, ended_at=NOW(), attacker_strength=$2, defender_strength=$3 WHERE id=$4",
-          [attackerWon ? 'attacker_won' : 'defender_won', newAtkStr, newDefStr, battle.id]
+          "UPDATE battles SET status=$1, ended_at=NOW(), attacker_strength=$2, defender_strength=$3, attacker_troops=$4, defender_troops=$5 WHERE id=$6",
+          [attackerWon ? 'attacker_won' : 'defender_won', newAtkStr, newDefStr, newAtkTroops, newDefTroops, battle.id]
         )
         await pool.query("UPDATE armies SET status='arrived' WHERE status='in_battle' AND to_hex=$1", [battle.h3_index])
         getIO()?.emit('battle:update')
@@ -523,10 +536,11 @@ export async function processBattleRounds() {
         await pool.query(`
           UPDATE battles SET
             attacker_strength=$1, defender_strength=$2,
-            attacker_losses=attacker_losses+$3, defender_losses=defender_losses+$4,
+            attacker_troops=$3, defender_troops=$4,
+            attacker_losses=attacker_losses+$5, defender_losses=defender_losses+$6,
             round_number=round_number+1, last_round_at=NOW()
-          WHERE id=$5
-        `, [newAtkStr, newDefStr, defDmg, atkDmg, battle.id])
+          WHERE id=$7
+        `, [newAtkStr, newDefStr, newAtkTroops, newDefTroops, defDmg, atkDmg, battle.id])
         getIO()?.emit('battle:update')
         log(`[battle] round ${battle.round_number + 1} at ${battle.h3_index}: ${newAtkStr.toFixed(1)} vs ${newDefStr.toFixed(1)}`)
       }

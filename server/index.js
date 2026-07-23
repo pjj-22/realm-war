@@ -93,6 +93,13 @@ async function runMigrations() {
   await pool.query('ALTER TABLE hexes ADD COLUMN IF NOT EXISTS rally_hex TEXT')
   await pool.query('ALTER TABLE training_queue ADD COLUMN IF NOT EXISTS delivered INTEGER NOT NULL DEFAULT 0')
 
+  // Real troop counts tracked alongside the multiplier-inclusive strength pools,
+  // so survivors can be computed round-by-round instead of reconstructed at the
+  // end from all-time participant totals (see tick.js processBattleRounds).
+  await pool.query('ALTER TABLE battles ADD COLUMN IF NOT EXISTS attacker_troops NUMERIC NOT NULL DEFAULT 0')
+  await pool.query('ALTER TABLE battles ADD COLUMN IF NOT EXISTS defender_troops NUMERIC NOT NULL DEFAULT 0')
+  await pool.query('ALTER TABLE battles ADD COLUMN IF NOT EXISTS def_multiplier NUMERIC NOT NULL DEFAULT 1')
+
   // battles.created_at is in schema.sql but older DBs only have the legacy started_at;
   // ensure the canonical column exists and backfill it from started_at where present
   await pool.query('ALTER TABLE battles ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()')
