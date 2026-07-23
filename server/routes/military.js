@@ -2,7 +2,7 @@ import { Router } from 'express'
 import { pool, withTransaction, httpError } from '../db.js'
 import { requireAuth } from '../auth.js'
 import { gridDistance } from 'h3-js'
-import { TROOP_STATS, OCEAN_MARCH_MULTIPLIER, BUILDING_TIME_SECONDS } from '../config.js'
+import { TROOP_STATS, OCEAN_MARCH_MULTIPLIER, BUILDING_TIME_SECONDS, PROJECTION_GARRISON, PROJECTION_EMPIRE } from '../config.js'
 import { getIO } from '../socket.js'
 import { isOcean } from '../terrain.js'
 import { notifyIncomingAttack } from '../notify.js'
@@ -175,15 +175,26 @@ router.delete('/rally/:h3Index', requireAuth, async (req, res) => {
   }
 })
 
-// Get all marching armies (for map display)
+// Get all marching armies (for map display). Same power-projection rule as
+// hexes: huge forces (or huge empires) can't hide - the client applies its own
+// fog-of-war filtering for everything else, with more leeway than hexes get
+// since a moving column is easier to spot than a quiet border.
 router.get('/armies', async (req, res) => {
   try {
     const result = await pool.query(`
-      SELECT a.*, p.color, p.username
-      FROM armies a JOIN players p ON p.id=a.owner_id
+      WITH power AS (SELECT owner_id, SUM(quantity)::int AS total FROM troops GROUP BY owner_id)
+      SELECT a.*, p.color, p.username, COALESCE(power.total, 0)::int AS owner_power
+      FROM armies a
+      JOIN players p ON p.id = a.owner_id
+      LEFT JOIN power ON power.owner_id = a.owner_id
       WHERE a.status='marching'
     `)
-    res.json(result.rows)
+    const rows = result.rows.map(a => {
+      const projected = a.quantity >= PROJECTION_GARRISON || a.owner_power >= PROJECTION_EMPIRE
+      const { owner_power, ...rest } = a
+      return { ...rest, projected }
+    })
+    res.json(rows)
   } catch {
     res.status(500).json({ error: 'Server error' })
   }

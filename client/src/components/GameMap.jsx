@@ -244,14 +244,18 @@ function buildClaimedGeoJSON(claimedHexes, visibleSet) {
   return { type: 'FeatureCollection', features }
 }
 
-function buildVisibleSet(claimedHexes, playerId, allyIds) {
+// Marching armies get more leeway than static hexes - a moving column is
+// easier to spot at a distance than a quiet border.
+const ARMY_VISION_RINGS = 4
+
+function buildVisibleSet(claimedHexes, playerId, allyIds, ring = 1) {
   const visible = new Set()
   for (const [cell, claimed] of Object.entries(claimedHexes)) {
     const isOwn = claimed.owner_id === playerId
     const isAlly = !!allyIds && allyIds.has(claimed.owner_id)
     if (!isOwn && !isAlly) continue
-    // Own + allied hexes + 1-ring adjacency always visible
-    gridDisk(cell, 1).forEach(c => visible.add(c))
+    // Own + allied hexes + N-ring adjacency visible
+    gridDisk(cell, ring).forEach(c => visible.add(c))
   }
   return visible
 }
@@ -1184,6 +1188,7 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
     const p = playerRef.current
     const visibleSet = p ? buildVisibleSet(claimedRef.current, p.id, allyIdsRef.current) : null
     visibleSetRef.current = visibleSet
+    armyVisibleSetRef.current = p ? buildVisibleSet(claimedRef.current, p.id, allyIdsRef.current, ARMY_VISION_RINGS) : null
     map.current.getSource('claimed').setData(buildClaimedGeoJSON(claimedRef.current, visibleSet))
     map.current.getSource('claimed-points')?.setData(buildClaimedPoints(claimedRef.current, visibleSet))
     map.current.getSource('building-pips')?.setData(buildPipFeatures(claimedRef.current))
@@ -1191,6 +1196,7 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
   }
 
   const visibleSetRef = useRef(null)
+  const armyVisibleSetRef = useRef(null)
   const marchModeRef = useRef(marchMode)
   marchModeRef.current = marchMode
   const rallyModeRef = useRef(null)
@@ -1227,13 +1233,26 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
       return { lat: aLat + (bLat - aLat) * frac, lng: aLng + (bLng - aLng) * frac }
     }
 
+    // Fog of war for marching armies: your own + allied armies are always
+    // visible, huge forces can't hide (server-computed `projected`), and
+    // everything else only shows up if it's marching to/from near your
+    // territory (a wider ring than hex fog - see ARMY_VISION_RINGS).
+    function isArmyVisible(a, currentPlayer) {
+      if (!currentPlayer) return a.projected
+      if (a.owner_id === currentPlayer.id) return true
+      if (allyIdsRef.current?.has(a.owner_id)) return true
+      if (a.projected) return true
+      const vs = armyVisibleSetRef.current
+      return !!vs && (vs.has(a.from_hex) || vs.has(a.to_hex))
+    }
+
     function updateArmyPositions() {
       if (!map.current?.getSource('armies')) return
       const currentPlayer = playerRef.current
       const currentClaimed = claimedRef.current
       const activeIds = new Set()
 
-      const features = armiesRef.current.map(a => {
+      const features = armiesRef.current.filter(a => isArmyVisible(a, currentPlayer)).map(a => {
         const pos = armyPathPos(a)
         if (!pos) return null
         const { lat, lng } = pos
@@ -1279,7 +1298,7 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
 
       // Beam paths: line from the marching dot → destination (shrinks as army travels)
       if (map.current.getSource('march-paths')) {
-        const pathFeatures = armiesRef.current.map(a => {
+        const pathFeatures = armiesRef.current.filter(a => isArmyVisible(a, currentPlayer)).map(a => {
           try {
             const pos = armyPathPos(a)
             if (!pos) return null
@@ -1296,7 +1315,7 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
 
       // Destination rings
       if (map.current.getSource('march-dests')) {
-        const destFeatures = armiesRef.current.map(a => {
+        const destFeatures = armiesRef.current.filter(a => isArmyVisible(a, currentPlayer)).map(a => {
           try {
             const [tLat, tLng] = cellToLatLng(a.to_hex)
             return {
