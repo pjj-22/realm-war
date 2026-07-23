@@ -1,12 +1,19 @@
-import { cellToLatLng } from 'h3-js'
+import { cellToLatLng, cellToBoundary } from 'h3-js'
 import { createRequire } from 'module'
 
 const require = createRequire(import.meta.url)
 const { feature } = require('topojson-client')
-const topo = require('world-atlas/land-50m.json')
+const topo = require('world-atlas/land-10m.json')
 const landFC = feature(topo, topo.objects.land)
-// feature() returns a FeatureCollection; land-50m has one MultiPolygon feature
+// feature() returns a FeatureCollection; the land file has one MultiPolygon feature
 const landGeometry = landFC.features[0].geometry
+
+// Hexes that are real, playable land but fall through the polygon test - tiny
+// islands below the 1:10m dataset's cutoff. Center + all six vertices read as
+// water, yet a player standing there is standing on ground.
+const LAND_OVERRIDES = new Set([
+  '872a1072bffffff', // Liberty Island, NY (Statue of Liberty)
+])
 
 // ─── Ray-casting point-in-polygon ─────────────────────────────────────────────
 
@@ -54,20 +61,33 @@ for (const poly of polys) {
 
 console.log(`[terrain] Loaded ${landPolygons.length} land polygons`)
 
+function pointOnLand(lng, lat) {
+  return landPolygons.some(({ coords, minLng, maxLng, minLat, maxLat }) => {
+    if (lng < minLng || lng > maxLng || lat < minLat || lat > maxLat) return false
+    return pointInPolygonCoords([lng, lat], coords)
+  })
+}
+
 // ─── Public API ───────────────────────────────────────────────────────────────
 
 const cache = new Map()
 
+// A hex is land if ANY of its center + six vertices touches a land polygon.
+// Center-only testing marked coastal cities (Venice, Copenhagen, Hong Kong)
+// and narrow crossings as ocean because the hex center sat just offshore,
+// cutting land routes the real world has. Any-point errs toward playable.
 export function isOcean(h3Index) {
   if (cache.has(h3Index)) return cache.get(h3Index)
 
-  const [lat, lng] = cellToLatLng(h3Index)
+  let ocean
+  if (LAND_OVERRIDES.has(h3Index)) {
+    ocean = false
+  } else {
+    const [clat, clng] = cellToLatLng(h3Index)
+    ocean = !pointOnLand(clng, clat) &&
+      !cellToBoundary(h3Index).some(([lat, lng]) => pointOnLand(lng, lat))
+  }
 
-  const onLand = landPolygons.some(({ coords, minLng, maxLng, minLat, maxLat }) => {
-    if (lng < minLng || lng > maxLng || lat < minLat || lat > maxLat) return false
-    return pointInPolygonCoords([lng, lat], coords)
-  })
-
-  cache.set(h3Index, !onLand)
-  return !onLand
+  cache.set(h3Index, ocean)
+  return ocean
 }

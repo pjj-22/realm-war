@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Overview
 
-RealmWar is a persistent real-time multiplayer strategy game on a real-world map. An H3 hex grid (resolution 7, ~10km hexes) overlays a MapLibre GL map; players claim hexes, build, train troops, and fight. The game runs continuously server-side via timers - there is no "game session".
+RealmWar is a persistent real-time multiplayer strategy game on a real-world map. An H3 hex grid (resolution 7, ~2.3km hexes) overlays a MapLibre GL map; players claim hexes, build, train troops, and fight. The game runs continuously server-side via timers - there is no "game session".
 
 Two independent npm packages: `server/` (Node/Express + Socket.io + PostgreSQL, ES modules, no ORM) and `client/` (React 19 + Vite + MapLibre GL). Game design doc: `docs/design.md`.
 
@@ -58,7 +58,7 @@ Tests create throwaway accounts (`test_<timestamp>`) directly against the API an
 - **World feed**: `world_events` table (`insertWorldEvent` in tick.js) records crowns, battles, capital falls; public via `/api/world/events`; rendered as "The Herald" tab in EventFeed. `country_crowns` tracks rulers (own a country's primary-capital hex + `CROWN_MIN_HEXES` hexes in that country).
 - **Socket.io is a notification bus only.** `socket.js` exports `getIO()`; server code emits bare event names (`hexes:update`, `armies:update`, `battle:update`, `events:new`, `tick`) with no payload. Clients respond by refetching via REST. When a mutation changes shared state, emit the matching event or other clients won't see it.
 - **Database**: raw `pg` pool queries (`db.js`), no transactions or ORM. Queues are tables polled by tick loops (`training_queue`, `upgrade_queue`, `armies` with `status='marching'` and `arrives_at`). Caution: `schema.sql` can lag behind code - e.g. `hex_history` is used by `tick.js`/`routes/players.js` but isn't in `schema.sql`; new columns get added via `runMigrations()` in `index.js`.
-- **Geo data is computed in-process, not in the DB.** `terrain.js` (ocean check via point-in-polygon against world-atlas land topojson, cached per hex) and `countries.js` (hex → country/continent). `strategic.js` defines named strategic city/chokepoint hexes from lat/lng at module load; `CAPITAL_COUNTRY` drives the per-country territory income bonus.
+- **Geo data is computed in-process, not in the DB.** `terrain.js` (ocean check via point-in-polygon against world-atlas land-10m topojson; a hex is land if its center or any of its six vertices touches land, with a `LAND_OVERRIDES` whitelist for real islands the dataset omits, e.g. Liberty Island; cached per hex) and `countries.js` (hex → country/continent). `strategic.js` defines named strategic city/chokepoint hexes from lat/lng at module load; `CAPITAL_COUNTRY` drives the per-country territory income bonus.
 - **Bots** (`bots.js`) are ordinary player rows with `BOT_` username prefix, processed at the end of each resource tick. Code distinguishes bots only by that prefix.
 - **Auth**: JWT Bearer tokens (7-day), `requireAuth` middleware sets `req.player = { id, username }`. Admin routes (`routes/admin.js`) use an `x-admin-secret` header checked against `ADMIN_SECRET` instead.
 - Ocean hexes are unclaimable but marchable at `OCEAN_MARCH_MULTIPLIER` (10×) cost.
