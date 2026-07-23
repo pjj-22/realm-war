@@ -20,6 +20,8 @@ import { GoldIcon, SearchIcon, AllianceIcon, SwordsIcon, WarningIcon } from './I
 
 
 const HEX_RESOLUTION = 7
+// Chat ships behind a flag until there's moderation (see server config.js)
+const CHAT_ON = import.meta.env.VITE_CHAT_ENABLED === 'true'
 
 // Register an SVG as a map sprite (no-op if already present)
 function addSvgImage(map, id, svg) {
@@ -1551,8 +1553,8 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
       {/* ── City-zone legend ─────────────────────────────────────── */}
       {zoom >= 5 && !isMobile && (
         <div style={{
-          // chat bubble (ChatPanel) occupies bottom-left 16px when logged in
-          position: 'absolute', bottom: 16, left: player ? 74 : 16, pointerEvents: 'none',
+          // chat bubble (ChatPanel) occupies bottom-left 16px when enabled
+          position: 'absolute', bottom: 16, left: player && CHAT_ON ? 74 : 16, pointerEvents: 'none',
           display: 'flex', alignItems: 'center', gap: 8,
           background: 'rgba(20,15,40,0.82)', border: '1px solid rgba(224,184,74,0.35)',
           borderRadius: 6, padding: '6px 11px',
@@ -1664,7 +1666,9 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
       )}
 
       {/* ── Chat (bottom-left) ──────────────────────────────────── */}
-      <ChatPanel player={player} alliance={alliance} />
+      {CHAT_ON && (
+        <ChatPanel player={player} alliance={alliance} />
+      )}
 
       {/* ── Alliance modal ──────────────────────────────────────── */}
       {showAlliance && (

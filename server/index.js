@@ -17,7 +17,7 @@ import chatRoutes from './routes/chat.js'
 import seasonRoutes from './routes/season.js'
 import { initPush } from './push.js'
 import { startTick } from './tick.js'
-import { DEV_MODE, STARTING_GOLD, STARTING_MANA, TICK_INTERVAL_MS, BUILDING_TIME_SECONDS } from './config.js'
+import { DEV_MODE, STARTING_GOLD, STARTING_MANA, TICK_INTERVAL_MS, BUILDING_TIME_SECONDS, CHAT_ENABLED } from './config.js'
 import { pool } from './db.js'
 import { requireAuth } from './auth.js'
 import { initSocket } from './socket.js'
@@ -68,7 +68,7 @@ app.use('/api/admin', adminRoutes)
 app.use('/api/push', pushRoutes)
 app.use('/api/world', worldRoutes)
 app.use('/api/alliance', allianceRoutes)
-app.use('/api/chat', chatRoutes)
+if (CHAT_ENABLED) app.use('/api/chat', chatRoutes)
 app.use('/api/seasons', seasonRoutes)
 
 app.get('/api/health', (_, res) => res.json({
