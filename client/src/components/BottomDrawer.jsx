@@ -227,10 +227,13 @@ export default function BottomDrawer({ hex, player, stats, onClaim, onLoginRequi
     api.getBuildings(hex.h3).then(setBuildingData).catch(() => {})
   }, [hex?.h3, isClaimed, isFogged])
 
+  // getMilitary is owner-scoped (your troops/training/armies at this hex) - it
+  // always comes back empty for a hex you don't own, so it can only tell you
+  // about your own territory, never an enemy's garrison.
   const loadMilitary = useCallback(() => {
-    if (!hex?.h3) return
+    if (!isOwn || !hex?.h3) return
     api.getMilitary(hex.h3).then(setMilitary).catch(() => {})
-  }, [hex?.h3])
+  }, [isOwn, hex?.h3])
 
   useEffect(() => {
     setBuildingData(null)
@@ -357,7 +360,13 @@ export default function BottomDrawer({ hex, player, stats, onClaim, onLoginRequi
     const inZone = !!hex.zone_city
     const ZONE_BONUS = hex.zone_bonus ?? 2 // server value from click enrichment; 2 = fallback
     const troops = Object.entries(troopMap).filter(([, n]) => n > 0)
-    const totalTroops = troops.reduce((s, [, n]) => s + n, 0)
+    // For your own hex, the per-type breakdown from getMilitary is the source
+    // of truth. For anyone else's, that endpoint never has their troops (it's
+    // owner-scoped) - use the hex's own troop_count instead, which already
+    // respects fog of war (-1 = hidden) and power projection.
+    const enemyTroopCount = hex.troop_count ?? 0
+    const isHiddenGarrison = !isOwn && enemyTroopCount === -1
+    const totalTroops = isOwn ? troops.reduce((s, [, n]) => s + n, 0) : Math.max(0, enemyTroopCount)
     const totalIncome = income.gold + (hex.strategic_bonus || 0) + (inZone ? ZONE_BONUS : 0)
     const forts = buildingData?.buildings?.filter(b => b.type === 'fort').length || 0
     const hasFortBonus = forts > 0 || hex.strategic_name
@@ -499,10 +508,10 @@ export default function BottomDrawer({ hex, player, stats, onClaim, onLoginRequi
             }}>
               <div style={{ fontSize: 11, color: '#9a7040', letterSpacing: 2, textTransform: 'uppercase', marginBottom: 6 }}>Garrison</div>
               <div style={{ fontSize: 26, color: totalTroops > 0 ? '#d4b870' : '#4a3828', fontVariantNumeric: 'tabular-nums' }}>
-                {totalTroops > 0 ? totalTroops : '-'}
+                {isHiddenGarrison ? '?' : totalTroops > 0 ? totalTroops : '-'}
               </div>
               <div style={{ fontSize: 12, color: '#7a6040', marginTop: 2 }}>
-                {totalTroops > 0 ? 'troops ready' : 'undefended'}
+                {isHiddenGarrison ? 'hidden in fog' : totalTroops > 0 ? 'troops ready' : 'undefended'}
               </div>
             </div>
 
