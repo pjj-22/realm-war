@@ -171,3 +171,33 @@ CREATE TABLE IF NOT EXISTS seasons (
   winner_id  INTEGER     REFERENCES players(id) ON DELETE SET NULL,
   snapshot   JSONB
 );
+
+-- World Wonders: last-known holder of each landmark hex (ownership itself
+-- lives in hexes; this table lets the 15s poll detect and announce seizures)
+CREATE TABLE IF NOT EXISTS wonder_holders (
+  h3_index VARCHAR(20) PRIMARY KEY,
+  owner_id INTEGER     NOT NULL REFERENCES players(id) ON DELETE CASCADE,
+  taken_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Champion's Monuments: permanent, one per season, never wiped.
+-- username/color are copied (not FKs) so a monument outlives its account.
+CREATE TABLE IF NOT EXISTS monuments (
+  id            SERIAL      PRIMARY KEY,
+  season_number INTEGER     NOT NULL UNIQUE,
+  username      TEXT        NOT NULL,
+  color         TEXT,
+  h3_index      VARCHAR(20) NOT NULL,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Wonder history: every seizure of a wonder, forever - the landmark's chronicle.
+-- username/color are copied (not FKs) so history survives accounts and wipes.
+CREATE TABLE IF NOT EXISTS wonder_history (
+  id        SERIAL      PRIMARY KEY,
+  h3_index  VARCHAR(20) NOT NULL,
+  username  TEXT        NOT NULL,
+  color     TEXT,
+  seized_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_wonder_history_hex ON wonder_history (h3_index, seized_at DESC);

@@ -7,11 +7,13 @@ import {
   ENTRENCH_BONUS_PER_NEIGHBOR, ENTRENCH_MAX_NEIGHBORS,
   CAMP_LOOT_GOLD, CROWN_MIN_HEXES,
   DECAY_HEX_THRESHOLD, DECAY_CHANCE, DECAY_MAX_PER_TICK,
+  WONDER_INCOME_GOLD,
 } from './config.js'
 import { getIO } from './socket.js'
 import { ensureBots, processBots } from './bots.js'
 import { ensureWildlands } from './wild.js'
 import { ensureSeason, processSeason } from './season.js'
+import { processWonders, WONDERS } from './wonders.js'
 import { gridDistance, gridDisk } from 'h3-js'
 import { isOcean } from './terrain.js'
 import { sendPush } from './push.js'
@@ -130,6 +132,10 @@ export async function runTick() {
     // City zone income - each owned hex inside a city's zone pays a flat bonus.
     // Legible and fair across uneven country sizes; replaces the old 1.1^N territory bonus.
     await applyPerHexBonus(Array.from(CITY_ZONES.keys()), ZONE_BONUS_PER_HEX)
+
+    // World Wonder keeper income - flat per wonder held, wherever it stands.
+    // Holding the hex IS holding the wonder, so this is just a hex-list bonus.
+    await applyPerHexBonus(WONDERS.map(w => w.h3), WONDER_INCOME_GOLD)
 
     if (CAPITAL_COUNTRY.size > 0) {
       const allHexes = await pool.query('SELECT h3_index, owner_id FROM hexes')
@@ -636,4 +642,7 @@ export async function startTick() {
   setInterval(processBattleRounds, BATTLE_INTERVAL_MS)
   setInterval(processUpgrades, TRAINING_INTERVAL_MS)
   setInterval(processSeason, TRAINING_INTERVAL_MS)
+  setInterval(() => processWonders(pool, { announce: insertWorldEvent })
+    .then(seized => { if (seized.length > 0) getIO()?.emit('wonder:update') })
+    .catch(err => console.error('[wonder] poll failed:', err.message)), COMBAT_INTERVAL_MS)
 }

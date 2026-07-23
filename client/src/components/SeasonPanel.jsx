@@ -1,4 +1,6 @@
 import { useState, useEffect } from 'react'
+import { cellToLatLng } from 'h3-js'
+import { api } from '../api/client'
 import { playSound } from '../sound.js'
 import { BannerIcon, MedalIcon, TrophyIcon, CrownIcon, SwordsIcon } from './Icons'
 
@@ -92,9 +94,21 @@ const boxStyle = {
   fontFamily: 'Georgia, serif', color: '#c9b99a',
 }
 
-// Season dashboard: countdown, win condition, live standings, hall of fame
+// Season dashboard: countdown, win condition, live standings, wonders, hall of fame
 export default function SeasonPanel({ season, history, player, onClose }) {
   const left = useCountdown(season.ends_at)
+  const [wonders, setWonders] = useState([])
+  const [monuments, setMonuments] = useState([])
+  useEffect(() => {
+    api.getWonders().then(setWonders).catch(() => {})
+    api.getMonuments().then(setMonuments).catch(() => {})
+  }, [])
+  const monumentBySeason = new Map(monuments.map(m => [m.season_number, m]))
+  // Close the dashboard and fly the map to a landmark
+  const flyTo = (lat, lng) => {
+    window.dispatchEvent(new CustomEvent('rw:flyto', { detail: { lat, lng, zoom: 8.5 } }))
+    onClose()
+  }
   const myRecord = (player && history || []).map(s => {
     const idx = (s.snapshot || []).findIndex(r => r.username === player.username)
     return idx >= 0 ? { number: s.number, place: idx + 1, hexes: s.snapshot[idx].hex_count } : null
@@ -131,6 +145,39 @@ export default function SeasonPanel({ season, history, player, onClose }) {
         </div>
         <StandingsTable rows={season.standings} highlight={player?.username} />
 
+        {wonders.length > 0 && (
+          <>
+            <div style={{ fontSize: 12, letterSpacing: 2, textTransform: 'uppercase', color: '#7a6890', margin: '18px 0 8px' }}>
+              World Wonders{wonders[0]?.income > 0 && <span style={{ color: '#a08040', textTransform: 'none', letterSpacing: 0 }}> · +{wonders[0].income}g each per harvest</span>}
+            </div>
+            {wonders.map(w => (
+              <div
+                key={w.id}
+                onClick={() => flyTo(w.lat, w.lng)}
+                title="View on the map"
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 8, padding: '4px 4px',
+                  fontSize: 13, cursor: 'pointer', borderRadius: 3,
+                }}
+                onMouseEnter={e => { e.currentTarget.style.background = 'rgba(224,184,74,0.08)' }}
+                onMouseLeave={e => { e.currentTarget.style.background = 'none' }}
+              >
+                <span style={{ color: '#e0c070', flex: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{w.name}</span>
+                {w.holder ? (
+                  <>
+                    <span style={{ width: 8, height: 8, borderRadius: '50%', background: w.holder.color || '#888', flexShrink: 0 }} />
+                    <span style={{ color: '#c4b498', fontSize: 12 }}>
+                      {w.holder.username.startsWith('BOT_') ? w.holder.username.slice(4) : w.holder.username}
+                    </span>
+                  </>
+                ) : (
+                  <span style={{ color: '#6a5878', fontSize: 12, fontStyle: 'italic' }}>unclaimed</span>
+                )}
+              </div>
+            ))}
+          </>
+        )}
+
         {myRecord.length > 0 && (
           <>
             <div style={{ fontSize: 12, letterSpacing: 2, textTransform: 'uppercase', color: '#7a6890', margin: '18px 0 8px' }}>
@@ -163,6 +210,22 @@ export default function SeasonPanel({ season, history, player, onClose }) {
                     <span style={{ width: 9, height: 9, borderRadius: '50%', background: s.winner_color, flexShrink: 0 }} />
                     <span style={{ color: '#e0c070' }}><CrownIcon size={12} /> {s.winner_username.startsWith('BOT_') ? s.winner_username.slice(4) : s.winner_username}</span>
                     {s.snapshot?.[0] && <span style={{ fontSize: 12, color: '#7a6890' }}>{s.snapshot[0].hex_count} hexes</span>}
+                    {monumentBySeason.has(s.number) && (
+                      <button
+                        onClick={() => {
+                          const [lat, lng] = cellToLatLng(monumentBySeason.get(s.number).h3_index)
+                          flyTo(lat, lng)
+                        }}
+                        title="Visit their monument"
+                        style={{
+                          marginLeft: 'auto', background: 'none', cursor: 'pointer',
+                          border: '1px solid rgba(184,154,224,0.35)', borderRadius: 4,
+                          color: '#b89ae0', fontSize: 11, padding: '1px 8px',
+                          fontFamily: 'Georgia, serif', whiteSpace: 'nowrap',
+                        }}>
+                        monument ▸
+                      </button>
+                    )}
                   </>
                 ) : (
                   <span style={{ color: '#6a5878' }}>no champion</span>

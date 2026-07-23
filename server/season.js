@@ -3,6 +3,8 @@ import { getIO } from './socket.js'
 import { SEASON_DURATION_MS, STARTING_GOLD, SEASON_PODIUM_BONUS } from './config.js'
 import { respawnBots } from './bots.js'
 import { sendPush } from './push.js'
+import { recordMonument } from './monuments.js'
+import { seedCapitalGarrisons } from './wild.js'
 
 let current = null // cached active season row
 
@@ -21,6 +23,7 @@ export async function ensureSeason() {
     )
     current = ins.rows[0]
     console.log(`[season] Season ${current.number} begins - ends ${ends.toISOString()}`)
+    await seedCapitalGarrisons()
     getIO()?.emit('season:update')
     return current
   } catch (err) {
@@ -97,6 +100,18 @@ export async function processSeason() {
         winner ? `${winner.username} is Champion. The map has reset - claim your new capital!` : 'The map has reset - claim your new capital!')
     }
 
+    // Champion's Monument - raised at the winner's capital before the wipe
+    // nulls it. Permanent: monuments are exempt from the reset below.
+    if (winner) {
+      const monument = await recordMonument(pool, { seasonNumber: season.number, winnerId: winner.id })
+      if (monument) {
+        await pool.query(
+          'INSERT INTO world_events (type, message, hex_index, player_id) VALUES ($1,$2,$3,$4)',
+          ['monument', `A monument to ${winner.username} rises where their capital stood - Champion of Age ${season.number}, remembered forever.`, monument.h3_index, winner.id]
+        )
+      }
+    }
+
     // The great reset - accounts, alliances, chat, and history persist
     await pool.query('DELETE FROM battle_participants')
     await pool.query('DELETE FROM battles')
@@ -107,6 +122,7 @@ export async function processSeason() {
     await pool.query('DELETE FROM buildings')
     await pool.query('DELETE FROM hexes')
     await pool.query('DELETE FROM country_crowns')
+    await pool.query('DELETE FROM wonder_holders')
     await pool.query('UPDATE players SET capital_hex=NULL, gold=$1', [STARTING_GOLD])
     // Podium gold carries into the new age
     for (let i = 0; i < Math.min(SEASON_PODIUM_BONUS.length, standings.length); i++) {

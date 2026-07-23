@@ -61,6 +61,94 @@ const GARRISON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="32" height=
   </g>
 </svg>`
 
+// World Wonders: each landmark gets its own gold silhouette on the shared
+// dark disc, so the set reads as one family but every wonder is recognizable
+const wonderSprite = (glyph) => `<svg xmlns="http://www.w3.org/2000/svg" width="44" height="44" viewBox="0 0 22 22">
+  <circle cx="11" cy="11" r="10" fill="rgba(18,12,30,0.92)" stroke="#e0b84a" stroke-width="1.4"/>
+  <g fill="#e8c55a">${glyph}</g>
+</svg>`
+
+const WONDER_SPRITES = {
+  // Generic temple - fallback for any wonder without a bespoke glyph
+  generic: wonderSprite(`
+    <path d="M11 4.2 L17 8 H5 Z"/>
+    <rect x="5.6" y="8.8" width="1.9" height="5.4"/>
+    <rect x="10.05" y="8.8" width="1.9" height="5.4"/>
+    <rect x="14.5" y="8.8" width="1.9" height="5.4"/>
+    <rect x="4.6" y="14.8" width="12.8" height="1.9"/>`),
+  // Eiffel Tower - flared lattice tower with two decks
+  eiffel: wonderSprite(`
+    <path d="M10.2 3.8h1.6l.4 4.6c.3 2.7 1.5 5.7 3.5 8.4h-2.6c-.8-1.3-1.5-2.7-2.1-4.4-.6 1.7-1.3 3.1-2.1 4.4H6.3c2-2.7 3.2-5.7 3.5-8.4Z"/>
+    <rect x="8.4" y="8.2" width="5.2" height="1.2"/>
+    <rect x="6.6" y="12.6" width="8.8" height="1.2"/>`),
+  // Pyramids of Giza - two pyramids
+  giza: wonderSprite(`
+    <path d="M8.6 6.2 14.2 16 H3 Z"/>
+    <path d="M14.6 9.2 18.9 16 h-8.6 Z"/>`),
+  // Colosseum - arched arena front
+  colosseum: wonderSprite(`
+    <path fill-rule="evenodd" d="M4.4 16.2V9.8C4.4 7.2 7.2 5.4 11 5.4s6.6 1.8 6.6 4.4v6.4h-2.8v-4.1a1.45 1.45 0 0 0-2.9 0v4.1h-1.8v-4.1a1.45 1.45 0 0 0-2.9 0v4.1Z"/>`),
+  // Tower of London - crenellated keep
+  tower: wonderSprite(`
+    <path d="M5.2 16.2V6.4h2v1.7h2.2V6.4h3.2v1.7h2.2V6.4h2v9.8Z"/>
+    <rect x="9.9" y="11.4" width="2.2" height="4.8" fill="rgba(18,12,30,0.92)"/>`),
+  // Mount Fuji - snow-capped cone
+  fuji: wonderSprite(`
+    <path d="M3.2 16 9.4 6h3.2L18.8 16Z"/>
+    <path d="M9.7 6.5h2.6l1.2 2c-.9.8-1.7.2-2.5.9-.8-.7-1.6-.1-2.5-.9Z" fill="#f5eeda"/>`),
+  // Taj Mahal - onion dome, plinth and minarets
+  taj: wonderSprite(`
+    <path d="M11 3.6c.3 1 .9 1.5 1.9 2.2 1.2.8 1.9 2 1.9 3.4 0 1-.3 1.9-.8 2.7H8c-.5-.8-.8-1.7-.8-2.7 0-1.4.7-2.6 1.9-3.4 1-.7 1.6-1.2 1.9-2.2Z"/>
+    <rect x="4.4" y="8.2" width="1.3" height="4.3"/>
+    <rect x="16.3" y="8.2" width="1.3" height="4.3"/>
+    <rect x="4.4" y="13.2" width="13.2" height="1.4"/>
+    <rect x="5.4" y="15.3" width="11.2" height="1.5"/>`),
+  // Christ the Redeemer - figure with outstretched arms
+  redeemer: wonderSprite(`
+    <circle cx="11" cy="4.4" r="1.3"/>
+    <path d="M10.2 6.2h1.6v.9l5.6.9v1.6l-5.6-.3v4.9h1.7v2h-5v-2h1.7V9.3l-5.6.3V8l5.6-.9Z"/>`),
+  // Great Wall - stepped crenellated wall
+  greatwall: wonderSprite(`
+    <path d="M3.4 16.2v-5.4h1.5v1.3h1.7v-1.3h1.7v1.3H10V9.4h1.7V8.1h1.5v1.3h1.7v1.4h1.7v-1.4h2v6.8Z"/>`),
+  // Machu Picchu - terraced twin peaks
+  machupicchu: wonderSprite(`
+    <path d="M3.2 16 8 8l1.8 2.9L12.9 5.4 18.8 16Z"/>
+    <path d="M4.8 13.6h7.4v.9H4.3Zm1.3-2.2h5.2v.9H5.6Z" fill="rgba(18,12,30,0.92)"/>`),
+  // Red Square - St Basil's onion dome and tent tower
+  redsquare: wonderSprite(`
+    <rect x="10.65" y="1.9" width="0.7" height="1.7"/>
+    <path d="M11 3.4c1.6 1.5 2.5 2.6 2.5 4 0 1.3-1.1 2.3-2.5 2.3S8.5 8.7 8.5 7.4c0-1.4.9-2.5 2.5-4Z"/>
+    <path d="M9.3 10.4h3.4l.8 3.2H8.5Z"/>
+    <rect x="7.2" y="14.2" width="7.6" height="2.2"/>`),
+  // Sydney Opera House - overlapping sails
+  opera: wonderSprite(`
+    <path d="M4.3 14.8C5.3 10 7.8 7.1 11.4 5.6c-1.2 2.2-1.8 4.2-1.9 6.2 1.5-2.9 4-4.8 7.5-5.5-1.9 2.3-3 4.6-3.4 8.5Z"/>
+    <rect x="3.6" y="15.4" width="14.8" height="1.4"/>`),
+  // Statue of Liberty - torch raised over the harbor
+  liberty: wonderSprite(`
+    <circle cx="10.6" cy="6.2" r="1.3"/>
+    <path d="M8.9 4.9 7.6 3.6l.6-.6 1.3 1.3Zm3.4-.9-.4-1.8.8-.2.4 1.8Z"/>
+    <circle cx="15.2" cy="3.4" r="1"/>
+    <path d="M13.3 6.6l1.4-2.5.9.5-1.3 2.5Z"/>
+    <path d="M9.6 8.2h2l1 6h1.6v2H7.2v-2h1.4Z"/>`),
+  // Golden Gate Bridge - twin towers and draped cables
+  goldengate: wonderSprite(`
+    <rect x="5.5" y="4.6" width="1.7" height="9.4"/>
+    <rect x="14.8" y="4.6" width="1.7" height="9.4"/>
+    <rect x="2.6" y="13.2" width="16.8" height="1.7"/>
+    <path d="M2.6 6.2h1c.6 3.1 3 4.9 7.4 4.9s6.8-1.8 7.4-4.9h1v1.2c-1 3.4-3.8 5.2-8.4 5.2S3.6 10.8 2.6 7.4Z"/>`),
+}
+
+// Champion's Monument: gold obelisk on a dark disc - permanent across seasons
+const MONUMENT_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="44" height="44" viewBox="0 0 22 22">
+  <circle cx="11" cy="11" r="10" fill="rgba(18,12,30,0.92)" stroke="#b89ae0" stroke-width="1.4"/>
+  <g fill="#e8c55a">
+    <path d="M11 3.4 L12.7 6 L12.1 13.6 H9.9 L9.3 6 Z"/>
+    <rect x="8.2" y="14.2" width="5.6" height="1.7"/>
+    <rect x="6.8" y="16.4" width="8.4" height="1.9"/>
+  </g>
+</svg>`
+
 function getViewportPolygon(map) {
   const bounds = map.getBounds()
   const ne = bounds.getNorthEast()
@@ -347,6 +435,23 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
   const zonesRef = useRef(new Map()) // h3 → city name, for click enrichment
   const zoneBonusRef = useRef(2)     // server's ZONE_BONUS_PER_HEX, for click enrichment
   const [zoneBonus, setZoneBonus] = useState(2) // same value, for the legend re-render
+  const wondersRef = useRef([])      // latest /world/wonders payload, for the chronicle card
+  const [wonderCard, setWonderCard] = useState(null) // wonder object, or null
+
+  // Escape backs out of transient modes: march/rally targeting, wonder card
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key !== 'Escape') return
+      setWonderCard(null)
+      if (marchModeRef.current || rallyModeRef.current) {
+        setMarchMode(null)
+        setRallyMode(null)
+        if (map.current) map.current.getCanvas().style.cursor = ''
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
 
   const loadStrategic = useCallback(async () => {
     if (!map.current?.getSource('strategic')) return
@@ -376,6 +481,34 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
       })
       map.current.getSource('strategic').setData({ type: 'FeatureCollection', features })
     } catch {}
+  }, [])
+
+  // Wonders + monuments - refreshed on wonder seizure and season rollover
+  const loadLandmarks = useCallback(async () => {
+    if (!map.current?.getSource('wonders')) return
+    try {
+      const [wonders, monuments] = await Promise.all([api.getWonders(), api.getMonuments()])
+      wondersRef.current = wonders // full payload (holder + history) for the chronicle card
+      map.current.getSource('wonders').setData({
+        type: 'FeatureCollection',
+        features: wonders.map(w => ({
+          type: 'Feature',
+          properties: { id: w.id, name: w.name, ...(w.holder ? { holder: w.holder.username } : {}) },
+          geometry: { type: 'Point', coordinates: [w.lng, w.lat] },
+        })),
+      })
+      map.current.getSource('monuments').setData({
+        type: 'FeatureCollection',
+        features: monuments.map(m => {
+          const [lat, lng] = cellToLatLng(m.h3_index)
+          return {
+            type: 'Feature',
+            properties: { username: m.username, season: m.season_number },
+            geometry: { type: 'Point', coordinates: [lng, lat] },
+          }
+        }),
+      })
+    } catch { /* cosmetic layer, best-effort */ }
   }, [])
 
   // City zones are static - fetch once and shade them
@@ -469,7 +602,8 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
     'armies:update': loadArmies,
     'battle:update': loadActiveBattles,
     'tick': loadStats,
-    'season:update': loadSeason,
+    'season:update': () => { loadSeason(); loadLandmarks() },
+    'wonder:update': loadLandmarks,
   })
 
   useEffect(() => {
@@ -499,10 +633,13 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
       zoom: 3,
       attributionControl: false,
     })
+    if (import.meta.env.DEV) window.__map = map.current
 
     map.current.on('load', () => {
       // Sprites for garrison + building badges
       addSvgImage(map.current, 'garrison-icon', GARRISON_SVG)
+      for (const [id, svg] of Object.entries(WONDER_SPRITES)) addSvgImage(map.current, `wonder-${id}`, svg)
+      addSvgImage(map.current, 'monument-icon', MONUMENT_SVG)
       for (const [id, svg] of Object.entries(PIP_SPRITES)) addSvgImage(map.current, id, svg)
 
       // City zones - subtle background shading for each city's ring of influence.
@@ -640,6 +777,61 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
           'icon-size': ['interpolate', ['linear'], ['zoom'], 6.5, 0.3, 9.5, 0.62],
           'icon-allow-overlap': true,
           'icon-ignore-placement': true,
+        },
+      })
+
+      // World Wonders + Champion's Monuments - the dangling carrots. Always
+      // visible so every player (and every guest) sees what can be won.
+      map.current.addSource('wonders', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } })
+      map.current.addLayer({
+        id: 'wonder-icons',
+        type: 'symbol',
+        source: 'wonders',
+        layout: {
+          // Per-landmark sprite, falling back to the generic temple for any
+          // wonder id the client doesn't have a glyph for yet
+          'icon-image': ['coalesce',
+            ['image', ['concat', 'wonder-', ['get', 'id']]],
+            ['image', 'wonder-generic']],
+          'icon-size': ['interpolate', ['linear'], ['zoom'], 2, 0.5, 8, 0.9],
+          'icon-allow-overlap': true,
+          'icon-ignore-placement': true,
+          'text-field': ['case', ['has', 'holder'],
+            ['concat', ['get', 'name'], '\nheld by ', ['get', 'holder']],
+            ['get', 'name']],
+          'text-font': ['Noto Sans Regular'],
+          'text-size': 11,
+          'text-anchor': 'top',
+          'text-offset': [0, 1.2],
+          'text-optional': true,
+        },
+        paint: {
+          'text-color': '#e8c55a',
+          'text-halo-color': 'rgba(0,0,0,0.85)',
+          'text-halo-width': 1.6,
+        },
+      })
+      map.current.addSource('monuments', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } })
+      map.current.addLayer({
+        id: 'monument-icons',
+        type: 'symbol',
+        source: 'monuments',
+        layout: {
+          'icon-image': 'monument-icon',
+          'icon-size': ['interpolate', ['linear'], ['zoom'], 2, 0.45, 8, 0.85],
+          'icon-allow-overlap': true,
+          'icon-ignore-placement': true,
+          'text-field': ['concat', ['get', 'username'], '\nChampion of Age ', ['to-string', ['get', 'season']]],
+          'text-font': ['Noto Sans Regular'],
+          'text-size': 11,
+          'text-anchor': 'top',
+          'text-offset': [0, 1.2],
+          'text-optional': true,
+        },
+        paint: {
+          'text-color': '#cdb2ee',
+          'text-halo-color': 'rgba(0,0,0,0.85)',
+          'text-halo-width': 1.6,
         },
       })
 
@@ -798,6 +990,7 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
       updateClaimed()
       loadStrategic()
       loadZones()
+      loadLandmarks()
       // armies state may already be loaded - force a sync
       map.current.once('idle', () => {
         setArmies(prev => [...prev])
@@ -895,6 +1088,21 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
     map.current.on('click', 'overview-hex-fill', (e) => {
       const center = e.lngLat
       map.current.flyTo({ center: [center.lng, center.lat], zoom: 7, speed: 0.8 })
+    })
+
+    // Clicking a wonder opens its chronicle (unless mid-march/rally, where the
+    // click must stay a destination pick for the hex underneath)
+    map.current.on('click', 'wonder-icons', (e) => {
+      if (marchModeRef.current || rallyModeRef.current) return
+      const id = e.features[0]?.properties?.id
+      const w = wondersRef.current.find(x => x.id === id)
+      if (w) setWonderCard(w)
+    })
+    map.current.on('mouseenter', 'wonder-icons', () => {
+      if (!marchModeRef.current && !rallyModeRef.current) map.current.getCanvas().style.cursor = 'pointer'
+    })
+    map.current.on('mouseleave', 'wonder-icons', () => {
+      if (!marchModeRef.current && !rallyModeRef.current) map.current.getCanvas().style.cursor = ''
     })
 
     return () => {
@@ -1336,6 +1544,58 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
         </div>
       )}
 
+      {/* ── Wonder chronicle - who holds it and every keeper before ── */}
+      {wonderCard && (
+        <div style={{
+          position: 'absolute', top: 56, left: '50%', transform: 'translateX(-50%)',
+          width: isMobile ? 'calc(100vw - 24px)' : 340, maxHeight: '55vh', overflowY: 'auto',
+          background: 'rgba(15,10,28,0.96)', border: '1px solid rgba(224,184,74,0.5)',
+          borderRadius: 8, padding: '14px 16px', zIndex: 25,
+          fontFamily: 'Georgia, serif', color: '#c4b498',
+          boxShadow: '0 4px 24px rgba(0,0,0,0.6)',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 10 }}>
+            <span style={{ fontSize: 15, color: '#e8c55a', letterSpacing: 1 }}>{wonderCard.name}</span>
+            <button onClick={() => setWonderCard(null)} style={{ background: 'none', border: 'none', color: '#7a6890', cursor: 'pointer', fontSize: 18, lineHeight: 1, padding: '0 2px' }}>×</button>
+          </div>
+          <div style={{ fontSize: 12, color: '#8a7a9c', marginTop: 2, fontStyle: 'italic' }}>{wonderCard.title}</div>
+          {wonderCard.income > 0 && (
+            <div style={{ fontSize: 12, color: '#c9902a', marginTop: 4 }}>
+              Grants +{wonderCard.income}g each harvest to its keeper
+            </div>
+          )}
+
+          <div style={{ marginTop: 10, fontSize: 13 }}>
+            {wonderCard.holder ? (
+              <span>
+                <span style={{ width: 9, height: 9, borderRadius: '50%', background: wonderCard.holder.color || '#888', display: 'inline-block', marginRight: 6 }} />
+                Held by <span style={{ color: '#e8c55a' }}>{wonderCard.holder.username}</span>
+              </span>
+            ) : (
+              <span style={{ color: '#8a7a9c' }}>Unclaimed, no keeper this age</span>
+            )}
+          </div>
+
+          <div style={{ marginTop: 12, fontSize: 11, letterSpacing: 2, textTransform: 'uppercase', color: '#7a6890' }}>Chronicle</div>
+          {wonderCard.history?.length > 0 ? (
+            <div style={{ marginTop: 6, display: 'flex', flexDirection: 'column', gap: 5 }}>
+              {wonderCard.history.map((h, i) => (
+                <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 12.5 }}>
+                  <span style={{ width: 8, height: 8, borderRadius: '50%', background: h.color || '#888', flexShrink: 0 }} />
+                  <span style={{ color: '#c4b498', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{h.username}</span>
+                  <span style={{ marginLeft: 'auto', color: '#7a6890', fontSize: 11, flexShrink: 0 }}>
+                    {new Date(h.seized_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}{' '}
+                    {new Date(h.seized_at).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}
+                  </span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div style={{ marginTop: 6, fontSize: 12, color: '#8a7a9c', fontStyle: 'italic' }}>No banner has ever flown here.</div>
+          )}
+        </div>
+      )}
+
       {/* ── Zoom hint ───────────────────────────────────────────── */}
       {zoom < 8 && (
         <div style={{
@@ -1360,6 +1620,7 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
           fontFamily: 'Georgia, serif', fontSize: isMobile ? 12 : 13, letterSpacing: 2,
           textTransform: 'uppercase', display: 'flex', alignItems: 'center', gap: 16,
           justifyContent: isMobile ? 'space-between' : 'flex-start',
+          zIndex: 30,
         }}>
           <span>
             {rallyMode

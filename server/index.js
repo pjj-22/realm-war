@@ -178,6 +178,30 @@ async function runMigrations() {
       winner_id ${PID} REFERENCES players(id) ON DELETE SET NULL,
       snapshot JSONB
     )`)
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS wonder_holders (
+      h3_index VARCHAR(20) PRIMARY KEY,
+      owner_id ${PID} NOT NULL REFERENCES players(id) ON DELETE CASCADE,
+      taken_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`)
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS monuments (
+      id SERIAL PRIMARY KEY,
+      season_number INTEGER NOT NULL UNIQUE,
+      username TEXT NOT NULL,
+      color TEXT,
+      h3_index VARCHAR(20) NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`)
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS wonder_history (
+      id SERIAL PRIMARY KEY,
+      h3_index VARCHAR(20) NOT NULL,
+      username TEXT NOT NULL,
+      color TEXT,
+      seized_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`)
+  await pool.query('CREATE INDEX IF NOT EXISTS idx_wonder_history_hex ON wonder_history (h3_index, seized_at DESC)')
   console.log('[db] Migrations complete')
 }
 

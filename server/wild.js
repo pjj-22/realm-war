@@ -1,7 +1,8 @@
 import { pool } from './db.js'
 import { gridDisk } from 'h3-js'
 import { isOcean } from './terrain.js'
-import { CAMPS_PER_SPAWN, CAMP_GARRISON_MIN, CAMP_GARRISON_MAX } from './config.js'
+import { CAMPS_PER_SPAWN, CAMP_GARRISON_MIN, CAMP_GARRISON_MAX, CAPITAL_GARRISON_MIN, CAPITAL_GARRISON_MAX } from './config.js'
+import { CAPITAL_COUNTRY } from './strategic.js'
 
 // The Wildlands "player" owns all neutral camps. It never trains, marches,
 // earns income, or appears on leaderboards - it exists so camps can defend.
@@ -73,6 +74,42 @@ export async function seedCampsAround(capitalHex) {
     return picked
   } catch (err) {
     console.error('[wild] seed error:', err.message)
+    return []
+  }
+}
+
+// Garrison every country's primary capital hex with Wildlands troops at the
+// start of a season, so the crown-eligible hex must be taken by force instead
+// of being grabbed by whoever's first to click once the map wipes. Idempotent -
+// skips any hex a player already owns.
+export async function seedCapitalGarrisons() {
+  if (!wildId) await ensureWildlands()
+  if (!wildId) return []
+
+  try {
+    const hexes = Array.from(CAPITAL_COUNTRY.keys())
+    if (hexes.length === 0) return []
+
+    const owned = await pool.query('SELECT h3_index FROM hexes WHERE h3_index = ANY($1)', [hexes])
+    const taken = new Set(owned.rows.map(r => r.h3_index))
+    const free = hexes.filter(h => !taken.has(h))
+
+    for (const h3 of free) {
+      const garrison = CAPITAL_GARRISON_MIN + Math.floor(Math.random() * (CAPITAL_GARRISON_MAX - CAPITAL_GARRISON_MIN + 1))
+      await pool.query(
+        'INSERT INTO hexes (h3_index, owner_id, claimed_at) VALUES ($1,$2,NOW()) ON CONFLICT DO NOTHING',
+        [h3, wildId]
+      )
+      await pool.query(
+        `INSERT INTO troops (owner_id, h3_index, type, quantity) VALUES ($1,$2,'troop',$3)
+         ON CONFLICT (owner_id, h3_index, type) DO UPDATE SET quantity = EXCLUDED.quantity`,
+        [wildId, h3, garrison]
+      )
+    }
+    if (free.length) console.log(`[wild] Garrisoned ${free.length} country capitals`)
+    return free
+  } catch (err) {
+    console.error('[wild] capital garrison error:', err.message)
     return []
   }
 }
