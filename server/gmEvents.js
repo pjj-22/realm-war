@@ -50,7 +50,7 @@ async function plague(severity) {
   const t1 = Number((await pool.query('SELECT COALESCE(SUM(quantity),0)::int n FROM troops')).rows[0].n)
   const killed = t0 - t1
   const pct = Math.round(severity * 100)
-  const msg = `A plague sweeps the realm — ${pct}% of every army withers. ${killed.toLocaleString()} troops lie dead.`
+  const msg = `A plague sweeps the realm. ${pct}% of every army withers, and ${killed.toLocaleString()} troops lie dead.`
   await insertWorldEvent('plague', msg)
   const notified = await notify(owners, 'Plague!', `A plague has killed ${pct}% of your troops.`, 'plague')
   return { headline: msg, killed, notified }
@@ -84,7 +84,7 @@ async function meteor(severity) {
   }
   const owners = [...lostByOwner.keys()]
   await pool.query('DELETE FROM buildings WHERE id = ANY($1)', [doomed.map(r => r.id)])
-  const msg = `Meteors rain from the heavens — ${doomed.length} structures lie in ruin.`
+  const msg = `Meteors rain from the heavens, leaving ${doomed.length} structures in ruin.`
   await insertWorldEvent('meteor', msg)
   const notified = await notify(owners, 'Meteor Storm!',
     id => `Meteors destroyed ${lostByOwner.get(id)} of your buildings.`, 'meteor')
@@ -93,7 +93,7 @@ async function meteor(severity) {
 
 async function goldRush(amount) {
   const r = await pool.query(`UPDATE players SET gold = gold + $1 WHERE ${NOT_NPC} RETURNING id`, [amount])
-  const msg = `A gold rush grips the realm — every ruler's coffers swell by ${amount.toLocaleString()}.`
+  const msg = `A gold rush grips the realm, and every ruler's coffers swell by ${amount.toLocaleString()}.`
   await insertWorldEvent('gold_rush', msg)
   const notified = await notify(r.rows.map(x => x.id), 'Gold Rush!', `Fortune smiles: +${amount.toLocaleString()} gold.`, 'gold_rush')
   return { headline: msg, players: r.rowCount, notified }
@@ -104,7 +104,7 @@ async function famine(severity) {
     `UPDATE players SET gold = GREATEST(0, FLOOR(gold * (1 - $1::numeric))) WHERE ${NOT_NPC} RETURNING id`, [severity]
   )
   const pct = Math.round(severity * 100)
-  const msg = `Famine grips the land — ${pct}% of every treasury turns to dust.`
+  const msg = `Famine grips the land, and ${pct}% of every treasury turns to dust.`
   await insertWorldEvent('famine', msg)
   const notified = await notify(r.rows.map(x => x.id), 'Famine!', `Famine drained ${pct}% of your gold.`, 'famine')
   return { headline: msg, players: r.rowCount, notified }
@@ -121,7 +121,7 @@ async function marauderSurge(count) {
     const after = Number((await pool.query('SELECT COUNT(*)::int n FROM hexes')).rows[0].n)
     camps += Math.max(0, after - before)
   }
-  const msg = `Marauders pour from the wilds — war camps blight the land near ${capitals.length} realms.`
+  const msg = `Marauders pour from the wilds, and war camps blight the land near ${capitals.length} realms.`
   await insertWorldEvent('marauder_surge', msg)
   return { headline: msg, capitals: capitals.length, camps, notified: 0 }
 }
