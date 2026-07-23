@@ -47,6 +47,12 @@ body {
   100% { transform: translateX(0);    opacity: 0; }
 }
 
+/* Guest call-to-action: slow golden breathing glow */
+@keyframes cta-glow {
+  0%, 100% { box-shadow: 0 2px 16px rgba(224, 184, 74, 0.3); }
+  50%      { box-shadow: 0 2px 34px rgba(224, 184, 74, 0.65); }
+}
+
 @keyframes battle-pulse {
   0%   { transform: scale(1);   opacity: 0.9; }
   50%  { transform: scale(1.6); opacity: 0.4; }

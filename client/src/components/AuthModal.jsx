@@ -41,8 +41,8 @@ const styles = {
   },
 }
 
-export default function AuthModal({ onAuth, onDismiss }) {
-  const [mode, setMode] = useState('login')
+export default function AuthModal({ onAuth, onDismiss, initialMode = 'login' }) {
+  const [mode, setMode] = useState(initialMode)
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [color, setColor] = useState(PRESET_COLORS[0])

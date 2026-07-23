@@ -89,7 +89,7 @@ export default function LeaderboardPanel({ player, onFlyTo }) {
       borderRadius: 6,
       color: '#c9b99a', fontFamily: 'Georgia, serif',
       boxShadow: '0 0 20px rgba(80,40,160,0.3)',
-      minWidth: isMobile ? 160 : 220, zIndex: 10,
+      minWidth: isMobile ? 160 : 220, maxWidth: 'calc(100vw - 16px)', zIndex: 10,
     }}>
       <button
         onClick={() => setOpen(o => !o)}
@@ -135,7 +135,7 @@ export default function LeaderboardPanel({ player, onFlyTo }) {
             </div>
           )}
 
-          <div style={{ fontSize: 11, color: '#4a3a6a', textAlign: 'center', marginTop: 8 }}>
+          <div style={{ fontSize: 11, color: '#857599', textAlign: 'center', marginTop: 8 }}>
             {player ? 'Click your name for history · others to visit' : 'Click a player to visit their capital'}
           </div>
         </div>

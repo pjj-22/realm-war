@@ -16,7 +16,7 @@ import SeasonPanel, { SeasonChip, SeasonEndOverlay } from './SeasonPanel'
 import { useResourceTicker } from '../hooks/useResourceTicker'
 import { useIsMobile } from '../hooks/useIsMobile'
 import { api } from '../api/client'
-import { GoldIcon, SearchIcon, AllianceIcon, SwordsIcon, WarningIcon } from './Icons'
+import { GoldIcon, SearchIcon, AllianceIcon, SwordsIcon, WarningIcon, KeepIcon } from './Icons'
 
 
 const HEX_RESOLUTION = 7
@@ -440,7 +440,37 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
   const strategicRef = useRef({})
   const zonesRef = useRef(new Map()) // h3 → city name, for click enrichment
   const zoneBonusRef = useRef(2)     // server's ZONE_BONUS_PER_HEX, for click enrichment
+
+  // Shared enrichment for hex selection - adds city-zone + strategic-hex info
+  // on top of base hex props, whether the hex came from a map click or a
+  // programmatic jump (Armies HUD rows).
+  const enrichHex = useCallback((h3, baseProps) => {
+    const strategic = strategicRef.current[h3]
+    return {
+      ...baseProps,
+      zone_city: zonesRef.current.get(h3) || null,
+      zone_bonus: zoneBonusRef.current,
+      ...(strategic ? {
+        strategic_name: strategic.name,
+        strategic_bonus: strategic.bonus_gold,
+        strategic_primary: strategic.primary,
+      } : {}),
+    }
+  }, [])
+
+  // Programmatic hex selection (Armies HUD rows) - same shape + enrichment as
+  // a map click on hex-fill, so the drawer opens ready to march from there.
+  const selectHexByIndex = useCallback((h3) => {
+    const props = hexToGeoJSONFeature(h3, claimedRef.current[h3], null).properties
+    setSelectedHex(enrichHex(h3, props))
+    map.current?.setFilter('hex-selected', ['==', ['get', 'h3'], h3])
+  }, [enrichHex])
   const [zoneBonus, setZoneBonus] = useState(2) // same value, for the legend re-render
+  const zoneCirclesRef = useRef([])  // one [lat,lng,radiusDeg] per city, for viewport checks
+  const zoneSeenRef = useRef(false)  // legend already shown for the zones currently in view
+  const zoneLegendTimer = useRef(null)
+  const [zoneLegendVisible, setZoneLegendVisible] = useState(false)
+  const [capitalInView, setCapitalInView] = useState(true)
   const wondersRef = useRef([])      // latest /world/wonders payload, for the chronicle card
   const [wonderCard, setWonderCard] = useState(null) // wonder object, or null
 
@@ -457,6 +487,33 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
+  }, [])
+
+  // Show the zone legend only while a city zone is on screen (fades after a
+  // few seconds); track whether the capital is visible for the Home button.
+  const checkViewport = useCallback(() => {
+    if (!map.current) return
+    const bounds = map.current.getBounds()
+    const z = map.current.getZoom()
+    const w = bounds.getWest(), e = bounds.getEast(), s = bounds.getSouth(), n = bounds.getNorth()
+    const zoneIn = z >= 5 && zoneCirclesRef.current.some(([lat, lng, r]) =>
+      lat + r > s && lat - r < n && lng + r > w && lng - r < e)
+    if (zoneIn && !zoneSeenRef.current) {
+      zoneSeenRef.current = true
+      setZoneLegendVisible(true)
+      clearTimeout(zoneLegendTimer.current)
+      zoneLegendTimer.current = setTimeout(() => setZoneLegendVisible(false), 6000)
+    } else if (!zoneIn) {
+      zoneSeenRef.current = false
+      setZoneLegendVisible(false)
+    }
+    const cap = playerRef.current?.capital_hex
+    if (cap) {
+      const [lat, lng] = cellToLatLng(cap)
+      setCapitalInView(bounds.contains([lng, lat]))
+    } else {
+      setCapitalInView(true)
+    }
   }, [])
 
   const loadStrategic = useCallback(async () => {
@@ -525,6 +582,20 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
       zoneBonusRef.current = bonus
       setZoneBonus(bonus)
       zonesRef.current = new Map(zones.map(z => [z.h3, z.city]))
+      // Collapse each city's ring of hexes to a bounding circle
+      const byCity = new Map()
+      for (const z of zones) {
+        const c = cellToLatLng(z.h3)
+        if (!byCity.has(z.city)) byCity.set(z.city, [])
+        byCity.get(z.city).push(c)
+      }
+      zoneCirclesRef.current = [...byCity.values()].map(pts => {
+        const lat = pts.reduce((s, p) => s + p[0], 0) / pts.length
+        const lng = pts.reduce((s, p) => s + p[1], 0) / pts.length
+        const r = Math.max(...pts.map(([la, ln]) => Math.max(Math.abs(la - lat), Math.abs(ln - lng))))
+        return [lat, lng, r]
+      })
+      checkViewport()
       const features = zones.map(z => {
         const boundary = cellToBoundary(z.h3)
         const coords = boundary.map(([lat, lng]) => [lng, lat])
@@ -537,7 +608,7 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
       })
       map.current.getSource('zones').setData({ type: 'FeatureCollection', features })
     } catch { /* zones are static, best-effort */ }
-  }, [])
+  }, [checkViewport])
 
   const loadArmies = useCallback(async () => {
     try { setArmies(await api.getArmies()) } catch {}
@@ -757,7 +828,11 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
           ],
           'text-font': ['Noto Sans Regular'],
           'text-size': 15,
-          'text-allow-overlap': false,
+          // Garrison size is critical info (esp. on strategic hexes, which
+          // also render a centered zone-name label at the same spot) - it
+          // must never lose the collision and just silently disappear.
+          'icon-allow-overlap': true,
+          'text-allow-overlap': true,
           'text-anchor': 'left',
           'text-offset': [0.15, 1.0],
         },
@@ -934,6 +1009,9 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
         type: 'geojson',
         data: { type: 'FeatureCollection', features: [] },
       })
+      // Inserted before hex-troop-labels so this fill/border sits underneath
+      // the garrison count instead of hazing over it (both target the same
+      // strategic hexes).
       map.current.addLayer({
         id: 'strategic-fill',
         type: 'fill',
@@ -942,13 +1020,13 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
           'fill-color': ['case', ['!=', ['get', 'owner_color'], null], ['get', 'owner_color'], '#c9902a'],
           'fill-opacity': ['case', ['!=', ['get', 'owner_color'], null], 0.55, 0.25],
         },
-      })
+      }, 'hex-troop-labels')
       map.current.addLayer({
         id: 'strategic-border',
         type: 'line',
         source: 'strategic',
         paint: { 'line-color': '#f0c040', 'line-width': 1.5, 'line-opacity': 0.9 },
-      })
+      }, 'hex-troop-labels')
       map.current.addLayer({
         id: 'strategic-label',
         type: 'symbol',
@@ -964,6 +1042,9 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
           'text-size': ['interpolate', ['linear'], ['zoom'], 4, 9, 8, 13],
           'text-allow-overlap': false,
           'text-anchor': 'center',
+          // Nudged up off-center so it clears the garrison count label
+          // (hex-troop-labels), which sits lower/right at the same hex.
+          'text-offset': [0, -1.4],
         },
         paint: {
           'text-color': '#f0d080',
@@ -1008,8 +1089,8 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
       }
     })
 
-    map.current.on('moveend', () => { updateHexes(); updateOverview() })
-    map.current.on('zoomend', () => { updateHexes(); updateOverview() })
+    map.current.on('moveend', () => { updateHexes(); updateOverview(); checkViewport() })
+    map.current.on('zoomend', () => { updateHexes(); updateOverview(); checkViewport() })
     map.current.on('zoom', () => {
       const z = map.current.getZoom()
       setZoom(z)
@@ -1068,18 +1149,7 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
           return null
         }
         // Normal click - select hex, enrich with strategic + city-zone info
-        const strategic = strategicRef.current[hex.h3]
-        const enriched = {
-          ...hex,
-          zone_city: zonesRef.current.get(hex.h3) || null,
-          zone_bonus: zoneBonusRef.current,
-          ...(strategic ? {
-            strategic_name: strategic.name,
-            strategic_bonus: strategic.bonus_gold,
-            strategic_primary: strategic.primary,
-          } : {}),
-        }
-        setSelectedHex(enriched)
+        setSelectedHex(enrichHex(hex.h3, hex))
         map.current.setFilter('hex-selected', ['==', ['get', 'h3'], hex.h3])
         return null
       })
@@ -1539,6 +1609,7 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
             try {
               const [lat, lng] = cellToLatLng(h3)
               map.current?.flyTo({ center: [lng, lat], zoom: 12, speed: 1.5 })
+              selectHexByIndex(h3)
             } catch {}
           }}
         />
@@ -1550,8 +1621,8 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
         onFlyTo={(lng, lat) => map.current?.flyTo({ center: [lng, lat], zoom: 9, speed: 1.5 })}
       />
 
-      {/* ── City-zone legend ─────────────────────────────────────── */}
-      {zoom >= 5 && !isMobile && (
+      {/* ── City-zone legend - only while a zone is on screen, then fades ── */}
+      {zoom >= 5 && (
         <div style={{
           // chat bubble (ChatPanel) occupies bottom-left 16px when enabled
           position: 'absolute', bottom: 16, left: player && CHAT_ON ? 74 : 16, pointerEvents: 'none',
@@ -1559,10 +1630,50 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
           background: 'rgba(20,15,40,0.82)', border: '1px solid rgba(224,184,74,0.35)',
           borderRadius: 6, padding: '6px 11px',
           fontFamily: 'Georgia, serif', fontSize: 12, color: '#cdb98a', letterSpacing: 0.5,
+          opacity: zoneLegendVisible ? 1 : 0, transition: 'opacity 1.2s ease',
         }}>
           <span style={{ width: 13, height: 13, borderRadius: 3, background: 'rgba(224,184,74,0.35)', border: '1px solid rgba(224,184,74,0.7)' }} />
           City zone — <span style={{ color: '#e0b84a' }}>+{zoneBonus}g</span> per hex you hold
         </div>
+      )}
+
+      {/* ── Guest call-to-action - the map is the pitch, this is the close ── */}
+      {!player && (
+        <button
+          onClick={() => onLoginRequired('register')}
+          style={{
+            position: 'absolute', bottom: isMobile ? 20 : 30, left: '50%', transform: 'translateX(-50%)',
+            zIndex: 6, display: 'flex', alignItems: 'center', gap: 9,
+            padding: isMobile ? '12px 20px' : '14px 28px',
+            background: 'linear-gradient(180deg, #e8c55a, #c9902a)',
+            border: '1px solid rgba(255,230,160,0.7)', borderRadius: 28,
+            color: '#1a1028', cursor: 'pointer', whiteSpace: 'nowrap',
+            fontFamily: 'Georgia, serif', fontSize: isMobile ? 13 : 15,
+            letterSpacing: isMobile ? 1.5 : 2.5, fontWeight: 'bold',
+            animation: 'cta-glow 2.6s ease-in-out infinite',
+          }}>
+          <SwordsIcon size={isMobile ? 14 : 16} color="#1a1028" /> CLAIM YOUR FIRST TERRITORY
+        </button>
+      )}
+
+      {/* ── Home - floating, shown when your capital is off screen ── */}
+      {player?.capital_hex && !capitalInView && (
+        <button
+          title="Return to your capital"
+          onClick={() => {
+            const [lat, lng] = cellToLatLng(player.capital_hex)
+            window.dispatchEvent(new CustomEvent('rw:flyto', { detail: { lat, lng, zoom: 8.8 } }))
+          }}
+          style={{
+            position: 'absolute', bottom: 24, right: 16, zIndex: 5,
+            display: 'flex', alignItems: 'center', gap: 7, padding: '10px 16px',
+            background: 'rgba(20,15,40,0.92)', border: '1px solid rgba(224,184,74,0.55)',
+            borderRadius: 22, color: '#e0c070', cursor: 'pointer',
+            fontFamily: 'Georgia, serif', fontSize: 13, letterSpacing: 2,
+            boxShadow: '0 2px 14px rgba(0,0,0,0.5)',
+          }}>
+          <KeepIcon size={15} color="#e0c070" /> HOME
+        </button>
       )}
 
       {/* ── Wonder chronicle - who holds it and every keeper before ── */}

@@ -17,6 +17,7 @@ export default function App() {
 
   if (window.location.hash === '#admin') return <AdminPortal />
   const [showAuth, setShowAuth] = useState(true)
+  const [authMode, setAuthMode] = useState('login')
   const [showHelp, setShowHelp] = useState(false)
   const [showFTUE, setShowFTUE] = useState(false)
 
@@ -53,7 +54,11 @@ export default function App() {
     <>
       <GameMap
         player={player}
-        onLoginRequired={() => setShowAuth(true)}
+        onLoginRequired={(mode) => {
+          // The guest CTA passes 'register'; the top-bar button passes a click event
+          setAuthMode(mode === 'register' ? 'register' : 'login')
+          setShowAuth(true)
+        }}
         onPlayerUpdate={updates => setPlayer(p => ({ ...p, ...updates }))}
         onShowHelp={() => setShowHelp(true)}
       />
@@ -61,7 +66,7 @@ export default function App() {
         <FTUEGuide player={player} onDismiss={() => setShowFTUE(false)} />
       )}
       {!player && showAuth && (
-        <AuthModal onAuth={handleAuth} onDismiss={() => setShowAuth(false)} />
+        <AuthModal key={authMode} initialMode={authMode} onAuth={handleAuth} onDismiss={() => setShowAuth(false)} />
       )}
       {showHelp && <HelpModal onClose={() => setShowHelp(false)} />}
       <ToastContainer />
