@@ -26,14 +26,26 @@ export const BUILDING_COSTS = {
 export const TROOP_STATS = {
   troop: {
     gold: DEV_MODE ? 1 : 10,
-    trainMinutes:       DEV_MODE ? 0.1  : 3,
-    marchMinutesPerHex: DEV_MODE ? 0.25 : 60,
+    trainMinutes:       DEV_MODE ? 0.1  : 3,   // base rate; barracks ÷2, none ×5 (net 10× gap)
+    marchMinutesPerHex: DEV_MODE ? 0.25 : 25,
   },
 }
+// Training without a barracks is deliberately punishing: 5× the base rate,
+// vs ÷2 with one - a 10× gap that makes barracks placement a real decision.
+export const NO_BARRACKS_TRAIN_MULT = 5
+
+// World Wonder keeper income, per wonder per tick. Flat wherever the wonder
+// stands: a remote Fuji pays the same as the Eiffel Tower in the Paris zone,
+// so wonder-hunting pulls players away from the city hotspots, not into them.
+export const WONDER_INCOME_GOLD = 10
 
 // ─── Combat ───────────────────────────────────────────────────────────────────
 export const FORT_DEFENSE_BONUS     = 0.4   // +40% defender strength per fort
 export const BATTLE_ROUND_DAMAGE_RATE = 0.15  // fraction of strength lost per round
+// A close siege should take long enough for reinforcements (and a sleeping
+// defender) to matter - lopsided fights still resolve in a few rounds either
+// way, but an even match now plays out over hours instead of ~2 minutes.
+export const BATTLE_INTERVAL_MS = DEV_MODE ? 15 * 1000 : 15 * 60 * 1000
 
 // ─── Ocean travel ─────────────────────────────────────────────────────────────
 export const OCEAN_MARCH_MULTIPLIER = 10  // ocean hexes cost 10× march time
@@ -62,6 +74,12 @@ export const CAMP_GARRISON_MIN  = DEV_MODE ?  5 :  8
 export const CAMP_GARRISON_MAX  = DEV_MODE ? 12 : 18
 export const CAMP_LOOT_GOLD     = DEV_MODE ? 20 : 40   // plunder for capturing a camp
 
+// Country-capital hexes (Paris, Tokyo, etc.) start each season under a bigger
+// Wildlands garrison than regular camps - the crown-eligible prize should go
+// to whoever can field a real army, not whoever clicks fastest after a reset.
+export const CAPITAL_GARRISON_MIN = DEV_MODE ? 20 : 40
+export const CAPITAL_GARRISON_MAX = DEV_MODE ? 35 : 70
+
 // ─── Entrenchment - defense from compact borders ──────────────────────────────
 export const ENTRENCH_BONUS_PER_NEIGHBOR = 0.08  // +8% defender strength per adjacent friendly hex
 export const ENTRENCH_MAX_NEIGHBORS      = 4     // capped at +32%
@@ -74,9 +92,17 @@ export const DECAY_MAX_PER_TICK  = 3                   // at most N hexes lost p
 // ─── Country crowns ───────────────────────────────────────────────────────────
 export const CROWN_MIN_HEXES = DEV_MODE ? 3 : 10  // hexes in-country (plus its capital) to be crowned
 
+// ─── Notifications ─────────────────────────────────────────────────────────────
+// Web push ships behind a flag so it can be killed instantly (annoying users,
+// device-cert issues, etc.) without touching VAPID keys. Default on.
+export const NOTIFICATIONS_ENABLED = process.env.NOTIFICATIONS_ENABLED !== 'false'
+
 // ─── Alliances ────────────────────────────────────────────────────────────────
 export const ALLIANCE_CREATE_COST = DEV_MODE ? 10 : 100
 export const CHAT_MAX_LENGTH      = 240
+// Chat ships behind a flag: no moderation yet, so it stays off unless
+// explicitly enabled (set CHAT_ENABLED=true and VITE_CHAT_ENABLED=true).
+export const CHAT_ENABLED         = process.env.CHAT_ENABLED === 'true'
 
 // ─── Power projection - huge forces can't hide in the fog ─────────────────────
 export const PROJECTION_GARRISON = DEV_MODE ? 30 : 250    // a garrison this big is visible through fog
@@ -86,7 +112,7 @@ export const PROJECTION_EMPIRE   = DEV_MODE ? 120 : 2500  // total troops at whi
 // When a season ends: standings are frozen, a Champion is crowned, and the map
 // resets for a new age. Accounts, alliances, and history persist.
 export const SEASON_DURATION_MS = DEV_MODE
-  ? 5 * 60 * 1000              // 5 minutes - watch a full season roll over while testing
+  ? 30 * 24 * 60 * 60 * 1000   // 30 days - force-end early from the admin portal when you need a rollover
   : 90 * 24 * 60 * 60 * 1000   // 90 days
 
 // Podium gold carried into the new age (1st, 2nd, 3rd)
