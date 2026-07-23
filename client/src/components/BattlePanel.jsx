@@ -32,6 +32,36 @@ function RoundTimer({ lastRoundAt }) {
   )
 }
 
+function InfoTooltip({ children }) {
+  const [hover, setHover] = useState(false)
+  return (
+    <span
+      style={{
+        display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+        width: 16, height: 16, borderRadius: '50%', flexShrink: 0,
+        border: '1px solid rgba(190,60,50,0.5)', color: '#c08080',
+        fontSize: 11, cursor: 'default', position: 'relative',
+      }}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+    >
+      ?
+      {hover && (
+        <div style={{
+          position: 'absolute', top: '100%', right: 0, marginTop: 6,
+          background: 'rgba(20,8,8,0.98)', border: '1px solid rgba(190,60,50,0.45)',
+          borderRadius: 6, padding: '12px 14px',
+          fontSize: 12, color: '#c9b99a', fontFamily: 'Georgia, serif',
+          boxShadow: '0 4px 20px rgba(0,0,0,0.6)',
+          zIndex: 100, width: 260, textAlign: 'left', lineHeight: 1.6, whiteSpace: 'normal',
+        }}>
+          {children}
+        </div>
+      )}
+    </span>
+  )
+}
+
 function SoldierIcon({ color, dead, mirror }) {
   return (
     <svg width="13" height="17" viewBox="0 0 13 17" style={{
@@ -50,11 +80,19 @@ function SoldierIcon({ color, dead, mirror }) {
 
 function StrengthBar({ strength, maxStrength, initialStrength, initialQty, color, losses, side }) {
   const pct = maxStrength > 0 ? Math.min(100, (strength / maxStrength) * 100) : 0
-  // One icon per soldier up to 24, then each icon represents a share of the army
-  const icons = Math.max(1, Math.min(24, Math.round(initialQty || 1)))
+
+  // Fixed two rows of real 1:1 soldier icons - past that, fold the rest into
+  // a "…N" slot instead of endlessly stretching what one icon represents.
+  const COLS = 8
+  const CAP = COLS * 2
+  const peakQty = Math.max(1, Math.round(initialQty || 1))
+  const overCap = peakQty > CAP
+  const shownIcons = overCap ? CAP - 1 : peakQty
+
   const aliveFrac = initialStrength > 0 ? Math.max(0, Math.min(1, strength / initialStrength)) : 0
-  const alive = Math.round(icons * aliveFrac)
-  const perIcon = initialQty > icons ? Math.round(initialQty / icons) : 1
+  const aliveTotal = Math.round(peakQty * aliveFrac)
+  const aliveShown = Math.min(shownIcons, aliveTotal)
+  const overflowAlive = Math.max(0, aliveTotal - shownIcons)
 
   return (
     <div style={{ flex: 1, textAlign: side === 'left' ? 'left' : 'right' }}>
@@ -71,19 +109,29 @@ function StrengthBar({ strength, maxStrength, initialStrength, initialQty, color
           float: side === 'right' ? 'right' : 'left',
         }} />
       </div>
-      {/* The army itself - soldiers fall as strength drops */}
+      {/* The army itself - soldiers fall as strength drops, capped at two rows */}
       <div style={{
-        display: 'flex', flexWrap: 'wrap', gap: 3, marginTop: 10,
-        justifyContent: side === 'right' ? 'flex-end' : 'flex-start',
+        display: 'grid', gridTemplateColumns: `repeat(${COLS}, auto)`, gap: 3, marginTop: 10,
+        justifyContent: side === 'right' ? 'end' : 'start',
       }}>
-        {Array.from({ length: icons }, (_, i) => {
+        {Array.from({ length: shownIcons }, (_, i) => {
           // Soldiers die from the outer edge inward (toward the front line)
-          const dead = side === 'left' ? i >= alive : i < icons - alive
+          const dead = side === 'left' ? i >= aliveShown : i < shownIcons - aliveShown
           return <SoldierIcon key={i} color={color} dead={dead} mirror={side === 'right'} />
         })}
+        {overCap && (
+          <span style={{
+            display: 'flex', alignItems: 'center',
+            fontSize: 12, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap',
+            color: overflowAlive > 0 ? color : '#665050',
+            opacity: overflowAlive > 0 ? 0.85 : 0.4,
+          }} title={`${overflowAlive} more troops not individually pictured`}>
+            …{overflowAlive}
+          </span>
+        )}
       </div>
       <div style={{ fontSize: 13, color: '#9a7a7a', marginTop: 6 }}>
-        Lost: ~{Math.max(0, Math.round((initialQty || 0) * (1 - aliveFrac)))} troops{perIcon > 1 ? ` · 1 figure ≈ ${perIcon}` : ''}
+        Lost: ~{Math.max(0, peakQty - aliveTotal)} troops
       </div>
     </div>
   )
@@ -173,18 +221,28 @@ export default function BattlePanel({ hex, player, onMarchStart, onClose }) {
     }}>
       {/* Header */}
       <div style={{
-        display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+        display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10,
         padding: isMobile ? '12px 16px' : '14px 28px',
         borderBottom: '1px solid rgba(190,60,50,0.2)',
       }}>
-        <span style={{ fontSize: 16, letterSpacing: 4, color: '#e07060', textTransform: 'uppercase' }}>
+        <span style={{ fontSize: isMobile ? 14 : 16, letterSpacing: isMobile ? 2 : 4, color: '#e07060', textTransform: 'uppercase', whiteSpace: 'nowrap' }}>
           <SwordsIcon size={15} color="#e07060" /> Battle in Progress
         </span>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-          <span style={{ fontSize: 13, color: '#9a6a6a' }}>
-            Round {battle.round_number} · ~{Math.max(0, roundsLeft)} left
+        <div style={{ display: 'flex', alignItems: 'center', gap: isMobile ? 8 : 14 }}>
+          <span style={{ fontSize: 13, color: '#9a6a6a', whiteSpace: 'nowrap' }}>
+            {isMobile ? 'R' : 'Round '}{battle.round_number} · ~{Math.max(0, roundsLeft)} left
           </span>
           <RoundTimer lastRoundAt={battle.last_round_at} />
+          <InfoTooltip>
+            <b style={{ color: '#e0a090' }}>Str</b> (strength) is combat power, not headcount.
+            Attackers: 1 troop = 1 str. Defenders get a bonus from forts, terrain,
+            and compact borders, so their str can be higher than their troop count.
+            <br /><br />
+            Each round, both sides lose 15% of the <i>other</i> side's current strength.
+            <br /><br />
+            <b style={{ color: '#e0a090' }}>Figures</b> below = real troops, one icon each,
+            up to two rows. Past that, the rest show as a plain "…N" count instead.
+          </InfoTooltip>
           <button onClick={onClose} style={{ background: 'none', border: 'none', color: '#9a6a6a', cursor: 'pointer', fontSize: 24, lineHeight: 1 }}>×</button>
         </div>
       </div>
