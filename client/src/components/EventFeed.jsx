@@ -115,15 +115,30 @@ export default function EventFeed() {
   const openRef             = useRef(false)
   const tabRef              = useRef('empire')
   const seenRef             = useRef(null)
+  const seenWorldRef        = useRef(null)
   openRef.current = open
   tabRef.current = tab
 
-  // Seed seen-event ids so we only pop genuinely new dispatches
+  // Seed seen-event ids so we only pop/count genuinely new dispatches
   useEffect(() => {
     api.peekEvents()
       .then(evs => { seenRef.current = new Set(evs.map(e => e.id)) })
       .catch(() => { seenRef.current = new Set() })
+    api.getWorldEvents()
+      .then(evs => { seenWorldRef.current = new Set(evs.map(e => e.id)) })
+      .catch(() => { seenWorldRef.current = new Set() })
   }, [])
+
+  // Transient popups on the right edge - shared by personal dispatches and
+  // Herald news so both fade in/out the same way.
+  function popFresh(fresh) {
+    if (fresh.length === 0) return
+    setPopups(p => [...p, ...fresh].slice(-4))
+    playForEventType(fresh[0].type)
+    fresh.forEach(e =>
+      setTimeout(() => setPopups(p => p.filter(x => x.id !== e.id)), 6000)
+    )
+  }
 
   useSocket({
     'events:new': async () => {
@@ -131,26 +146,30 @@ export default function EventFeed() {
         try { setEvents(await api.getEvents()) } catch { /* offline */ }
         return
       }
-      setCount(c => c + 1)
-      // Transient popups on the right edge for new dispatches
+      // The socket ping is global (fires for every player's event, not just
+      // yours) - only count/pop what peekEvents confirms is actually new to you.
       try {
         const evs = await api.peekEvents()
         if (!seenRef.current) return
         const fresh = evs.filter(e => !seenRef.current.has(e.id)).slice(0, 3)
         fresh.forEach(e => seenRef.current.add(e.id))
-        if (fresh.length > 0) {
-          setPopups(p => [...p, ...fresh].slice(-4))
-          playForEventType(fresh[0].type)
-          fresh.forEach(e =>
-            setTimeout(() => setPopups(p => p.filter(x => x.id !== e.id)), 6000)
-          )
-        }
+        setCount(c => c + fresh.length)
+        popFresh(fresh)
       } catch { /* offline */ }
     },
     'world:new': async () => {
       if (openRef.current && tabRef.current === 'herald') {
         try { setWorld(await api.getWorldEvents()) } catch { /* offline */ }
+        return
       }
+      try {
+        const evs = await api.getWorldEvents()
+        if (!seenWorldRef.current) return
+        const fresh = evs.filter(e => !seenWorldRef.current.has(e.id)).slice(0, 3)
+        fresh.forEach(e => seenWorldRef.current.add(e.id))
+        setCount(c => c + fresh.length)
+        popFresh(fresh)
+      } catch { /* offline */ }
     },
   })
 
