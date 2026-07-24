@@ -80,7 +80,7 @@ const EVENT_DESC = {
 function StatCard({ label, value, color = '#c9b99a' }) {
   return (
     <div style={{ ...CARD_STYLE, minWidth: 140, flex: '1 1 140px' }}>
-      <div style={{ fontSize: 11, color: '#6a5878', letterSpacing: 2, textTransform: 'uppercase', marginBottom: 6 }}>{label}</div>
+      <div style={{ fontSize: 11, color: '#8a7a9a', letterSpacing: 2, textTransform: 'uppercase', marginBottom: 6 }}>{label}</div>
       <div style={{ fontSize: 28, color, fontFamily: 'Georgia, serif' }}>{value ?? '-'}</div>
     </div>
   )
@@ -130,7 +130,7 @@ function GoldInput({ playerId, secret, onDone }) {
 }
 
 // shared table chrome
-const TH = { padding: '10px 14px', textAlign: 'left', color: '#6a5878', fontWeight: 'normal', letterSpacing: 1, fontSize: 11, textTransform: 'uppercase' }
+const TH = { padding: '10px 14px', textAlign: 'left', color: '#8a7a9a', fontWeight: 'normal', letterSpacing: 1, fontSize: 11, textTransform: 'uppercase' }
 const TD = { padding: '8px 14px' }
 const ROW = { borderBottom: '1px solid rgba(74,58,122,0.2)' }
 const dot = c => <span style={{ display: 'inline-block', width: 12, height: 12, borderRadius: '50%', background: c, verticalAlign: 'middle' }} />
@@ -277,7 +277,7 @@ export default function AdminPortal() {
       <div style={{ position: 'fixed', inset: 0, background: '#0a0818', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'Georgia, serif', color: '#c9b99a' }}>
         <div style={{ ...CARD_STYLE, width: 320, textAlign: 'center' }}>
           <div style={{ fontSize: 20, marginBottom: 4, letterSpacing: 2 }}>REALM WAR</div>
-          <div style={{ fontSize: 12, color: '#6a5878', letterSpacing: 3, marginBottom: 24 }}>ADMIN</div>
+          <div style={{ fontSize: 12, color: '#8a7a9a', letterSpacing: 3, marginBottom: 24 }}>ADMIN</div>
           <input
             type="password"
             value={secret}
@@ -292,7 +292,7 @@ export default function AdminPortal() {
             {loading ? 'Checking…' : 'Enter'}
           </button>
           <div style={{ marginTop: 16, fontSize: 12, color: '#4a3a6a' }}>
-            <a href="/" style={{ color: '#6a5878' }}>← back to game</a>
+            <a href="/" style={{ color: '#8a7a9a' }}>← back to game</a>
           </div>
         </div>
       </div>
@@ -308,7 +308,7 @@ export default function AdminPortal() {
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20, flexWrap: 'wrap', gap: 10 }}>
         <div>
           <span style={{ fontSize: 22, letterSpacing: 2 }}>REALM WAR</span>
-          <span style={{ fontSize: 12, color: '#6a5878', letterSpacing: 3, marginLeft: 12 }}>ADMIN PORTAL</span>
+          <span style={{ fontSize: 12, color: '#8a7a9a', letterSpacing: 3, marginLeft: 12 }}>ADMIN PORTAL</span>
           {system && (
             <span style={{ fontSize: 11, marginLeft: 14, color: system.dev_mode ? '#d4a843' : '#6a9a6a', border: `1px solid ${system.dev_mode ? '#6a5320' : '#2a4a2a'}`, borderRadius: 4, padding: '2px 8px', letterSpacing: 1 }}>
               {system.dev_mode ? 'DEV MODE' : 'PRODUCTION'}
@@ -316,7 +316,7 @@ export default function AdminPortal() {
           )}
         </div>
         <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-          <span style={{ fontSize: 11, color: '#6a5878' }}>updated {lastUpdated ? ago(lastUpdated) : '-'}</span>
+          <span style={{ fontSize: 11, color: '#8a7a9a' }}>updated {lastUpdated ? ago(lastUpdated) : '-'}</span>
           <label style={{ fontSize: 12, color: '#8a7a9a', display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer' }}>
             <input type="checkbox" checked={auto} onChange={e => setAuto(e.target.checked)} /> auto
           </label>
@@ -336,7 +336,7 @@ export default function AdminPortal() {
           return (
             <button key={t} onClick={() => setTab(t)} style={{
               padding: '8px 16px', background: 'none', border: 'none', borderBottom: `2px solid ${active ? '#9a7ad4' : 'transparent'}`,
-              color: active ? '#d4c9a8' : '#6a5878', cursor: 'pointer', fontSize: 14, fontFamily: 'Georgia, serif', letterSpacing: 1,
+              color: active ? '#d4c9a8' : '#8a7a9a', cursor: 'pointer', fontSize: 14, fontFamily: 'Georgia, serif', letterSpacing: 1,
             }}>
               {t}{count != null && <span style={{ fontSize: 11, marginLeft: 6, color: active ? '#9a7ad4' : '#4a3a6a' }}>{count}</span>}
             </button>
@@ -357,7 +357,7 @@ export default function AdminPortal() {
             <StatCard label="Bots" value={overview.bot_players} color="#6a9a6a" />
             <StatCard label="Alliances" value={overview.alliances} color="#9a7ad4" />
             <StatCard label="Training Queue" value={overview.training_queued} color="#8a9a8a" />
-            <StatCard label="Upgrades Queue" value={overview.upgrade_queued} color="#8a9a8a" />
+            <StatCard label="Upgrades Queue" value={overview.upgrade_queued} color="#5ac9c0" />
           </div>
           <SectionTitle>Recent Activity</SectionTitle>
           <ActivityFeed items={activity.slice(0, 12)} />
@@ -376,7 +376,7 @@ export default function AdminPortal() {
 
           <SectionTitle>Cohort Retention</SectionTitle>
           <div style={{ ...CARD_STYLE, marginBottom: 24 }}>
-            <div style={{ fontSize: 12, color: '#6a5878', marginBottom: 4 }}>
+            <div style={{ fontSize: 12, color: '#8a7a9a', marginBottom: 4 }}>
               Rolling retention - the share of each signup cohort that had come back on or after day N.
               Cohorts with 0 players just haven't existed that long yet.
             </div>
@@ -432,7 +432,7 @@ export default function AdminPortal() {
                             <div style={{ width: `${(atk / total) * 100}%`, height: '100%', background: '#ff8a6a' }} />
                           </div>
                         </td>
-                        <td style={{ ...TD, color: '#6a5878', fontSize: 12 }}>{ago(b.created_at)}</td>
+                        <td style={{ ...TD, color: '#8a7a9a', fontSize: 12 }}>{ago(b.created_at)}</td>
                       </tr>
                     )
                   })}
@@ -461,10 +461,10 @@ export default function AdminPortal() {
                         <td style={TD}>{dot(a.color)} <span style={{ marginLeft: 6 }}>{a.username.startsWith('BOT_') ? <><BotIcon size={13} /> {a.username.slice(4)}</> : a.username}</span></td>
                         <td style={{ ...TD, color: '#8a7a9a' }}>{a.type}</td>
                         <td style={{ ...TD, color: '#ff8a6a' }}>{a.quantity}</td>
-                        <td style={{ ...TD, fontFamily: 'monospace', color: '#6a5878' }}>{hex(a.from_hex)}</td>
+                        <td style={{ ...TD, fontFamily: 'monospace', color: '#8a7a9a' }}>{hex(a.from_hex)}</td>
                         <td style={{ ...TD, fontFamily: 'monospace', color: '#8a7a9a' }}>{hex(a.to_hex)}</td>
                         <td style={{ ...TD, color: soon ? '#ff4a6a' : '#c9a040' }}>{until(a.arrives_at)}</td>
-                        <td style={{ ...TD, color: '#6a5878', fontSize: 12 }}>{ago(a.departed_at)}</td>
+                        <td style={{ ...TD, color: '#8a7a9a', fontSize: 12 }}>{ago(a.departed_at)}</td>
                       </tr>
                     )
                   })}
@@ -521,7 +521,7 @@ export default function AdminPortal() {
                   <GmEventIcon type={e.type} size={16} />
                   <span style={{ flex: 1, fontSize: 13, color: '#c9b99a' }}>{e.headline}</span>
                   {e.notified > 0 && <span style={{ fontSize: 11, color: '#6a9a6a' }}>{e.notified} notified</span>}
-                  <span style={{ fontSize: 11, color: '#6a5878', width: 70, textAlign: 'right' }}>{ago(e.at)}</span>
+                  <span style={{ fontSize: 11, color: '#8a7a9a', width: 70, textAlign: 'right' }}>{ago(e.at)}</span>
                 </div>
               ))}
             </div>}
@@ -548,8 +548,8 @@ export default function AdminPortal() {
                     <td style={TD}>{p.hex_count}</td>
                     <td style={TD}>{p.total_troops}</td>
                     <td style={{ ...TD, color: '#8a9a8a' }}>{p.login_streak ?? 0}d</td>
-                    <td style={{ ...TD, color: '#6a5878', fontSize: 12 }}>{p.last_login_date ? new Date(p.last_login_date).toLocaleDateString() : '-'}</td>
-                    <td style={{ ...TD, color: '#6a5878', fontSize: 12 }}>{p.created_at ? new Date(p.created_at).toLocaleDateString() : '-'}</td>
+                    <td style={{ ...TD, color: '#8a7a9a', fontSize: 12 }}>{p.last_login_date ? new Date(p.last_login_date).toLocaleDateString() : '-'}</td>
+                    <td style={{ ...TD, color: '#8a7a9a', fontSize: 12 }}>{p.created_at ? new Date(p.created_at).toLocaleDateString() : '-'}</td>
                     <td style={TD}>
                       <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                         {goldTarget === p.id
@@ -606,7 +606,7 @@ export default function AdminPortal() {
             <StatCard label="Training Queue" value={system.training_queued} color="#8a9a8a" />
             <StatCard label="Upgrade Queue" value={system.upgrade_queued} color="#8a9a8a" />
           </div>
-          <div style={{ ...CARD_STYLE, fontSize: 12, color: '#6a5878' }}>
+          <div style={{ ...CARD_STYLE, fontSize: 12, color: '#8a7a9a' }}>
             Server time: {new Date(system.server_time).toLocaleString()}
           </div>
         </>
@@ -616,7 +616,7 @@ export default function AdminPortal() {
 }
 
 function Empty({ children }) {
-  return <div style={{ ...CARD_STYLE, color: '#6a5878', textAlign: 'center', padding: '32px' }}>{children}</div>
+  return <div style={{ ...CARD_STYLE, color: '#8a7a9a', textAlign: 'center', padding: '32px' }}>{children}</div>
 }
 
 function ActivityFeed({ items }) {
@@ -629,7 +629,7 @@ function ActivityFeed({ items }) {
           <span style={{ fontSize: 10, color: eventColor(e.type), textTransform: 'uppercase', letterSpacing: 1, width: 64, flexShrink: 0 }}>{e.type}</span>
           <span style={{ flex: 1, fontSize: 13, color: '#c9b99a' }}>{e.message}</span>
           {e.hex_index && <span style={{ fontFamily: 'monospace', fontSize: 11, color: '#4a3a6a' }}>{hex(e.hex_index)}</span>}
-          <span style={{ fontSize: 11, color: '#6a5878', width: 70, textAlign: 'right', flexShrink: 0 }}>{ago(e.created_at)}</span>
+          <span style={{ fontSize: 11, color: '#8a7a9a', width: 70, textAlign: 'right', flexShrink: 0 }}>{ago(e.created_at)}</span>
         </div>
       ))}
     </div>
