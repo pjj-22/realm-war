@@ -141,6 +141,53 @@ router.get('/system', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }) }
 })
 
+// Retention: DAU/WAU/MAU and D1/D7/D30 cohort return-rates, computed purely
+// from players.created_at/last_login_date - no separate session log exists,
+// so "retained" here means "still had a login on/after day N", not "logged
+// in on exactly day N" (rolling, not exact-day, retention).
+router.get('/retention', async (req, res) => {
+  try {
+    const NOT_NPC = "username NOT LIKE 'BOT_%' AND username NOT LIKE 'WILD_%'"
+    const result = await pool.query(`
+      SELECT
+        COUNT(*)::int AS total_signups,
+        COUNT(*) FILTER (WHERE last_login_date = CURRENT_DATE)::int AS dau,
+        COUNT(*) FILTER (WHERE last_login_date >= CURRENT_DATE - INTERVAL '6 days')::int AS wau,
+        COUNT(*) FILTER (WHERE last_login_date >= CURRENT_DATE - INTERVAL '29 days')::int AS mau,
+        COUNT(*) FILTER (WHERE created_at::date <= CURRENT_DATE - 1)::int AS d1_cohort,
+        COUNT(*) FILTER (WHERE created_at::date <= CURRENT_DATE - 1
+          AND last_login_date >= created_at::date + 1)::int AS d1_retained,
+        COUNT(*) FILTER (WHERE created_at::date <= CURRENT_DATE - 7)::int AS d7_cohort,
+        COUNT(*) FILTER (WHERE created_at::date <= CURRENT_DATE - 7
+          AND last_login_date >= created_at::date + 7)::int AS d7_retained,
+        COUNT(*) FILTER (WHERE created_at::date <= CURRENT_DATE - 30)::int AS d30_cohort,
+        COUNT(*) FILTER (WHERE created_at::date <= CURRENT_DATE - 30
+          AND last_login_date >= created_at::date + 30)::int AS d30_retained,
+        COUNT(*) FILTER (WHERE login_streak = 0)::int AS streak_0,
+        COUNT(*) FILTER (WHERE login_streak = 1)::int AS streak_1,
+        COUNT(*) FILTER (WHERE login_streak BETWEEN 2 AND 6)::int AS streak_2_6,
+        COUNT(*) FILTER (WHERE login_streak BETWEEN 7 AND 29)::int AS streak_7_29,
+        COUNT(*) FILTER (WHERE login_streak >= 30)::int AS streak_30_plus
+      FROM players
+      WHERE ${NOT_NPC}
+    `)
+    const r = result.rows[0]
+    const pct = (retained, cohort) => cohort > 0 ? Math.round((retained / cohort) * 1000) / 10 : null
+    res.json({
+      total_signups: r.total_signups,
+      dau: r.dau, wau: r.wau, mau: r.mau,
+      retention: {
+        d1: { cohort: r.d1_cohort, retained: r.d1_retained, pct: pct(r.d1_retained, r.d1_cohort) },
+        d7: { cohort: r.d7_cohort, retained: r.d7_retained, pct: pct(r.d7_retained, r.d7_cohort) },
+        d30: { cohort: r.d30_cohort, retained: r.d30_retained, pct: pct(r.d30_retained, r.d30_cohort) },
+      },
+      streaks: {
+        '0': r.streak_0, '1': r.streak_1, '2-6': r.streak_2_6, '7-29': r.streak_7_29, '30+': r.streak_30_plus,
+      },
+    })
+  } catch (err) { res.status(500).json({ error: err.message }) }
+})
+
 // All players
 router.get('/players', async (req, res) => {
   try {

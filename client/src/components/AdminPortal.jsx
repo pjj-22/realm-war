@@ -139,7 +139,24 @@ function SectionTitle({ children }) {
   return <div style={{ margin: '0 0 10px', fontSize: 13, color: '#8a7a9a', letterSpacing: 2, textTransform: 'uppercase' }}>{children}</div>
 }
 
-const TABS = ['Overview', 'Activity', 'Battles', 'Armies', 'Events', 'Players', 'System']
+// Cohort retention row: N-day label, retained/cohort counts, and a percentage bar
+function RetentionRow({ label, cohort, retained, pct }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '10px 0' }}>
+      <div style={{ width: 46, fontSize: 13, color: '#c9b99a' }}>{label}</div>
+      <div style={{ flex: 1, height: 10, background: 'rgba(255,255,255,0.06)', borderRadius: 5, overflow: 'hidden' }}>
+        <div style={{ width: `${pct ?? 0}%`, height: '100%', background: pct == null ? 'transparent' : '#8a9aff' }} />
+      </div>
+      <div style={{ width: 130, fontSize: 12, color: '#8a7a9a', textAlign: 'right' }}>
+        {cohort === 0
+          ? 'no cohort yet'
+          : `${pct}% (${retained}/${cohort})`}
+      </div>
+    </div>
+  )
+}
+
+const TABS = ['Overview', 'Retention', 'Activity', 'Battles', 'Armies', 'Events', 'Players', 'System']
 
 export default function AdminPortal() {
   const [secret, setSecret] = useState(() => sessionStorage.getItem('rw_admin_secret') || '')
@@ -151,6 +168,7 @@ export default function AdminPortal() {
   const [lastUpdated, setLastUpdated] = useState(null)
 
   const [overview, setOverview] = useState(null)
+  const [retention, setRetention] = useState(null)
   const [players, setPlayers] = useState([])
   const [activity, setActivity] = useState([])
   const [battles, setBattles] = useState([])
@@ -177,8 +195,9 @@ export default function AdminPortal() {
   const loadAll = useCallback(async (s = secret) => {
     setLoading(true)
     try {
-      const [ov, pl, ac, ba, ar, sy, et] = await Promise.all([
+      const [ov, rt, pl, ac, ba, ar, sy, et] = await Promise.all([
         adminRequest('GET', '/overview', null, s),
+        adminRequest('GET', '/retention', null, s),
         adminRequest('GET', '/players', null, s),
         adminRequest('GET', '/activity', null, s),
         adminRequest('GET', '/battles', null, s),
@@ -186,7 +205,7 @@ export default function AdminPortal() {
         adminRequest('GET', '/system', null, s),
         adminRequest('GET', '/events/types', null, s),
       ])
-      setOverview(ov); setPlayers(pl); setActivity(ac); setBattles(ba); setArmies(ar); setSystem(sy)
+      setOverview(ov); setRetention(rt); setPlayers(pl); setActivity(ac); setBattles(ba); setArmies(ar); setSystem(sy)
       setEventTypes(et)
       setEventParams(prev => {
         const next = { ...prev }
@@ -342,6 +361,38 @@ export default function AdminPortal() {
           </div>
           <SectionTitle>Recent Activity</SectionTitle>
           <ActivityFeed items={activity.slice(0, 12)} />
+        </>
+      )}
+
+      {/* ─── Retention ─── */}
+      {tab === 'Retention' && retention && (
+        <>
+          <div style={{ display: 'flex', gap: 16, marginBottom: 24, flexWrap: 'wrap' }}>
+            <StatCard label="Total Signups" value={retention.total_signups} color="#c9b99a" />
+            <StatCard label="DAU" value={retention.dau} color="#8a9aff" />
+            <StatCard label="WAU" value={retention.wau} color="#9a7ad4" />
+            <StatCard label="MAU" value={retention.mau} color="#6a9a6a" />
+          </div>
+
+          <SectionTitle>Cohort Retention</SectionTitle>
+          <div style={{ ...CARD_STYLE, marginBottom: 24 }}>
+            <div style={{ fontSize: 12, color: '#6a5878', marginBottom: 4 }}>
+              Rolling retention - the share of each signup cohort that had come back on or after day N.
+              Cohorts with 0 players just haven't existed that long yet.
+            </div>
+            <RetentionRow label="Day 1" {...retention.retention.d1} />
+            <RetentionRow label="Day 7" {...retention.retention.d7} />
+            <RetentionRow label="Day 30" {...retention.retention.d30} />
+          </div>
+
+          <SectionTitle>Login Streak Distribution</SectionTitle>
+          <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+            <StatCard label="Streak 0" value={retention.streaks['0']} />
+            <StatCard label="Streak 1" value={retention.streaks['1']} />
+            <StatCard label="Streak 2-6" value={retention.streaks['2-6']} color="#8a9aff" />
+            <StatCard label="Streak 7-29" value={retention.streaks['7-29']} color="#9a7ad4" />
+            <StatCard label="Streak 30+" value={retention.streaks['30+']} color="#d4a843" />
+          </div>
         </>
       )}
 
