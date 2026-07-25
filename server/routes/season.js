@@ -21,7 +21,8 @@ router.get('/current', async (req, res) => {
       ends_at: season.ends_at,
       standings,
     })
-  } catch {
+  } catch (err) {
+    console.error('[season] GET /current failed:', err.message)
     res.status(500).json({ error: 'Server error' })
   }
 })
@@ -39,7 +40,8 @@ router.get('/history', async (req, res) => {
       LIMIT 20
     `)
     res.json(r.rows)
-  } catch {
+  } catch (err) {
+    console.error('[season] GET /history failed:', err.message)
     res.status(500).json({ error: 'Server error' })
   }
 })

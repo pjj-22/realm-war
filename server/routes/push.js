@@ -24,7 +24,8 @@ router.post('/subscribe', requireAuth, async (req, res) => {
       [req.player.id, subscription.endpoint, subscription.keys]
     )
     res.json({ success: true })
-  } catch {
+  } catch (err) {
+    console.error('[push] POST /subscribe failed:', err.message)
     res.status(500).json({ error: 'Server error' })
   }
 })
@@ -36,7 +37,8 @@ router.delete('/subscribe', requireAuth, async (req, res) => {
   try {
     await pool.query('DELETE FROM push_subscriptions WHERE endpoint=$1 AND player_id=$2', [endpoint, req.player.id])
     res.json({ success: true })
-  } catch {
+  } catch (err) {
+    console.error('[push] DELETE /subscribe failed:', err.message)
     res.status(500).json({ error: 'Server error' })
   }
 })

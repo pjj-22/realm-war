@@ -33,7 +33,8 @@ router.get('/', requireAuth, async (req, res) => {
       `)
     }
     res.json(result.rows.reverse())
-  } catch {
+  } catch (err) {
+    console.error('[chat] GET / failed:', err.message)
     res.status(500).json({ error: 'Server error' })
   }
 })
@@ -58,7 +59,8 @@ router.post('/', requireAuth, rateLimit({ windowMs: 10 * 1000, max: 5, key: req 
     )
     getIO()?.emit('chat:new', { channel: allianceId ? 'alliance' : 'global', allianceId })
     res.json({ success: true })
-  } catch {
+  } catch (err) {
+    console.error('[chat] POST / failed:', err.message)
     res.status(500).json({ error: 'Server error' })
   }
 })

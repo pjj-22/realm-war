@@ -14,7 +14,8 @@ export function requireAuth(req, res, next) {
   try {
     req.player = jwt.verify(header.slice(7), process.env.JWT_SECRET)
     next()
-  } catch {
+  } catch (err) {
+    console.error('[auth] token verification failed:', err.message)
     res.status(401).json({ error: 'Invalid token' })
   }
 }

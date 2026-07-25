@@ -78,7 +78,8 @@ async function sameAlliance(aId, bId) {
     const r = await pool.query('SELECT alliance_id FROM players WHERE id IN ($1, $2)', [aId, bId])
     if (r.rows.length < 2) return false
     return r.rows[0].alliance_id != null && r.rows[0].alliance_id === r.rows[1].alliance_id
-  } catch {
+  } catch (err) {
+    console.error('[tick] sameAlliance check failed:', err.message)
     return false
   }
 }

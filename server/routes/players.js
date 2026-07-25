@@ -28,6 +28,7 @@ router.post('/register', rateLimit({ windowMs: 60 * 60 * 1000, max: DEV_MODE ? 1
     res.json({ token: signToken(player), player })
   } catch (err) {
     if (err.code === '23505') return res.status(409).json({ error: 'Username already taken' })
+    console.error('[players] POST /register failed:', err.message)
     res.status(500).json({ error: 'Server error' })
   }
 })
@@ -67,7 +68,8 @@ router.post('/login', rateLimit({ windowMs: 10 * 60 * 1000, max: DEV_MODE ? 1000
     }
 
     res.json({ token: signToken(playerData), player: playerData, loginBonus })
-  } catch {
+  } catch (err) {
+    console.error('[players] POST /login failed:', err.message)
     res.status(500).json({ error: 'Server error' })
   }
 })
@@ -93,7 +95,10 @@ router.get('/leaderboard', async (req, res) => {
       LIMIT 10
     `)
     res.json(result.rows)
-  } catch { res.status(500).json({ error: 'Server error' }) }
+  } catch (err) {
+    console.error('[players] GET /leaderboard failed:', err.message)
+    res.status(500).json({ error: 'Server error' })
+  }
 })
 
 // Player stats (authenticated)
@@ -143,7 +148,10 @@ router.get('/stats', requireAuth, async (req, res) => {
       .sort((a, b) => b.income - a.income)
 
     res.json(row)
-  } catch { res.status(500).json({ error: 'Server error' }) }
+  } catch (err) {
+    console.error('[players] GET /stats failed:', err.message)
+    res.status(500).json({ error: 'Server error' })
+  }
 })
 
 // Get current player
@@ -154,7 +162,8 @@ router.get('/me', requireAuth, async (req, res) => {
       [req.player.id]
     )
     res.json(result.rows[0])
-  } catch {
+  } catch (err) {
+    console.error('[players] GET /me failed:', err.message)
     res.status(500).json({ error: 'Server error' })
   }
 })
@@ -175,7 +184,10 @@ router.get('/history', requireAuth, async (req, res) => {
     const step = data.length / MAX
     const sampled = Array.from({ length: MAX }, (_, i) => data[Math.floor(i * step)])
     res.json(sampled)
-  } catch { res.status(500).json({ error: 'Server error' }) }
+  } catch (err) {
+    console.error('[players] GET /history failed:', err.message)
+    res.status(500).json({ error: 'Server error' })
+  }
 })
 
 export default router

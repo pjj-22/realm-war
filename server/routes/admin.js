@@ -56,7 +56,10 @@ router.get('/overview', async (req, res) => {
       upgrade_queued: upgrades.rows[0].n,
       alliances: alliances.rows[0].n,
     })
-  } catch { res.status(500).json({ error: 'Server error' }) }
+  } catch (err) {
+    console.error('[admin] GET /overview failed:', err.message)
+    res.status(500).json({ error: 'Server error' })
+  }
 })
 
 // Live activity feed - the Herald world events with player names
@@ -72,7 +75,10 @@ router.get('/activity', async (req, res) => {
       LIMIT $1
     `, [limit])
     res.json(result.rows)
-  } catch { res.status(500).json({ error: 'Server error' }) }
+  } catch (err) {
+    console.error('[admin] GET /activity failed:', err.message)
+    res.status(500).json({ error: 'Server error' })
+  }
 })
 
 // Active battles with both sides resolved
@@ -91,7 +97,10 @@ router.get('/battles', async (req, res) => {
       ORDER BY b.created_at DESC
     `)
     res.json(result.rows)
-  } catch { res.status(500).json({ error: 'Server error' }) }
+  } catch (err) {
+    console.error('[admin] GET /battles failed:', err.message)
+    res.status(500).json({ error: 'Server error' })
+  }
 })
 
 // In-flight armies
@@ -108,7 +117,10 @@ router.get('/armies', async (req, res) => {
       LIMIT 200
     `)
     res.json(result.rows)
-  } catch { res.status(500).json({ error: 'Server error' }) }
+  } catch (err) {
+    console.error('[admin] GET /armies failed:', err.message)
+    res.status(500).json({ error: 'Server error' })
+  }
 })
 
 // System health: season, queues, process info, config
@@ -138,7 +150,10 @@ router.get('/system', async (req, res) => {
       chat_messages: chats.rows[0].n,
       country_crowns: crowns.rows[0].n,
     })
-  } catch (err) { res.status(500).json({ error: err.message }) }
+  } catch (err) {
+    console.error('[admin] GET /system failed:', err.message)
+    res.status(500).json({ error: err.message })
+  }
 })
 
 // Retention: DAU/WAU/MAU and D1/D7/D30 cohort return-rates, computed purely
@@ -185,7 +200,10 @@ router.get('/retention', async (req, res) => {
         '0': r.streak_0, '1': r.streak_1, '2-6': r.streak_2_6, '7-29': r.streak_7_29, '30+': r.streak_30_plus,
       },
     })
-  } catch (err) { res.status(500).json({ error: err.message }) }
+  } catch (err) {
+    console.error('[admin] GET /retention failed:', err.message)
+    res.status(500).json({ error: err.message })
+  }
 })
 
 // All players
@@ -202,7 +220,10 @@ router.get('/players', async (req, res) => {
       ORDER BY hex_count DESC, p.gold DESC
     `)
     res.json(result.rows)
-  } catch { res.status(500).json({ error: 'Server error' }) }
+  } catch (err) {
+    console.error('[admin] GET /players failed:', err.message)
+    res.status(500).json({ error: 'Server error' })
+  }
 })
 
 // Adjust gold
@@ -216,7 +237,10 @@ router.post('/players/:id/gold', async (req, res) => {
     )
     if (!result.rows[0]) return res.status(404).json({ error: 'Player not found' })
     res.json({ gold: result.rows[0].gold })
-  } catch { res.status(500).json({ error: 'Server error' }) }
+  } catch (err) {
+    console.error('[admin] POST /players/:id/gold failed:', err.message)
+    res.status(500).json({ error: 'Server error' })
+  }
 })
 
 // Delete player (cascade hexes, troops, buildings, armies)
@@ -236,7 +260,10 @@ router.delete('/players/:id', async (req, res) => {
     await pool.query('DELETE FROM players WHERE id=$1', [req.params.id])
     getIO()?.emit('hexes:update')
     res.json({ deleted: username })
-  } catch { res.status(500).json({ error: 'Server error' }) }
+  } catch (err) {
+    console.error('[admin] DELETE /players/:id failed:', err.message)
+    res.status(500).json({ error: 'Server error' })
+  }
 })
 
 // Force tick
@@ -245,7 +272,10 @@ router.post('/tick', async (req, res) => {
     await runTick()
     getIO()?.emit('tick')
     res.json({ ok: true })
-  } catch (err) { res.status(500).json({ error: err.message }) }
+  } catch (err) {
+    console.error('[admin] POST /tick failed:', err.message)
+    res.status(500).json({ error: err.message })
+  }
 })
 
 // End the current season immediately (testing / emergencies)
@@ -257,7 +287,10 @@ router.post('/season/end', async (req, res) => {
     season.ends_at = new Date(0) // force the cached row past its deadline
     await processSeason()
     res.json({ ok: true, ended: season.number })
-  } catch (err) { res.status(500).json({ error: err.message }) }
+  } catch (err) {
+    console.error('[admin] POST /season/end failed:', err.message)
+    res.status(500).json({ error: err.message })
+  }
 })
 
 // Reset bots - wipe all BOT_ players and re-seed
@@ -278,7 +311,10 @@ router.post('/bots/reset', async (req, res) => {
     await ensureBots()
     getIO()?.emit('hexes:update')
     res.json({ ok: true, reset: bots.rows.length })
-  } catch (err) { res.status(500).json({ error: err.message }) }
+  } catch (err) {
+    console.error('[admin] POST /bots/reset failed:', err.message)
+    res.status(500).json({ error: err.message })
+  }
 })
 
 // Available game-master events and their tunable knob (drives the admin UI)
@@ -296,7 +332,10 @@ router.post('/event', async (req, res) => {
     io?.emit('world:new')
     io?.emit('tick') // gold/troops changed (famine, gold rush, plague) - refresh the resource bar
     res.json(result)
-  } catch (err) { res.status(400).json({ error: err.message }) }
+  } catch (err) {
+    console.error('[admin] POST /event failed:', err.message)
+    res.status(400).json({ error: err.message })
+  }
 })
 
 export default router

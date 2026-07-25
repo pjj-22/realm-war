@@ -42,7 +42,8 @@ router.get('/wonders', async (req, res) => {
         history: histByHex.get(w.h3) || [],
       }
     }))
-  } catch {
+  } catch (err) {
+    console.error('[world] GET /wonders failed:', err.message)
     res.status(500).json({ error: 'Server error' })
   }
 })
@@ -54,7 +55,8 @@ router.get('/monuments', async (req, res) => {
       'SELECT season_number, username, color, h3_index, created_at FROM monuments ORDER BY season_number DESC'
     )
     res.json(result.rows)
-  } catch {
+  } catch (err) {
+    console.error('[world] GET /monuments failed:', err.message)
     res.status(500).json({ error: 'Server error' })
   }
 })
@@ -70,7 +72,8 @@ router.get('/events', async (req, res) => {
       LIMIT 50
     `)
     res.json(result.rows)
-  } catch {
+  } catch (err) {
+    console.error('[world] GET /events failed:', err.message)
     res.status(500).json({ error: 'Server error' })
   }
 })
@@ -85,7 +88,8 @@ router.get('/crowns', async (req, res) => {
       ORDER BY c.crowned_at ASC
     `)
     res.json(result.rows)
-  } catch {
+  } catch (err) {
+    console.error('[world] GET /crowns failed:', err.message)
     res.status(500).json({ error: 'Server error' })
   }
 })

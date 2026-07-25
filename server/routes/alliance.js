@@ -22,7 +22,8 @@ router.get('/mine', requireAuth, async (req, res) => {
     // Only the founder sees the invite code
     if (a.created_by !== req.player.id) delete a.code
     res.json({ ...a, members: members.rows })
-  } catch {
+  } catch (err) {
+    console.error('[alliance] GET /mine failed:', err.message)
     res.status(500).json({ error: 'Server error' })
   }
 })
@@ -50,6 +51,7 @@ router.post('/create', requireAuth, async (req, res) => {
     res.json(result.rows[0])
   } catch (err) {
     if (err.code === '23505') return res.status(409).json({ error: 'Name or tag already taken' })
+    console.error('[alliance] POST /create failed:', err.message)
     res.status(500).json({ error: 'Server error' })
   }
 })
@@ -67,7 +69,8 @@ router.post('/join', requireAuth, async (req, res) => {
 
     await pool.query('UPDATE players SET alliance_id=$1 WHERE id=$2', [alliance.rows[0].id, req.player.id])
     res.json(alliance.rows[0])
-  } catch {
+  } catch (err) {
+    console.error('[alliance] POST /join failed:', err.message)
     res.status(500).json({ error: 'Server error' })
   }
 })
@@ -77,7 +80,8 @@ router.post('/leave', requireAuth, async (req, res) => {
   try {
     await pool.query('UPDATE players SET alliance_id=NULL WHERE id=$1', [req.player.id])
     res.json({ success: true })
-  } catch {
+  } catch (err) {
+    console.error('[alliance] POST /leave failed:', err.message)
     res.status(500).json({ error: 'Server error' })
   }
 })

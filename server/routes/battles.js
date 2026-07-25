@@ -27,7 +27,8 @@ router.get('/hex/:h3Index', async (req, res) => {
     `, [result.rows[0].id])
 
     res.json({ battle: result.rows[0], participants: parts.rows })
-  } catch {
+  } catch (err) {
+    console.error('[battles] GET /hex/:h3Index failed:', err.message)
     res.status(500).json({ error: 'Server error' })
   }
 })
@@ -45,7 +46,8 @@ router.get('/active', async (req, res) => {
       WHERE b.status = 'active'
     `)
     res.json(result.rows)
-  } catch {
+  } catch (err) {
+    console.error('[battles] GET /active failed:', err.message)
     res.status(500).json({ error: 'Server error' })
   }
 })

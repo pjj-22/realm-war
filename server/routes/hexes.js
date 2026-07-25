@@ -45,7 +45,8 @@ router.get('/', async (req, res) => {
       }
     })
     res.json(rows)
-  } catch {
+  } catch (err) {
+    console.error('[hexes] GET / failed:', err.message)
     res.status(500).json({ error: 'Server error' })
   }
 })
@@ -65,7 +66,10 @@ router.get('/strategic', async (req, res) => {
       return { h3_index: h3, name: def.name, primary: def.primary, zone: def.zone, bonus_gold: STRATEGIC_BONUS_GOLD, owner }
     })
     res.json(result)
-  } catch { res.status(500).json({ error: 'Server error' }) }
+  } catch (err) {
+    console.error('[hexes] GET /strategic failed:', err.message)
+    res.status(500).json({ error: 'Server error' })
+  }
 })
 
 // Suggest a starting hex on the active front - near (but not on top of)
@@ -94,7 +98,8 @@ router.get('/suggest-start', async (req, res) => {
       return res.json({ h3Index: pick, lat, lng, near: username })
     }
     res.status(404).json({ error: 'No suggestion available' })
-  } catch {
+  } catch (err) {
+    console.error('[hexes] GET /suggest-start failed:', err.message)
     res.status(500).json({ error: 'Server error' })
   }
 })
@@ -152,7 +157,8 @@ router.post('/claim', requireAuth, async (req, res) => {
 
     getIO()?.emit('hexes:update')
     res.json({ success: true, isCapital: isFirstHex })
-  } catch {
+  } catch (err) {
+    console.error('[hexes] POST /claim failed:', err.message)
     res.status(500).json({ error: 'Server error' })
   }
 })

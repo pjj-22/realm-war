@@ -20,7 +20,8 @@ router.get('/hex/:h3Index', requireAuth, async (req, res) => {
       pool.query('SELECT rally_hex FROM hexes WHERE h3_index=$1 AND owner_id=$2', [h3Index, req.player.id]),
     ])
     res.json({ troops: troops.rows, training: training.rows, armies: armies.rows, rally_hex: hexRow.rows[0]?.rally_hex || null })
-  } catch {
+  } catch (err) {
+    console.error('[military] GET /hex/:h3Index failed:', err.message)
     res.status(500).json({ error: 'Server error' })
   }
 })
@@ -74,6 +75,7 @@ router.post('/train', requireAuth, async (req, res) => {
     res.json({ training, player: { gold } })
   } catch (err) {
     if (err.status) return res.status(err.status).json({ error: err.message })
+    console.error('[military] POST /train failed:', err.message)
     res.status(500).json({ error: 'Server error' })
   }
 })
@@ -119,6 +121,7 @@ router.post('/march', requireAuth, async (req, res) => {
     res.json({ army })
   } catch (err) {
     if (err.status) return res.status(err.status).json({ error: err.message })
+    console.error('[military] POST /march failed:', err.message)
     res.status(500).json({ error: 'Server error' })
   }
 })
@@ -144,7 +147,8 @@ router.delete('/armies/:id', requireAuth, async (req, res) => {
     await pool.query('DELETE FROM armies WHERE id=$1', [id])
     getIO()?.emit('armies:update')
     res.json({ success: true })
-  } catch {
+  } catch (err) {
+    console.error('[military] DELETE /armies/:id failed:', err.message)
     res.status(500).json({ error: 'Server error' })
   }
 })
@@ -160,7 +164,8 @@ router.post('/rally', requireAuth, async (req, res) => {
     if (!dest.rows[0]) return res.status(400).json({ error: 'Rally destination must be one of your own hexes' })
     await pool.query('UPDATE hexes SET rally_hex=$1 WHERE h3_index=$2', [rallyHex, fromHex])
     res.json({ success: true, rally_hex: rallyHex })
-  } catch {
+  } catch (err) {
+    console.error('[military] POST /rally failed:', err.message)
     res.status(500).json({ error: 'Server error' })
   }
 })
@@ -171,7 +176,8 @@ router.delete('/rally/:h3Index', requireAuth, async (req, res) => {
   try {
     await pool.query('UPDATE hexes SET rally_hex=NULL WHERE h3_index=$1 AND owner_id=$2', [h3Index, req.player.id])
     res.json({ success: true })
-  } catch {
+  } catch (err) {
+    console.error('[military] DELETE /rally/:h3Index failed:', err.message)
     res.status(500).json({ error: 'Server error' })
   }
 })
@@ -196,7 +202,8 @@ router.get('/armies', async (req, res) => {
       return { ...rest, projected }
     })
     res.json(rows)
-  } catch {
+  } catch (err) {
+    console.error('[military] GET /armies failed:', err.message)
     res.status(500).json({ error: 'Server error' })
   }
 })

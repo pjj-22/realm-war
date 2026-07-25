@@ -20,7 +20,8 @@ router.get('/', requireAuth, async (req, res) => {
       )
     }
     res.json(result.rows)
-  } catch {
+  } catch (err) {
+    console.error('[events] GET / failed:', err.message)
     res.status(500).json({ error: 'Server error' })
   }
 })
@@ -33,7 +34,8 @@ router.get('/count', requireAuth, async (req, res) => {
       [req.player.id]
     )
     res.json({ count: result.rows[0].count })
-  } catch {
+  } catch (err) {
+    console.error('[events] GET /count failed:', err.message)
     res.status(500).json({ error: 'Server error' })
   }
 })
