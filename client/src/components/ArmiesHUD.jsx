@@ -1,17 +1,11 @@
 import { useState, useEffect } from 'react'
-import { cellToLatLng, gridDistance } from 'h3-js'
+import { gridDistance } from 'h3-js'
 import { api } from '../api/client'
 import { useIsMobile } from '../hooks/useIsMobile'
-import { toast } from './Toast'
+import { toast } from '../toastBus'
 import { TroopFigure } from './BuildingArt'
 import { SwordsIcon, WarningIcon } from './Icons'
 
-
-function parseTypes(types) {
-  if (!types) return []
-  if (Array.isArray(types)) return types
-  return types.replace(/[{}"]/g, '').split(',').filter(Boolean)
-}
 
 // ── Hex row ──────────────────────────────────────────────────────────────────
 function HexRow({ hex, isCapital, onFlyTo }) {
@@ -121,16 +115,23 @@ export default function ArmiesHUD({ armies, activeBattles = [], player, claimedR
   const isMobile = useIsMobile()
   const [open, setOpen] = useState(false)
 
+  // claimedRef is intentionally kept outside React state (GameMap mutates it on
+  // every hex update without re-rendering, since claimed-hex data changes far
+  // too often for that to be cheap) - reading it here during render is safe in
+  // practice because this component is re-rendered by the same events that
+  // refresh `armies`, which land on the same tick as claimedRef mutations.
+  // eslint-disable-next-line react-hooks/refs
+  const claimed = claimedRef.current
+
   const myArmies = armies.filter(a => a.owner_id === player?.id)
+  // eslint-disable-next-line react-hooks/refs
   const threats  = armies.filter(a =>
-    player && a.owner_id !== player.id && claimedRef.current[a.to_hex]?.owner_id === player.id
+    player && a.owner_id !== player.id && claimed[a.to_hex]?.owner_id === player.id
   )
 
-  const ownedHexes = Object.values(claimedRef.current)
+  const ownedHexes = Object.values(claimed)
     .filter(h => h.owner_id === player?.id)
     .sort((a, b) => b.troop_count - a.troop_count)
-
-  const alertCount = myArmies.length + threats.length
 
   async function handleRecall(id) {
     try {

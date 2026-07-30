@@ -50,13 +50,15 @@ function timeLabel(ms) {
 
 export default function HistoryChart({ player }) {
   const [data, setData]     = useState(null)
+  const [fetchedAt, setFetchedAt] = useState(null)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch keyed on player.id, no pure-render substitute
     setLoading(true)
     api.getHistory()
-      .then(setData)
-      .catch(() => setData([]))
+      .then(d => { setData(d); setFetchedAt(Date.now()) })
+      .catch(() => { setData([]); setFetchedAt(Date.now()) })
       .finally(() => setLoading(false))
   }, [player?.id])
 
@@ -76,7 +78,7 @@ export default function HistoryChart({ player }) {
   const peak     = Math.max(...counts)
   const current  = counts[counts.length - 1]
   const oldest   = new Date(data[0].recorded_at).getTime()
-  const span     = timeLabel(Date.now() - oldest)
+  const span     = timeLabel(fetchedAt - oldest)
 
   return (
     <div style={{ fontFamily: 'Georgia, serif' }}>

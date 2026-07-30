@@ -1,4 +1,4 @@
-import { useState, useEffect, useLayoutEffect, useRef } from 'react'
+import { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react'
 import { cellToLatLng } from 'h3-js'
 import { api } from '../api/client'
 import { useIsMobile } from '../hooks/useIsMobile'
@@ -9,10 +9,68 @@ import { resolveFlag, drawFlagToCanvas } from '../flags'
 
 function RowFlag({ p, size = 14 }) {
   const ref = useRef(null)
+  const flagString = resolveFlag(p)
   useEffect(() => {
-    if (ref.current) drawFlagToCanvas(resolveFlag(p), ref.current, size / 16)
-  }, [p.flag_pixels, p.username, size])
+    if (ref.current) drawFlagToCanvas(flagString, ref.current, size / 16)
+  }, [flagString, size])
   return <canvas ref={ref} style={{ width: size, height: size, borderRadius: 2, imageRendering: 'pixelated', flexShrink: 0 }} />
+}
+
+function displayName(username) {
+  return username.startsWith('BOT_') ? username.slice(4) : username
+}
+
+function Entry({ p, rank, player, showHistory, onToggleHistory, onFlyTo, rowRefs }) {
+  const isMe = p.username === player?.username
+  const isBot = p.username.startsWith('BOT_')
+  const canFly = !!p.capital_hex && !!onFlyTo
+
+  function handleClick() {
+    if (isMe) { onToggleHistory(); return }
+    if (!p.capital_hex || !onFlyTo) return
+    const [lat, lng] = cellToLatLng(p.capital_hex)
+    onFlyTo(lng, lat)
+  }
+
+  return (
+    <div
+      ref={el => { if (el) rowRefs.current.set(p.username, el); else rowRefs.current.delete(p.username) }}
+      onClick={handleClick}
+      style={{
+        display: 'flex', alignItems: 'center', gap: 8,
+        padding: '6px 4px',
+        opacity: isMe ? 1 : 0.85,
+        fontWeight: isMe ? 'bold' : 'normal',
+        borderBottom: '1px solid rgba(74,58,122,0.3)',
+        cursor: 'pointer',
+        borderRadius: 3,
+        transition: 'background 0.1s',
+        background: isMe && showHistory ? 'rgba(80,40,160,0.12)' : '',
+      }}
+      onMouseEnter={e => { e.currentTarget.style.background = 'rgba(80,40,160,0.15)' }}
+      onMouseLeave={e => { e.currentTarget.style.background = isMe && showHistory ? 'rgba(80,40,160,0.12)' : '' }}
+      title={isMe ? 'View your history' : canFly ? `Go to ${displayName(p.username)}'s capital` : ''}
+    >
+      <span style={{ fontSize: 14, color: '#8a7a9a', minWidth: 18, textAlign: 'right' }}>{rank}.</span>
+      <RowFlag p={p} />
+      <span style={{ fontSize: 14, flex: 1 }}>
+        {p.alliance_tag && <span style={{ color: '#9070c0', fontSize: 11 }}>[{p.alliance_tag}] </span>}
+        {displayName(p.username)}
+        {p.champion_titles > 0 && (
+          <span title={`${p.champion_titles} season championship${p.champion_titles > 1 ? 's' : ''}`} style={{ fontSize: 11, marginLeft: 4 }}>
+            <TrophyIcon size={11} />{p.champion_titles > 1 ? `×${p.champion_titles}` : ''}
+          </span>
+        )}
+      </span>
+      {isBot && <span style={{ fontSize: 9, color: '#4a3a6a', letterSpacing: 1 }}>AI</span>}
+      <span style={{ fontSize: 14, color: '#9a8aaa' }}>{p.hex_count}⬢</span>
+      <span style={{ fontSize: 14, color: '#8a7aaa' }}>{p.total_troops}<SwordsIcon size={11} color="#8a7aaa" /></span>
+      {isMe
+        ? <span style={{ fontSize: 11, color: '#6a5a8a' }}>{showHistory ? '▲' : <ChartIcon size={12} color="#6a5a8a" />}</span>
+        : canFly && <span style={{ fontSize: 14, color: '#5a4a7a' }}>⌖</span>
+      }
+    </div>
+  )
 }
 
 export default function LeaderboardPanel({ player, onFlyTo }) {
@@ -51,7 +109,12 @@ export default function LeaderboardPanel({ player, onFlyTo }) {
     prevRectsRef.current = newRects
   }, [board])
 
-  useEffect(() => { load() }, [])
+  const load = useCallback(async () => {
+    try { setBoard(await api.getLeaderboard()) } catch { /* keep showing the last board on a transient failure */ }
+  }, [])
+
+  // eslint-disable-next-line react-hooks/set-state-in-effect -- initial fetch, no pure-render substitute
+  useEffect(() => { load() }, [load])
   // hexes:update fires very often during active bot combat - debounce it so a
   // burst of captures collapses into one reload instead of reshuffling
   // near-tied rows (and remounting their flag canvases) many times a second.
@@ -59,10 +122,6 @@ export default function LeaderboardPanel({ player, onFlyTo }) {
     clearTimeout(debounceRef.current)
     debounceRef.current = setTimeout(load, 800)
   } })
-
-  async function load() {
-    try { setBoard(await api.getLeaderboard()) } catch {}
-  }
 
   if (board.length === 0) return null
 
@@ -72,61 +131,6 @@ export default function LeaderboardPanel({ player, onFlyTo }) {
     ? board.find(p => p.username === player.username)
     : null
   const playerRank = playerRow ? board.indexOf(playerRow) + 1 : null
-
-  function flyToPlayer(p) {
-    if (!p.capital_hex || !onFlyTo) return
-    const [lat, lng] = cellToLatLng(p.capital_hex)
-    onFlyTo(lng, lat)
-  }
-
-  function displayName(username) {
-    return username.startsWith('BOT_') ? username.slice(4) : username
-  }
-
-  function Entry({ p, rank }) {
-    const isMe = p.username === player?.username
-    const isBot = p.username.startsWith('BOT_')
-    const canFly = !!p.capital_hex && !!onFlyTo
-    return (
-      <div
-        ref={el => { if (el) rowRefs.current.set(p.username, el); else rowRefs.current.delete(p.username) }}
-        onClick={() => isMe ? setShowHistory(h => !h) : flyToPlayer(p)}
-        style={{
-          display: 'flex', alignItems: 'center', gap: 8,
-          padding: '6px 4px',
-          opacity: isMe ? 1 : 0.85,
-          fontWeight: isMe ? 'bold' : 'normal',
-          borderBottom: '1px solid rgba(74,58,122,0.3)',
-          cursor: 'pointer',
-          borderRadius: 3,
-          transition: 'background 0.1s',
-          background: isMe && showHistory ? 'rgba(80,40,160,0.12)' : '',
-        }}
-        onMouseEnter={e => { e.currentTarget.style.background = 'rgba(80,40,160,0.15)' }}
-        onMouseLeave={e => { e.currentTarget.style.background = isMe && showHistory ? 'rgba(80,40,160,0.12)' : '' }}
-        title={isMe ? 'View your history' : canFly ? `Go to ${displayName(p.username)}'s capital` : ''}
-      >
-        <span style={{ fontSize: 14, color: '#8a7a9a', minWidth: 18, textAlign: 'right' }}>{rank}.</span>
-        <RowFlag p={p} />
-        <span style={{ fontSize: 14, flex: 1 }}>
-          {p.alliance_tag && <span style={{ color: '#9070c0', fontSize: 11 }}>[{p.alliance_tag}] </span>}
-          {displayName(p.username)}
-          {p.champion_titles > 0 && (
-            <span title={`${p.champion_titles} season championship${p.champion_titles > 1 ? 's' : ''}`} style={{ fontSize: 11, marginLeft: 4 }}>
-              <TrophyIcon size={11} />{p.champion_titles > 1 ? `×${p.champion_titles}` : ''}
-            </span>
-          )}
-        </span>
-        {isBot && <span style={{ fontSize: 9, color: '#4a3a6a', letterSpacing: 1 }}>AI</span>}
-        <span style={{ fontSize: 14, color: '#9a8aaa' }}>{p.hex_count}⬢</span>
-        <span style={{ fontSize: 14, color: '#8a7aaa' }}>{p.total_troops}<SwordsIcon size={11} color="#8a7aaa" /></span>
-        {isMe
-          ? <span style={{ fontSize: 11, color: '#6a5a8a' }}>{showHistory ? '▲' : <ChartIcon size={12} color="#6a5a8a" />}</span>
-          : canFly && <span style={{ fontSize: 14, color: '#5a4a7a' }}>⌖</span>
-        }
-      </div>
-    )
-  }
 
   return (
     <div style={{
@@ -152,11 +156,15 @@ export default function LeaderboardPanel({ player, onFlyTo }) {
 
       {open && (
         <div style={{ padding: '2px 12px 10px' }}>
-          {top5.map((p, i) => <Entry key={p.username} p={p} rank={i + 1} />)}
+          {top5.map((p, i) => (
+            <Entry key={p.username} p={p} rank={i + 1} player={player} showHistory={showHistory}
+              onToggleHistory={() => setShowHistory(h => !h)} onFlyTo={onFlyTo} rowRefs={rowRefs} />
+          ))}
           {playerRow && (
             <>
               <div style={{ fontSize: 14, color: '#6a5878', textAlign: 'center', padding: '3px 0' }}>···</div>
-              <Entry p={playerRow} rank={playerRank} />
+              <Entry p={playerRow} rank={playerRank} player={player} showHistory={showHistory}
+                onToggleHistory={() => setShowHistory(h => !h)} onFlyTo={onFlyTo} rowRefs={rowRefs} />
             </>
           )}
           {player && !playerRow && !playerInTop5 && (

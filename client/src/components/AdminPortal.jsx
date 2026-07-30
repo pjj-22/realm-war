@@ -244,9 +244,13 @@ export default function AdminPortal() {
     setRecentBusy(false)
   }, [secret])
 
+  // Both effects below fetch admin data keyed on tab/selection changes - there's
+  // no pure-render substitute for "go fetch this and show it when it arrives".
+  // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { if (authed && tab === 'Battle Log') loadRecentBattles() }, [authed, tab, loadRecentBattles])
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (selectedBattleId == null) { setBattleRounds([]); return }
     let cancelled = false
     setRoundsBusy(true)

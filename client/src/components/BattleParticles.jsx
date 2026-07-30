@@ -70,7 +70,7 @@ function makeSpark(cx, cy) {
 export default function BattleParticles({ battles, mapRef }) {
   const canvasRef = useRef(null)
   const battlesRef = useRef(battles)
-  battlesRef.current = battles
+  useEffect(() => { battlesRef.current = battles })
 
   useEffect(() => {
     const canvas = canvasRef.current

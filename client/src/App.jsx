@@ -5,7 +5,8 @@ import HelpModal from './components/HelpModal'
 import FTUEGuide from './components/FTUEGuide'
 import FlagOnboardingModal from './components/FlagOnboardingModal'
 import AdminPortal from './components/AdminPortal'
-import { ToastContainer, toast } from './components/Toast'
+import { ToastContainer } from './components/Toast'
+import { toast } from './toastBus'
 import { api } from './api/client'
 
 if (window.location.hash === '#admin') {
@@ -15,15 +16,16 @@ if (window.location.hash === '#admin') {
 export default function App() {
   const [player, setPlayer] = useState(null)
   const [checking, setChecking] = useState(true)
-
-  if (window.location.hash === '#admin') return <AdminPortal />
   const [showAuth, setShowAuth] = useState(true)
   const [authMode, setAuthMode] = useState('login')
   const [showHelp, setShowHelp] = useState(false)
   const [showFTUE, setShowFTUE] = useState(false)
 
+  // Checks stored auth on mount by calling the API - an async fetch, so there's
+  // no pure-render substitute for setting player/checking state here.
   useEffect(() => {
     const token = localStorage.getItem('rw_token')
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (!token) { setChecking(false); return }
     api.me()
       .then(p => {
@@ -37,6 +39,7 @@ export default function App() {
       .finally(() => setChecking(false))
   }, [])
 
+  if (window.location.hash === '#admin') return <AdminPortal />
   if (checking) return null
 
   function handleAuth(p, isNew = false, loginBonus = null) {

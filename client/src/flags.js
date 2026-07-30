@@ -52,7 +52,7 @@ function grid(fn) {
 // points before anyone touches a single pixel by hand.
 export const PATTERNS = [
   { id: 'stripes-h', name: 'Horizontal Bands', grid: grid((x, y) => [1, 2, 1, 2][Math.floor(y / 4)]) },
-  { id: 'stripes-v', name: 'Vertical Bands', grid: grid((x, y) => [1, 2, 1, 2][Math.floor(x / 4)]) },
+  { id: 'stripes-v', name: 'Vertical Bands', grid: grid((x) => [1, 2, 1, 2][Math.floor(x / 4)]) },
   {
     id: 'cross', name: 'Cross', grid: grid((x, y) => {
       const vInner = x >= 5 && x <= 6
@@ -126,7 +126,7 @@ export const PATTERNS = [
     }),
   },
   {
-    id: 'tricolor', name: 'Tricolor', grid: grid((x, y) => {
+    id: 'tricolor', name: 'Tricolor', grid: grid((x) => {
       if (x < 5) return 1
       if (x < 11) return 2
       return 3

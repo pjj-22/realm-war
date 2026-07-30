@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { api } from '../api/client'
 import { BannerIcon, SwordsIcon, KeepIcon, BoltIcon, TargetIcon } from './Icons'
 import { useIsMobile } from '../hooks/useIsMobile'
@@ -37,12 +37,6 @@ export default function FTUEGuide({ player, onDismiss }) {
   const [stepId, setStepId] = useState(() => localStorage.getItem(STORAGE_KEY) || 'claim')
   const [dismissed, setDismissed] = useState(false)
 
-  useEffect(() => {
-    if (stepId === 'claim' && player?.capital_hex) {
-      advance('train')
-    }
-  }, [player?.capital_hex, stepId])
-
   function advance(nextId) {
     if (nextId) {
       setStepId(nextId)
@@ -52,6 +46,14 @@ export default function FTUEGuide({ player, onDismiss }) {
       setDismissed(true)
       onDismiss?.()
     }
+  }
+
+  // Auto-advance past 'claim' once a capital exists. This adjusts state from a
+  // prop during render (React's documented pattern for this - see "you might
+  // not need an effect"/"adjusting state when a prop changes") rather than an
+  // effect, since the condition stops being true the instant it fires.
+  if (stepId === 'claim' && player?.capital_hex) {
+    advance('train')
   }
 
   if (dismissed || localStorage.getItem(STORAGE_KEY) === 'done') return null

@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { api } from '../api/client'
-import { toast } from './Toast'
+import { toast } from '../toastBus'
 import { AllianceIcon } from './Icons'
 
 const S = {

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { useSocket } from '../hooks/useSocket'
-import { toast } from './Toast'
+import { toast } from '../toastBus'
 import maplibregl from 'maplibre-gl'
 import { polygonToCells, cellToBoundary, cellToLatLng, cellToParent, gridDisk, gridPathCells } from 'h3-js'
 import 'maplibre-gl/dist/maplibre-gl.css'
@@ -469,7 +469,76 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
   const [showSeason, setShowSeason] = useState(false)
   const [endedSeason, setEndedSeason] = useState(null)
 
+  const visibleSetRef = useRef(null)
+  const armyVisibleSetRef = useRef(null)
+  const marchModeRef = useRef(marchMode)
+  const rallyModeRef = useRef(rallyMode)
+  const armiesRef = useRef(armies)
+  const playerRef = useRef(player)
+  const markersRef = useRef({})
+  const battleMarkersRef = useRef({})
+  useEffect(() => {
+    marchModeRef.current = marchMode
+    rallyModeRef.current = rallyMode
+    armiesRef.current = armies
+    playerRef.current = player
+  })
+
+  // Decay-scaling formula constants, for the on-map warning badge below -
+  // mirrors config.js's requiredGarrisonForHexCount() exactly. Also carries
+  // min_troops_to_claim for the pending-claim "3/5" indicator.
+  const decayConfigRef = useRef({ decay_hex_threshold: 30, decay_scale_hexes_per_step: 10, min_troops_to_claim: 5 })
+
+  // These read only refs (map, claimedRef, playerRef, etc.) so they're stable
+  // across renders - safe to depend on elsewhere without causing re-runs.
+  const updateHexes = useCallback(() => {
+    if (!map.current?.getSource('hexes')) return
+    const cells = getViewportHexes(map.current)
+    map.current.getSource('hexes').setData(buildGeoJSON(cells, claimedRef.current, visibleSetRef.current))
+  }, [])
+
+  const updateOverview = useCallback(() => {
+    if (!map.current?.getSource('overview-hexes')) return
+    const { cells, res } = getOverviewHexes(map.current)
+    map.current.getSource('overview-hexes').setData(buildOverviewGeoJSON(cells, res, claimedRef.current))
+  }, [])
+
+  const updateClaimed = useCallback(() => {
+    if (!map.current?.getSource('claimed')) return
+    const p = playerRef.current
+    const visibleSet = p ? buildVisibleSet(claimedRef.current, p.id, allyIdsRef.current) : null
+    visibleSetRef.current = visibleSet
+    armyVisibleSetRef.current = p ? buildVisibleSet(claimedRef.current, p.id, allyIdsRef.current, ARMY_VISION_RINGS) : null
+    map.current.getSource('claimed').setData(buildClaimedGeoJSON(claimedRef.current, visibleSet))
+
+    // Same requiredGarrisonForHexCount formula as config.js - mirrors
+    // BottomDrawer's decay-risk card, but for every owned hex at a glance.
+    let requiredGarrison = 0
+    if (p) {
+      const myHexCount = Object.values(claimedRef.current).filter(h => h.owner_id === p.id).length
+      const { decay_hex_threshold, decay_scale_hexes_per_step } = decayConfigRef.current
+      if (myHexCount > decay_hex_threshold) {
+        requiredGarrison = 1 + Math.floor((myHexCount - decay_hex_threshold) / decay_scale_hexes_per_step)
+      }
+    }
+    map.current.getSource('claimed-points')?.setData(buildClaimedPoints(claimedRef.current, visibleSet, p?.id, requiredGarrison))
+    map.current.getSource('building-pips')?.setData(buildPipFeatures(claimedRef.current))
+    if (map.current.getSource('capitals')) {
+      ensureFlagImages(map.current, claimedRef.current)
+      map.current.getSource('capitals').setData(buildCapitalFeatures(claimedRef.current))
+    }
+    updateOverview()
+  }, [updateOverview])
+
+  // claimedRef is intentionally kept outside React state - claimed-hex data
+  // changes far too often (every tick, every capture) to put it in state
+  // without re-rendering the whole map on each update. Reading it here during
+  // render is safe in practice: these values are re-derived on every render,
+  // and the socket/tick handlers that mutate claimedRef also trigger a
+  // re-render of this component via other state (armies, stats, etc.).
+  // eslint-disable-next-line react-hooks/refs
   const ownedHexCount = Object.values(claimedRef.current).filter(h => h.owner_id === player?.id).length
+  // eslint-disable-next-line react-hooks/refs
   const totalTroops = Object.values(claimedRef.current).filter(h => h.owner_id === player?.id).reduce((s, h) => s + (h.troop_count || 0), 0)
 
   const { display: resources } = useResourceTicker(player)
@@ -483,17 +552,13 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
       claimedRef.current = byIndex
       updateHexes()
       updateClaimed()
-    } catch {}
-  }, [])
+    } catch { /* map not ready yet, or a transient fetch failure - next tick retries */ }
+  }, [updateHexes, updateClaimed])
 
   const strategicRef = useRef({})
   const zonesRef = useRef(new Map()) // h3 → city name, for click enrichment
   const zoneBonusRef = useRef(2)     // server's ZONE_BONUS_PER_HEX, for click enrichment
 
-  // Decay-scaling formula constants, for the on-map warning badge below -
-  // mirrors config.js's requiredGarrisonForHexCount() exactly. Also carries
-  // min_troops_to_claim for the pending-claim "3/5" indicator.
-  const decayConfigRef = useRef({ decay_hex_threshold: 30, decay_scale_hexes_per_step: 10, min_troops_to_claim: 5 })
   useEffect(() => {
     api.getConfig().then(cfg => {
       decayConfigRef.current = {
@@ -613,7 +678,7 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
         }
       })
       map.current.getSource('strategic').setData({ type: 'FeatureCollection', features })
-    } catch {}
+    } catch { /* strategic hexes are static, best-effort */ }
   }, [])
 
   // Wonders + monuments - refreshed on wonder seizure and season rollover
@@ -681,19 +746,19 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
   }, [checkViewport])
 
   const loadArmies = useCallback(async () => {
-    try { setArmies(await api.getArmies()) } catch {}
+    try { setArmies(await api.getArmies()) } catch { /* keep showing last-known armies on a transient failure */ }
   }, [])
 
   const loadPendingClaims = useCallback(async () => {
-    try { setPendingClaims(player ? await api.getPendingClaims() : []) } catch {}
+    try { setPendingClaims(player ? await api.getPendingClaims() : []) } catch { /* keep showing last-known pending claims */ }
   }, [player])
 
   const loadActiveBattles = useCallback(async () => {
-    try { setActiveBattles(await api.getActiveBattles()) } catch {}
+    try { setActiveBattles(await api.getActiveBattles()) } catch { /* keep showing last-known battles */ }
   }, [])
 
   const loadStats = useCallback(async () => {
-    try { setStats(await api.getStats()) } catch {}
+    try { setStats(await api.getStats()) } catch { /* keep showing last-known stats */ }
   }, [])
 
   const loadAlliance = useCallback(async () => {
@@ -737,7 +802,7 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
     map.current.getSource('pending-claims').setData({ type: 'FeatureCollection', features })
   }, [pendingClaims])
   useEffect(() => { loadActiveBattles() }, [loadActiveBattles])
-  useEffect(() => { if (player) loadStats() }, [player?.id, loadStats])
+  useEffect(() => { if (player?.id) loadStats() }, [player?.id, loadStats])
   useEffect(() => { loadStrategic() }, [loadStrategic])
   useEffect(() => {
     // Recompute fog of war for the (possibly new) player and their allies
@@ -769,7 +834,7 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
   })
 
   useEffect(() => {
-    if (!selectedHex) { setActiveBattle(null); return }
+    if (!selectedHex?.h3) { setActiveBattle(null); return }
     async function checkBattle() {
       try {
         const result = await api.getBattle(selectedHex.h3)
@@ -1336,9 +1401,10 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
       map.current?.remove()
       map.current = null
     }
-  }, [])
+    // All of these are useCallback-memoized on refs/[] only, so they're stable
+    // across renders - listing them here doesn't cause the map to reinitialize.
+  }, [checkViewport, enrichHex, loadClaimed, loadLandmarks, loadStrategic, loadZones, updateClaimed, updateHexes, updateOverview])
 
-  const battleMarkersRef = useRef({})
   useEffect(() => {
     if (!map.current) return
     const activeIds = new Set(activeBattles.map(b => b.h3_index))
@@ -1412,57 +1478,6 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
     }, 60)
     return () => clearInterval(pulse)
   }, [activeBattles])
-
-  function updateHexes() {
-    if (!map.current?.getSource('hexes')) return
-    const cells = getViewportHexes(map.current)
-    map.current.getSource('hexes').setData(buildGeoJSON(cells, claimedRef.current, visibleSetRef.current))
-  }
-
-  function updateOverview() {
-    if (!map.current?.getSource('overview-hexes')) return
-    const { cells, res } = getOverviewHexes(map.current)
-    map.current.getSource('overview-hexes').setData(buildOverviewGeoJSON(cells, res, claimedRef.current))
-  }
-
-  function updateClaimed() {
-    if (!map.current?.getSource('claimed')) return
-    const p = playerRef.current
-    const visibleSet = p ? buildVisibleSet(claimedRef.current, p.id, allyIdsRef.current) : null
-    visibleSetRef.current = visibleSet
-    armyVisibleSetRef.current = p ? buildVisibleSet(claimedRef.current, p.id, allyIdsRef.current, ARMY_VISION_RINGS) : null
-    map.current.getSource('claimed').setData(buildClaimedGeoJSON(claimedRef.current, visibleSet))
-
-    // Same requiredGarrisonForHexCount formula as config.js - mirrors
-    // BottomDrawer's decay-risk card, but for every owned hex at a glance.
-    let requiredGarrison = 0
-    if (p) {
-      const myHexCount = Object.values(claimedRef.current).filter(h => h.owner_id === p.id).length
-      const { decay_hex_threshold, decay_scale_hexes_per_step } = decayConfigRef.current
-      if (myHexCount > decay_hex_threshold) {
-        requiredGarrison = 1 + Math.floor((myHexCount - decay_hex_threshold) / decay_scale_hexes_per_step)
-      }
-    }
-    map.current.getSource('claimed-points')?.setData(buildClaimedPoints(claimedRef.current, visibleSet, p?.id, requiredGarrison))
-    map.current.getSource('building-pips')?.setData(buildPipFeatures(claimedRef.current))
-    if (map.current.getSource('capitals')) {
-      ensureFlagImages(map.current, claimedRef.current)
-      map.current.getSource('capitals').setData(buildCapitalFeatures(claimedRef.current))
-    }
-    updateOverview()
-  }
-
-  const visibleSetRef = useRef(null)
-  const armyVisibleSetRef = useRef(null)
-  const marchModeRef = useRef(marchMode)
-  marchModeRef.current = marchMode
-  const rallyModeRef = useRef(null)
-  rallyModeRef.current = rallyMode
-  const armiesRef = useRef([])
-  armiesRef.current = armies
-  const playerRef = useRef(null)
-  playerRef.current = player
-  const markersRef = useRef({})
 
   useEffect(() => {
 
@@ -1595,7 +1610,7 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
       if (!map.current?.getLayer('march-dest-ring')) return
       pulseT += 0.12
       const opacity = 0.2 + 0.35 * (0.5 + 0.5 * Math.sin(pulseT))
-      try { map.current.setPaintProperty('march-dest-ring', 'circle-stroke-opacity', opacity) } catch {}
+      try { map.current.setPaintProperty('march-dest-ring', 'circle-stroke-opacity', opacity) } catch { /* layer mid-update */ }
     }, 50)
 
     return () => { clearInterval(interval); clearInterval(pulseInterval) }
@@ -1747,7 +1762,7 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
             {!isMobile && totalTroops > 0 && <span style={{ fontSize: 13, color: '#7a6890' }}><SwordsIcon size={12} color="#7a6890" /> {totalTroops}</span>}
             {!isMobile && import.meta.env.DEV && (
               <button
-                onClick={async () => { try { const r = await api.devRefill(); onPlayerUpdate?.({ ...player, gold: r.gold }) } catch {} }}
+                onClick={async () => { try { const r = await api.devRefill(); onPlayerUpdate?.({ ...player, gold: r.gold }) } catch { /* dev-only convenience button */ } }}
                 style={{ padding: '3px 10px', background: 'rgba(30,60,30,0.4)', border: '1px solid rgba(50,100,50,0.4)', borderRadius: 4, color: '#70a870', cursor: 'pointer', fontSize: 11, letterSpacing: 1, fontFamily: 'Georgia, serif' }}>
                 Refill
               </button>
@@ -1812,7 +1827,7 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
               const [lat, lng] = cellToLatLng(h3)
               map.current?.flyTo({ center: [lng, lat], zoom: 12, speed: 1.5 })
               selectHexByIndex(h3)
-            } catch {}
+            } catch { /* bad/foreign h3 index - just skip the fly-to */ }
           }}
         />
       )}

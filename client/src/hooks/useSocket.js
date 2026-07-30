@@ -17,7 +17,7 @@ export function getSocket() {
 // always calls the latest version without re-subscribing.
 export function useSocket(handlers) {
   const handlersRef = useRef(handlers)
-  handlersRef.current = handlers
+  useEffect(() => { handlersRef.current = handlers })
 
   useEffect(() => {
     const s = getSocket()

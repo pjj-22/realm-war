@@ -1,22 +1,19 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
-
-let _addToast = null
-
-export function toast(message, type = 'error') {
-  _addToast?.({ message, type, id: Date.now() + Math.random() })
-}
+import { registerToastHandler } from '../toastBus'
 
 export function ToastContainer() {
   const [toasts, setToasts] = useState([])
   const timers = useRef({})
 
-  _addToast = useCallback((t) => {
+  const addToast = useCallback((t) => {
     setToasts(prev => [...prev.slice(-4), t])
     timers.current[t.id] = setTimeout(() => {
       setToasts(prev => prev.filter(x => x.id !== t.id))
       delete timers.current[t.id]
     }, 4000)
   }, [])
+
+  useEffect(() => { registerToastHandler(addToast) }, [addToast])
 
   useEffect(() => () => Object.values(timers.current).forEach(clearTimeout), [])
 

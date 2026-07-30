@@ -10,7 +10,7 @@ import {
   SpeakerIcon, SpeakerOffIcon, ScrollIcon, SwordsIcon,
   PlagueIcon, MeteorIcon, FamineIcon, RevoltIcon, TentIcon,
 } from './Icons'
-import { toast } from './Toast'
+import { toast } from '../toastBus'
 
 const TYPE_ICONS = {
   battle_won:        TrophyIcon,
@@ -116,8 +116,10 @@ export default function EventFeed() {
   const tabRef              = useRef('empire')
   const seenRef             = useRef(null)
   const seenWorldRef        = useRef(null)
-  openRef.current = open
-  tabRef.current = tab
+  useEffect(() => {
+    openRef.current = open
+    tabRef.current = tab
+  })
 
   // Seed seen-event ids so we only pop/count genuinely new dispatches
   useEffect(() => {

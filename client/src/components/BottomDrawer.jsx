@@ -4,7 +4,7 @@ import { GoldIcon, PickaxeIcon, SwordsIcon, ShieldIcon, GearIcon } from './Icons
 import { MineArt, BarracksArt, FortArt, BuildingIcon } from './BuildingArt'
 import { useIsMobile } from '../hooks/useIsMobile'
 import { useSocket } from '../hooks/useSocket'
-import { toast } from './Toast'
+import { toast } from '../toastBus'
 import { resolveFlag, drawFlagToCanvas } from '../flags'
 import { shortHex } from '../text'
 import Tooltip from './Tooltip'
@@ -217,7 +217,7 @@ function UpgradeBar({ completes_at, onExpire }) {
 
 // ── main component ────────────────────────────────────────────────────────────
 
-export default function BottomDrawer({ hex, player, stats, onClaim, onLoginRequired, onBuild, onPlayerUpdate, onMarchStart, onSetRallyMode, onClose, onStatsRefresh, getFriendlyNeighborCount, ownedHexCount }) {
+export default function BottomDrawer({ hex, player, stats, onClaim, onLoginRequired, onBuild, onPlayerUpdate, onMarchStart, onSetRallyMode, onStatsRefresh, getFriendlyNeighborCount, ownedHexCount }) {
   const isMobile = useIsMobile()
   const isOwn    = !!(player && hex?.username === player.username)
   const isClaimed = !!hex?.owner
@@ -269,14 +269,14 @@ export default function BottomDrawer({ hex, player, stats, onClaim, onLoginRequi
   useEffect(() => {
     setBuildingData(null)
     setMilitary(null)
-    if (!hex) return
+    if (!hex?.h3) return
     loadBuildings()
     loadMilitary()
   }, [hex?.h3, loadBuildings, loadMilitary])
   useSocket({ 'armies:update': loadMilitary, tick: loadMilitary })
 
   useEffect(() => {
-    if (!buildingData?.upgrading) return
+    if (!buildingData?.upgrading?.completes_at) return
     const ms = new Date(buildingData.upgrading.completes_at) - Date.now()
     if (ms <= 0) { loadBuildings(); return }
     const t = setTimeout(loadBuildings, ms + 500)
@@ -360,16 +360,6 @@ export default function BottomDrawer({ hex, player, stats, onClaim, onLoginRequi
     setBusy(true)
     try { await api.demolish(id); loadBuildings() }
     catch (err) { toast(err.message) }
-    finally { setBusy(false) }
-  }
-
-  async function handleUpgrade() {
-    setBusy(true)
-    try {
-      const r = await api.upgradeHex(hex.h3)
-      onPlayerUpdate?.(r.player)
-      loadBuildings()
-    } catch (err) { toast(err.message) }
     finally { setBusy(false) }
   }
 

@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { api } from '../api/client'
 import { useSocket } from '../hooks/useSocket'
 import { useIsMobile } from '../hooks/useIsMobile'
@@ -144,23 +144,31 @@ function StrengthBar({ strength, maxStrength, initialQty, color, losses, side })
 export default function BattlePanel({ hex, player, onMarchStart, onClose }) {
   const isMobile = useIsMobile()
   const [data, setData] = useState(null)
-  const [roundMs, setRoundMs] = useState(60 * 1000)
 
-  useEffect(() => {
-    api.getConfig().then(cfg => {
-      if (cfg.battle_interval_ms) setRoundMs(cfg.battle_interval_ms)
-    }).catch(() => {})
-  }, [])
+  // load() is shared between the effect below and the 'battle:update' socket
+  // handler, so a simple per-effect cancelled flag isn't enough - switching
+  // hexes quickly could still let an older in-flight request for a previous
+  // hex land after a newer one. Guard by comparing against the latest
+  // requested hex instead, dropping any response that's no longer current.
+  const currentHexRef = useRef(hex.h3)
+  useEffect(() => { currentHexRef.current = hex.h3 })
 
-  useEffect(() => { load() }, [hex.h3])
-  useSocket({ 'battle:update': load })
-
-  async function load() {
+  const load = useCallback(async () => {
+    const requestedHex = hex.h3
     try {
-      const result = await api.getBattle(hex.h3)
+      const result = await api.getBattle(requestedHex)
+      if (currentHexRef.current !== requestedHex) return
       setData(result.battle ? result : null)
-    } catch {}
-  }
+    } catch {
+      // hex may have no active battle (or it just concluded) - treat as no data
+    }
+  }, [hex.h3])
+
+  // load() sets state from an async fetch keyed on hex.h3 - there's no pure-render
+  // substitute for "go fetch this and show it when it arrives".
+  // eslint-disable-next-line react-hooks/set-state-in-effect
+  useEffect(() => { load() }, [load])
+  useSocket({ 'battle:update': load })
 
   if (!data?.battle) return null
 
