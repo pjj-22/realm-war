@@ -382,3 +382,17 @@ export function GearIcon({ size = 14, color = '#c9b99a' }) {
     </Svg>
   )
 }
+
+// Dice - replaces the game-die emoji (renders as color emoji on some platforms)
+export function DiceIcon({ size = 14, color = '#c090f0' }) {
+  return (
+    <Svg size={size}>
+      <rect x="2" y="2" width="12" height="12" rx="2" fill="none" stroke={color} strokeWidth="1.4" />
+      <circle cx="5.2" cy="5.2" r="1.1" fill={color} />
+      <circle cx="10.8" cy="5.2" r="1.1" fill={color} />
+      <circle cx="8" cy="8" r="1.1" fill={color} />
+      <circle cx="5.2" cy="10.8" r="1.1" fill={color} />
+      <circle cx="10.8" cy="10.8" r="1.1" fill={color} />
+    </Svg>
+  )
+}

@@ -5,6 +5,7 @@ import {
 } from '../flags'
 import { useIsMobile } from '../hooks/useIsMobile'
 import Tooltip from './Tooltip'
+import { DiceIcon } from './Icons'
 
 function Thumb({ pixels, size = 40 }) {
   const ref = useRef(null)
@@ -122,9 +123,10 @@ export default function FlagEditor({ initialFlag, initialMotto, onSave, onSkip }
               marginTop: 6, padding: '7px 0', background: 'rgba(120,60,200,0.2)',
               border: '1px solid rgba(160,80,220,0.4)', borderRadius: 4, color: '#c090f0',
               cursor: 'pointer', fontSize: 13, letterSpacing: 1, fontFamily: 'Georgia, serif',
+              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
             }}
           >
-            🎲 Randomize
+            <DiceIcon size={13} /> Randomize
           </button>
         </div>
       </div>

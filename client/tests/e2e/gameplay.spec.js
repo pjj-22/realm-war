@@ -20,6 +20,14 @@ test.describe('Core gameplay', () => {
       await page.waitForTimeout(2000)
       // Should show capital founded toast
       await expect(page.locator('text=Capital founded')).toBeVisible({ timeout: 5000 })
+
+      // Founding a capital opens the one-time flag onboarding modal, which
+      // otherwise blocks the map canvas for every later test on this account.
+      const skipFlagBtn = page.locator('button:has-text("Skip - pick for me")')
+      if (await skipFlagBtn.isVisible({ timeout: 3000 }).catch(() => false)) {
+        await skipFlagBtn.click()
+        await expect(page.locator('text=Design Your Banner')).toBeHidden({ timeout: 5000 })
+      }
     }
   })
 
