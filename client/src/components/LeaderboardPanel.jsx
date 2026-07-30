@@ -1,10 +1,19 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useLayoutEffect, useRef } from 'react'
 import { cellToLatLng } from 'h3-js'
 import { api } from '../api/client'
 import { useIsMobile } from '../hooks/useIsMobile'
 import { useSocket } from '../hooks/useSocket'
 import HistoryChart from './HistoryChart'
 import { TrophyIcon, SwordsIcon, ChartIcon } from './Icons'
+import { resolveFlag, drawFlagToCanvas } from '../flags'
+
+function RowFlag({ p, size = 14 }) {
+  const ref = useRef(null)
+  useEffect(() => {
+    if (ref.current) drawFlagToCanvas(resolveFlag(p), ref.current, size / 16)
+  }, [p.flag_pixels, p.username, size])
+  return <canvas ref={ref} style={{ width: size, height: size, borderRadius: 2, imageRendering: 'pixelated', flexShrink: 0 }} />
+}
 
 export default function LeaderboardPanel({ player, onFlyTo }) {
   const isMobile = useIsMobile()
@@ -12,8 +21,44 @@ export default function LeaderboardPanel({ player, onFlyTo }) {
   const [open, setOpen] = useState(false)
   const [showHistory, setShowHistory] = useState(false)
 
+  const debounceRef = useRef(null)
+  const rowRefs = useRef(new Map())
+  const prevRectsRef = useRef(new Map())
+
+  // FLIP: when close bot rankings swap positions, the row list just re-sorts
+  // instantly with no transition, which reads as a flicker/jump. Capture each
+  // row's position before the reorder, then on the next paint invert it back
+  // to where it was and transition to the real spot - a smooth slide instead.
+  useLayoutEffect(() => {
+    const newRects = new Map()
+    rowRefs.current.forEach((el, key) => { if (el) newRects.set(key, el.getBoundingClientRect()) })
+    const prevRects = prevRectsRef.current
+    rowRefs.current.forEach((el, key) => {
+      if (!el) return
+      const prev = prevRects.get(key)
+      const next = newRects.get(key)
+      if (!prev || !next) return
+      const dy = prev.top - next.top
+      if (dy) {
+        el.style.transition = 'none'
+        el.style.transform = `translateY(${dy}px)`
+        requestAnimationFrame(() => {
+          el.style.transition = 'transform 0.35s ease'
+          el.style.transform = ''
+        })
+      }
+    })
+    prevRectsRef.current = newRects
+  }, [board])
+
   useEffect(() => { load() }, [])
-  useSocket({ tick: load, 'hexes:update': load })
+  // hexes:update fires very often during active bot combat - debounce it so a
+  // burst of captures collapses into one reload instead of reshuffling
+  // near-tied rows (and remounting their flag canvases) many times a second.
+  useSocket({ tick: load, 'hexes:update': () => {
+    clearTimeout(debounceRef.current)
+    debounceRef.current = setTimeout(load, 800)
+  } })
 
   async function load() {
     try { setBoard(await api.getLeaderboard()) } catch {}
@@ -44,6 +89,7 @@ export default function LeaderboardPanel({ player, onFlyTo }) {
     const canFly = !!p.capital_hex && !!onFlyTo
     return (
       <div
+        ref={el => { if (el) rowRefs.current.set(p.username, el); else rowRefs.current.delete(p.username) }}
         onClick={() => isMe ? setShowHistory(h => !h) : flyToPlayer(p)}
         style={{
           display: 'flex', alignItems: 'center', gap: 8,
@@ -61,7 +107,7 @@ export default function LeaderboardPanel({ player, onFlyTo }) {
         title={isMe ? 'View your history' : canFly ? `Go to ${displayName(p.username)}'s capital` : ''}
       >
         <span style={{ fontSize: 14, color: '#8a7a9a', minWidth: 18, textAlign: 'right' }}>{rank}.</span>
-        <span style={{ width: 9, height: 9, borderRadius: '50%', background: p.color, display: 'inline-block', flexShrink: 0 }} />
+        <RowFlag p={p} />
         <span style={{ fontSize: 14, flex: 1 }}>
           {p.alliance_tag && <span style={{ color: '#9070c0', fontSize: 11 }}>[{p.alliance_tag}] </span>}
           {displayName(p.username)}
@@ -72,7 +118,7 @@ export default function LeaderboardPanel({ player, onFlyTo }) {
           )}
         </span>
         {isBot && <span style={{ fontSize: 9, color: '#4a3a6a', letterSpacing: 1 }}>AI</span>}
-        <span style={{ fontSize: 14, color: '#9a8aaa' }}>{p.hex_count}▲</span>
+        <span style={{ fontSize: 14, color: '#9a8aaa' }}>{p.hex_count}⬢</span>
         <span style={{ fontSize: 14, color: '#8a7aaa' }}>{p.total_troops}<SwordsIcon size={11} color="#8a7aaa" /></span>
         {isMe
           ? <span style={{ fontSize: 11, color: '#6a5a8a' }}>{showHistory ? '▲' : <ChartIcon size={12} color="#6a5a8a" />}</span>
@@ -116,10 +162,21 @@ export default function LeaderboardPanel({ player, onFlyTo }) {
           {player && !playerRow && !playerInTop5 && (
             <>
               <div style={{ fontSize: 14, color: '#6a5878', textAlign: 'center', padding: '3px 0' }}>···</div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 4px', fontWeight: 'bold' }}>
+              <div
+                onClick={() => setShowHistory(h => !h)}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 8, padding: '6px 4px', fontWeight: 'bold',
+                  cursor: 'pointer', borderRadius: 3, transition: 'background 0.1s',
+                  background: showHistory ? 'rgba(80,40,160,0.12)' : '',
+                }}
+                onMouseEnter={e => { e.currentTarget.style.background = 'rgba(80,40,160,0.15)' }}
+                onMouseLeave={e => { e.currentTarget.style.background = showHistory ? 'rgba(80,40,160,0.12)' : '' }}
+                title="View your history"
+              >
                 <span style={{ fontSize: 14, color: '#8a7a9a', minWidth: 18, textAlign: 'right' }}>?.</span>
                 <span style={{ width: 9, height: 9, borderRadius: '50%', background: player.color, display: 'inline-block', flexShrink: 0 }} />
-                <span style={{ fontSize: 13 }}>{player.username}</span>
+                <span style={{ fontSize: 13, flex: 1 }}>{player.username}</span>
+                <span style={{ fontSize: 11, color: '#6a5a8a' }}>{showHistory ? '▲' : <ChartIcon size={12} color="#6a5a8a" />}</span>
               </div>
             </>
           )}
@@ -129,7 +186,7 @@ export default function LeaderboardPanel({ player, onFlyTo }) {
             <div style={{
               marginTop: 8, paddingTop: 10,
               borderTop: '1px solid rgba(255,255,255,0.07)',
-              width: 340,
+              width: '100%', maxWidth: 340,
             }}>
               <HistoryChart player={player} />
             </div>

@@ -1,13 +1,13 @@
-import { pool } from './db.js'
+import { pool, withTransaction } from './db.js'
 import {
-  DEV_MODE,
-  TICK_INTERVAL_MS, BATTLE_ROUND_DAMAGE_RATE, BATTLE_INTERVAL_MS, FORT_DEFENSE_BONUS,
+  IS_DEV, SPEED_DIV,
+  TICK_INTERVAL_MS, BATTLE_INTERVAL_MS, FORT_ADVANTAGE_TROOPS,
   GOLD_CAP_BASE, GOLD_CAP_PER_HEX, GOLD_CAP_PER_MINE, BUILDING_TIME_SECONDS,
   OCEAN_MARCH_MULTIPLIER, TROOP_STATS,
-  ENTRENCH_BONUS_PER_NEIGHBOR, ENTRENCH_MAX_NEIGHBORS,
+  ENTRENCH_ADVANTAGE_PER_NEIGHBOR, ENTRENCH_MAX_NEIGHBORS,
   CAMP_LOOT_GOLD, CROWN_MIN_HEXES,
-  DECAY_HEX_THRESHOLD, DECAY_CHANCE, DECAY_MAX_PER_TICK,
-  WONDER_INCOME_GOLD,
+  DECAY_HEX_THRESHOLD, DECAY_CHANCE, DECAY_MAX_PER_TICK, requiredGarrisonForHexCount,
+  WONDER_INCOME_GOLD, MIN_TROOPS_TO_CLAIM,
 } from './config.js'
 import { getIO } from './socket.js'
 import { ensureBots, processBots } from './bots.js'
@@ -17,12 +17,12 @@ import { processWonders, WONDERS } from './wonders.js'
 import { gridDistance, gridDisk } from 'h3-js'
 import { isOcean } from './terrain.js'
 import { sendPush } from './push.js'
-import { STRATEGIC_HEXES, STRATEGIC_BONUS_GOLD, STRATEGIC_DEFENSE_BONUS, CAPITAL_COUNTRY, CITY_ZONES, ZONE_BONUS_PER_HEX } from './strategic.js'
+import { STRATEGIC_HEXES, STRATEGIC_BONUS_GOLD, STRATEGIC_ADVANTAGE_TROOPS, CAPITAL_COUNTRY, CITY_ZONES, ZONE_BONUS_PER_HEX } from './strategic.js'
 import { getCountry } from './countries.js'
-import { defenseMultiplier, resolveRound, decayTroops } from './combat.js'
+import { advantagedDefenderCount, resolveBattleClash, FRONTLINE_CAP } from './combat.js'
 
 // Per-tick/per-battle chatter is dev-only; errors always log via console.error
-const log = DEV_MODE ? console.log : () => {}
+const log = IS_DEV ? console.log : () => {}
 
 function isNPC(username) {
   return username?.startsWith('BOT_') || username?.startsWith('WILD_')
@@ -71,11 +71,10 @@ export async function insertWorldEvent(type, message, hexIndex = null, playerId 
   }
 }
 
-// Do two players share a (non-null) alliance?
-async function sameAlliance(aId, bId) {
+async function sameAlliance(aId, bId, client = pool) {
   if (!aId || !bId || aId === bId) return false
   try {
-    const r = await pool.query('SELECT alliance_id FROM players WHERE id IN ($1, $2)', [aId, bId])
+    const r = await client.query('SELECT alliance_id FROM players WHERE id IN ($1, $2)', [aId, bId])
     if (r.rows.length < 2) return false
     return r.rows[0].alliance_id != null && r.rows[0].alliance_id === r.rows[1].alliance_id
   } catch (err) {
@@ -84,7 +83,7 @@ async function sameAlliance(aId, bId) {
   }
 }
 
-const COMBAT_INTERVAL_MS = 15 * 1000
+const COMBAT_INTERVAL_MS = IS_DEV ? (2 * 1000) / SPEED_DIV : 15 * 1000
 const TRAINING_INTERVAL_MS = 15 * 1000
 const BASE_RATE = { gold: 1 }
 
@@ -127,7 +126,6 @@ export async function runTick() {
       const params = toRecord.flatMap(r => [r.id, Number(r.hex_count)])
       await pool.query(`INSERT INTO hex_history (player_id, hex_count) VALUES ${vals}`, params)
     }
-    // Prune rows older than 30 days
     await pool.query("DELETE FROM hex_history WHERE recorded_at < NOW() - INTERVAL '30 days'")
 
     // City zone income - each owned hex inside a city's zone pays a flat bonus.
@@ -183,7 +181,6 @@ export async function runTick() {
       }
     }
 
-    // Enforce gold cap
     await pool.query(`
       UPDATE players p SET
         gold = LEAST(p.gold, $1 + COALESCE(s.hex_count, 0) * $2 + COALESCE(s.mine_count, 0) * $3)
@@ -201,6 +198,19 @@ export async function runTick() {
     getIO()?.emit('tick')
   } catch (err) {
     console.error('[tick] Resource error:', err.message)
+  }
+}
+
+// Troops finishing training on a hex under active siege join the defense
+// instead of sitting in the plain `troops` table, uninvolved, until the
+// end-of-battle cleanup wipes them out regardless of who wins.
+async function deliverTrainedTroops(ownerId, hexIndex, type, quantity) {
+  const battle = await getActiveBattle(hexIndex)
+  if (battle) {
+    await reinforceBattle(battle, ownerId, 'defender', type, quantity)
+    getIO()?.emit('battle:update')
+  } else {
+    await depositTroops(ownerId, hexIndex, type, quantity)
   }
 }
 
@@ -226,7 +236,7 @@ export async function processTraining() {
         const finished = Math.min(job.quantity, Math.floor(progress * job.quantity))
         const delta = finished - (job.delivered || 0)
         if (delta > 0) {
-          await depositTroops(job.owner_id, job.h3_index, job.type, delta)
+          await deliverTrainedTroops(job.owner_id, job.h3_index, job.type, delta)
           await pool.query('UPDATE training_queue SET delivered=$1 WHERE id=$2', [finished, job.id])
           deposited = true
         }
@@ -252,7 +262,7 @@ export async function processTraining() {
       } else {
         const remaining = job.quantity - (job.delivered || 0)
         if (remaining > 0) {
-          await depositTroops(job.owner_id, job.h3_index, job.type, remaining)
+          await deliverTrainedTroops(job.owner_id, job.h3_index, job.type, remaining)
           deposited = true
         }
         await insertEvent(job.owner_id, 'training_complete', `${job.quantity} troops finished training at ${job.h3_index}`, job.h3_index)
@@ -270,8 +280,8 @@ export async function processTraining() {
   }
 }
 
-async function depositTroops(ownerId, hexIndex, type, quantity) {
-  await pool.query(`
+async function depositTroops(ownerId, hexIndex, type, quantity, client = pool) {
+  await client.query(`
     INSERT INTO troops (owner_id, h3_index, type, quantity)
     VALUES ($1, $2, $3, $4)
     ON CONFLICT (owner_id, h3_index, type)
@@ -279,281 +289,424 @@ async function depositTroops(ownerId, hexIndex, type, quantity) {
   `, [ownerId, hexIndex, type, quantity])
 }
 
+// Reinforcements land in reserve, not the frontline directly - they'll cycle
+// into the fight as clashes refill the frontline from reserve, same as
+// everyone else already committed. The defender's bonus (forts/entrenchment/
+// strategic) is applied fresh each clash from current frontline size, not
+// baked into a cumulative number here, so it doesn't need special-casing on
+// arrival the way the old strength-pool model did.
+async function reinforceBattle(battle, ownerId, side, type, quantity, client = pool) {
+  const col = side === 'attacker' ? 'attacker' : 'defender'
+  await client.query(
+    `UPDATE battles SET ${col}_reserve = ${col}_reserve + $1, ${col}_troops = ${col}_troops + $1 WHERE id=$2`,
+    [quantity, battle.id]
+  )
+  await client.query(
+    'INSERT INTO battle_participants (battle_id, player_id, side, troop_type, quantity) VALUES ($1,$2,$3,$4,$5)',
+    [battle.id, ownerId, side, type, quantity]
+  )
+  return quantity
+}
+
+async function getActiveBattle(hexIndex, client = pool) {
+  const res = await client.query("SELECT * FROM battles WHERE h3_index=$1 AND status='active'", [hexIndex])
+  return res.rows[0] || null
+}
+
 export async function processCombat() {
+  let arrived
   try {
-    const arrived = await pool.query(
-      "SELECT * FROM armies WHERE arrives_at <= NOW() AND status='marching'"
+    arrived = await pool.query(
+      "SELECT id FROM armies WHERE arrives_at <= NOW() AND status='marching'"
     )
-
-    for (const army of arrived.rows) {
-      const hexResult = await pool.query('SELECT owner_id FROM hexes WHERE h3_index=$1', [army.to_hex])
-      const targetHex = hexResult.rows[0]
-
-      // A battle already raging at this hex takes priority over the normal
-      // own/ally/unclaimed/enemy routing below - the owner or an ally
-      // sending help is a reinforcement, not a deposit that gets silently
-      // wiped out by the DELETE FROM troops when the battle resolves.
-      const existingBattle = await pool.query(
-        "SELECT * FROM battles WHERE h3_index=$1 AND status='active'", [army.to_hex]
-      )
-
-      if (existingBattle.rows[0]) {
-        const battle = existingBattle.rows[0]
-        let side
-        if (army.owner_id === battle.attacker_id) side = 'attacker'
-        else if (army.owner_id === battle.defender_id) side = 'defender'
-        else if (await sameAlliance(army.owner_id, battle.defender_id)) side = 'defender'
-        else side = 'attacker' // unaffiliated third party joins the attacker
-
-        // Strength and troop count are tracked separately: attackers have no
-        // multiplier (troops === strength), but defenders fight at a bonus
-        // (forts/entrenchment/strategic) - reinforcements must get the SAME
-        // multiplier the original garrison got, frozen at battle start, or
-        // they'd silently fight under-strength next to their own allies.
-        const strAdded = side === 'attacker' ? army.quantity : army.quantity * Number(battle.def_multiplier)
-        if (side === 'attacker') {
-          await pool.query(
-            'UPDATE battles SET attacker_strength = attacker_strength + $1, attacker_troops = attacker_troops + $1 WHERE id=$2',
-            [army.quantity, battle.id]
-          )
-        } else {
-          await pool.query(
-            'UPDATE battles SET defender_strength = defender_strength + $1, defender_troops = defender_troops + $2 WHERE id=$3',
-            [strAdded, army.quantity, battle.id]
-          )
-        }
-        await pool.query(
-          'INSERT INTO battle_participants (battle_id, player_id, side, troop_type, quantity) VALUES ($1,$2,$3,$4,$5)',
-          [battle.id, army.owner_id, side, army.type, army.quantity]
-        )
-        await pool.query("UPDATE armies SET status='in_battle' WHERE id=$1", [army.id])
-        getIO()?.emit('battle:update')
-        getIO()?.emit('armies:update')
-        log(`[battle] reinforcement joined battle ${battle.id} as ${side} (+${army.quantity} troops, +${strAdded.toFixed(1)} str)`)
-
-      } else if (targetHex?.owner_id === army.owner_id) {
-        // Own hex - deposit troops
-        await depositTroops(army.owner_id, army.to_hex, army.type, army.quantity)
-        await pool.query("UPDATE armies SET status='arrived' WHERE id=$1", [army.id])
-        getIO()?.emit('armies:update')
-        getIO()?.emit('hexes:update')
-        log(`[combat] ${army.owner_id} reinforced own hex ${army.to_hex}`)
-
-      } else if (!targetHex || !targetHex.owner_id) {
-        // Unclaimed hex - deposit troops and auto-claim if it's land
-        await depositTroops(army.owner_id, army.to_hex, army.type, army.quantity)
-        if (!isOcean(army.to_hex)) {
-          await pool.query(
-            'INSERT INTO hexes (h3_index, owner_id, claimed_at) VALUES ($1,$2,NOW()) ON CONFLICT (h3_index) DO UPDATE SET owner_id=$2, claimed_at=NOW()',
-            [army.to_hex, army.owner_id]
-          )
-          getIO()?.emit('hexes:update')
-          log(`[combat] ${army.owner_id} auto-claimed ${army.to_hex}`)
-        }
-        await pool.query("UPDATE armies SET status='arrived' WHERE id=$1", [army.id])
-        getIO()?.emit('armies:update')
-
-      } else if (await sameAlliance(army.owner_id, targetHex.owner_id)) {
-        // Ally's hex - reinforce their defense instead of attacking
-        await depositTroops(army.owner_id, army.to_hex, army.type, army.quantity)
-        await pool.query("UPDATE armies SET status='arrived' WHERE id=$1", [army.id])
-        getIO()?.emit('armies:update')
-        getIO()?.emit('hexes:update')
-        log(`[combat] ${army.owner_id} reinforced ally hex ${army.to_hex}`)
-
-      } else {
-        // Enemy hex, no battle yet - attack strength is simply troop count
-        const attackStr = army.quantity
-
-        const defenders = await pool.query(
-          'SELECT type, quantity FROM troops WHERE h3_index=$1', [army.to_hex]
-        )
-        const fortsRes = await pool.query(
-          "SELECT COUNT(*) AS cnt FROM buildings WHERE h3_index=$1 AND type='fort' AND EXTRACT(EPOCH FROM NOW()) - EXTRACT(EPOCH FROM created_at) >= $2",
-          [army.to_hex, BUILDING_TIME_SECONDS]
-        )
-        const forts = Number(fortsRes.rows[0]?.cnt || 0)
-        const strategicBonus = STRATEGIC_HEXES.has(army.to_hex) ? STRATEGIC_DEFENSE_BONUS : 0
-        // Entrenchment - compact borders defend better
-        const neighbors = gridDisk(army.to_hex, 1).filter(h => h !== army.to_hex)
-        const friendly = await pool.query(
-          'SELECT COUNT(*)::int AS cnt FROM hexes WHERE h3_index = ANY($1) AND owner_id=$2',
-          [neighbors, targetHex.owner_id]
-        )
-        const defMultiplier = defenseMultiplier({
-          forts,
-          fortBonus: FORT_DEFENSE_BONUS,
-          strategicBonus,
-          friendlyNeighbors: friendly.rows[0].cnt,
-          entrenchPerNeighbor: ENTRENCH_BONUS_PER_NEIGHBOR,
-          entrenchMaxNeighbors: ENTRENCH_MAX_NEIGHBORS,
-        })
-        const defTroopCount = defenders.rows.reduce((s, t) => s + t.quantity, 0)
-        const defStr = defTroopCount * defMultiplier
-
-        if (defStr === 0) {
-          // No defenders - take hex directly
-          const prevOwner = await pool.query('SELECT owner_id FROM hexes WHERE h3_index=$1', [army.to_hex])
-          await pool.query(
-            'UPDATE hexes SET owner_id=$1, claimed_at=NOW() WHERE h3_index=$2',
-            [army.owner_id, army.to_hex]
-          )
-          await depositTroops(army.owner_id, army.to_hex, army.type, army.quantity)
-          await pool.query("UPDATE armies SET status='arrived' WHERE id=$1", [army.id])
-          if (prevOwner.rows[0]?.owner_id) {
-            await insertEvent(prevOwner.rows[0].owner_id, 'hex_lost', `Your hex ${army.to_hex} was captured unopposed`, army.to_hex)
-          }
-          getIO()?.emit('hexes:update')
-          getIO()?.emit('armies:update')
-          log(`[combat] ${army.to_hex} taken unopposed`)
-        } else {
-          const battle = await pool.query(
-            `INSERT INTO battles (h3_index, attacker_id, defender_id, attacker_strength, defender_strength, attacker_troops, defender_troops, def_multiplier)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
-            [army.to_hex, army.owner_id, targetHex.owner_id, attackStr, defStr, attackStr, defTroopCount, defMultiplier]
-          )
-          const bid = battle.rows[0].id
-          await pool.query(
-            'INSERT INTO battle_participants (battle_id, player_id, side, troop_type, quantity) VALUES ($1,$2,$3,$4,$5)',
-            [bid, army.owner_id, 'attacker', army.type, army.quantity]
-          )
-          for (const t of defenders.rows) {
-            await pool.query(
-              'INSERT INTO battle_participants (battle_id, player_id, side, troop_type, quantity) VALUES ($1,$2,$3,$4,$5)',
-              [bid, targetHex.owner_id, 'defender', t.type, t.quantity]
-            )
-          }
-          await pool.query("UPDATE armies SET status='in_battle' WHERE id=$1", [army.id])
-
-          // Warn the defender - reinforcements can still turn the battle
-          const defenderInfo = await pool.query('SELECT username FROM players WHERE id=$1', [targetHex.owner_id])
-          const defName = defenderInfo.rows[0]?.username
-          if (!isNPC(defName)) {
-            insertEvent(targetHex.owner_id, 'under_attack', `Battle started at your hex - ${attackStr} enemy troops attacking`, army.to_hex)
-            sendPush(targetHex.owner_id, 'You are under attack!', `${attackStr} enemy troops are assaulting your territory. Send reinforcements!`, { hex: army.to_hex })
-          }
-
-          getIO()?.emit('battle:update')
-          getIO()?.emit('armies:update')
-          log(`[battle] started at ${army.to_hex}: ${attackStr} atk vs ${defStr.toFixed(1)} def`)
-        }
-      }
-    }
   } catch (err) {
     console.error('[combat] Error:', err.message)
+    return
+  }
+
+  for (const row of arrived.rows) {
+    // Deferred until the transaction below commits - a rollback (lock
+    // contention, a query error) must not fire sockets/events/pushes for a
+    // state change that never actually happened.
+    const afterCommit = []
+    try {
+      await withTransaction(async (tx) => {
+        // Locking (not skipping): if an overlapping processCombat run already
+        // has this army locked, wait for it - once unblocked, the re-check on
+        // status='marching' below correctly yields nothing if that other run
+        // already finished processing this same arrival.
+        const armyRes = await tx.query(
+          "SELECT * FROM armies WHERE id=$1 AND status='marching' FOR UPDATE", [row.id]
+        )
+        const army = armyRes.rows[0]
+        if (!army) return
+
+        // Lock the hex row so two armies landing on it in the same pass (or
+        // a concurrent processBattleRounds resolution) serialize instead of
+        // both reading the same pre-update owner_id.
+        const hexResult = await tx.query('SELECT owner_id FROM hexes WHERE h3_index=$1 FOR UPDATE', [army.to_hex])
+        const targetHex = hexResult.rows[0]
+
+        // A battle already raging at this hex takes priority over the normal
+        // own/ally/unclaimed/enemy routing below - the owner or an ally
+        // sending help is a reinforcement, not a deposit that gets silently
+        // wiped out by the DELETE FROM troops when the battle resolves.
+        // Blocking (not SKIP LOCKED) so that if processBattleRounds is mid-
+        // resolution we wait for it and see the true post-resolution state.
+        const existingBattle = await tx.query(
+          "SELECT * FROM battles WHERE h3_index=$1 AND status='active' FOR UPDATE", [army.to_hex]
+        )
+
+        if (existingBattle.rows[0]) {
+          const battle = existingBattle.rows[0]
+          let side
+          if (army.owner_id === battle.attacker_id) side = 'attacker'
+          else if (army.owner_id === battle.defender_id) side = 'defender'
+          else if (await sameAlliance(army.owner_id, battle.defender_id, tx)) side = 'defender'
+          else side = 'attacker' // unaffiliated third party joins the attacker
+
+          await reinforceBattle(battle, army.owner_id, side, army.type, army.quantity, tx)
+          await tx.query("UPDATE armies SET status='in_battle' WHERE id=$1", [army.id])
+          afterCommit.push(() => {
+            getIO()?.emit('battle:update')
+            getIO()?.emit('armies:update')
+            log(`[battle] reinforcement joined battle ${battle.id} as ${side} (+${army.quantity} troops to reserve)`)
+          })
+
+        } else if (targetHex?.owner_id === army.owner_id) {
+          // Own hex - deposit troops
+          await depositTroops(army.owner_id, army.to_hex, army.type, army.quantity, tx)
+          await tx.query("UPDATE armies SET status='arrived' WHERE id=$1", [army.id])
+          afterCommit.push(() => {
+            getIO()?.emit('armies:update')
+            getIO()?.emit('hexes:update')
+            log(`[combat] ${army.owner_id} reinforced own hex ${army.to_hex}`)
+          })
+
+        } else if (!targetHex || !targetHex.owner_id) {
+          // Unclaimed hex - troops always deposit, but only auto-claim once
+          // MIN_TROOPS_TO_CLAIM have actually accumulated here. This is the
+          // same bar the manual "Claim Territory" button enforces - without
+          // it, marching even a single troop onto empty land silently
+          // auto-claimed it here, bypassing that check entirely.
+          await depositTroops(army.owner_id, army.to_hex, army.type, army.quantity, tx)
+          let claimed = false
+          if (!isOcean(army.to_hex)) {
+            const totalRes = await tx.query(
+              'SELECT COALESCE(SUM(quantity), 0)::int AS qty FROM troops WHERE owner_id=$1 AND h3_index=$2',
+              [army.owner_id, army.to_hex]
+            )
+            if (totalRes.rows[0].qty >= MIN_TROOPS_TO_CLAIM) {
+              await tx.query(
+                'INSERT INTO hexes (h3_index, owner_id, claimed_at) VALUES ($1,$2,NOW()) ON CONFLICT (h3_index) DO UPDATE SET owner_id=$2, claimed_at=NOW()',
+                [army.to_hex, army.owner_id]
+              )
+              claimed = true
+            }
+          }
+          await tx.query("UPDATE armies SET status='arrived' WHERE id=$1", [army.id])
+          afterCommit.push(() => {
+            if (claimed) {
+              getIO()?.emit('hexes:update')
+              log(`[combat] ${army.owner_id} auto-claimed ${army.to_hex}`)
+            }
+            getIO()?.emit('armies:update')
+          })
+
+        } else if (await sameAlliance(army.owner_id, targetHex.owner_id, tx)) {
+          // Ally's hex - reinforce their defense instead of attacking
+          await depositTroops(army.owner_id, army.to_hex, army.type, army.quantity, tx)
+          await tx.query("UPDATE armies SET status='arrived' WHERE id=$1", [army.id])
+          afterCommit.push(() => {
+            getIO()?.emit('armies:update')
+            getIO()?.emit('hexes:update')
+            log(`[combat] ${army.owner_id} reinforced ally hex ${army.to_hex}`)
+          })
+
+        } else {
+          // Enemy hex, no battle yet - attack strength is simply troop count
+          const attackStr = army.quantity
+
+          const defenders = await tx.query(
+            'SELECT type, quantity FROM troops WHERE h3_index=$1', [army.to_hex]
+          )
+          const fortsRes = await tx.query(
+            "SELECT COUNT(*) AS cnt FROM buildings WHERE h3_index=$1 AND type='fort' AND EXTRACT(EPOCH FROM NOW()) - EXTRACT(EPOCH FROM created_at) >= $2",
+            [army.to_hex, BUILDING_TIME_SECONDS]
+          )
+          const forts = Number(fortsRes.rows[0]?.cnt || 0)
+          const strategicAdvantage = STRATEGIC_HEXES.has(army.to_hex) ? STRATEGIC_ADVANTAGE_TROOPS : 0
+          // Entrenchment - compact borders defend better
+          const neighbors = gridDisk(army.to_hex, 1).filter(h => h !== army.to_hex)
+          const friendly = await tx.query(
+            'SELECT COUNT(*)::int AS cnt FROM hexes WHERE h3_index = ANY($1) AND owner_id=$2',
+            [neighbors, targetHex.owner_id]
+          )
+          const advantagedDefenders = advantagedDefenderCount({
+            forts,
+            fortAdvantage: FORT_ADVANTAGE_TROOPS,
+            strategicAdvantage,
+            friendlyNeighbors: friendly.rows[0].cnt,
+            entrenchAdvantagePerNeighbor: ENTRENCH_ADVANTAGE_PER_NEIGHBOR,
+            entrenchMaxNeighbors: ENTRENCH_MAX_NEIGHBORS,
+          })
+          const defTroopCount = defenders.rows.reduce((s, t) => s + t.quantity, 0)
+
+          if (defTroopCount === 0) {
+            // No defenders - take hex directly
+            const prevOwnerId = targetHex.owner_id
+            await tx.query(
+              'UPDATE hexes SET owner_id=$1, claimed_at=NOW() WHERE h3_index=$2',
+              [army.owner_id, army.to_hex]
+            )
+            await depositTroops(army.owner_id, army.to_hex, army.type, army.quantity, tx)
+            await tx.query("UPDATE armies SET status='arrived' WHERE id=$1", [army.id])
+            afterCommit.push(() => {
+              if (prevOwnerId) {
+                insertEvent(prevOwnerId, 'hex_lost', `Your hex ${army.to_hex} was captured unopposed`, army.to_hex)
+              }
+              getIO()?.emit('hexes:update')
+              getIO()?.emit('armies:update')
+              log(`[combat] ${army.to_hex} taken unopposed`)
+            })
+          } else {
+            const atkFrontline = Math.min(FRONTLINE_CAP, attackStr)
+            const atkReserve = attackStr - atkFrontline
+            const defFrontline = Math.min(FRONTLINE_CAP, defTroopCount)
+            const defReserve = defTroopCount - defFrontline
+
+            const battleRes = await tx.query(
+              `INSERT INTO battles (
+                 h3_index, attacker_id, defender_id, defender_advantage_troops,
+                 attacker_troops, defender_troops,
+                 attacker_frontline, attacker_reserve, defender_frontline, defender_reserve,
+                 attacker_strength, defender_strength
+               )
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,
+              [army.to_hex, army.owner_id, targetHex.owner_id, advantagedDefenders,
+               attackStr, defTroopCount,
+               atkFrontline, atkReserve, defFrontline, defReserve,
+               // "strength" is just the real troop count on both sides - the
+               // defender's edge is expressed as some of their frontline
+               // fighting with advantage, not an inflated number.
+               attackStr, defTroopCount]
+            )
+            const bid = battleRes.rows[0].id
+            await tx.query(
+              'INSERT INTO battle_participants (battle_id, player_id, side, troop_type, quantity) VALUES ($1,$2,$3,$4,$5)',
+              [bid, army.owner_id, 'attacker', army.type, army.quantity]
+            )
+            for (const t of defenders.rows) {
+              await tx.query(
+                'INSERT INTO battle_participants (battle_id, player_id, side, troop_type, quantity) VALUES ($1,$2,$3,$4,$5)',
+                [bid, targetHex.owner_id, 'defender', t.type, t.quantity]
+              )
+            }
+            await tx.query("UPDATE armies SET status='in_battle' WHERE id=$1", [army.id])
+
+            const defenderInfo = await tx.query('SELECT username FROM players WHERE id=$1', [targetHex.owner_id])
+            const defName = defenderInfo.rows[0]?.username
+            const defenderId = targetHex.owner_id
+
+            // Warn the defender - reinforcements can still turn the battle
+            afterCommit.push(() => {
+              if (!isNPC(defName)) {
+                insertEvent(defenderId, 'under_attack', `Battle started at your hex - ${attackStr} enemy troops attacking`, army.to_hex)
+                sendPush(defenderId, 'You are under attack!', `${attackStr} enemy troops are assaulting your territory. Send reinforcements!`, { hex: army.to_hex })
+              }
+              getIO()?.emit('battle:update')
+              getIO()?.emit('armies:update')
+              log(`[battle] started at ${army.to_hex}: ${attackStr} atk vs ${defTroopCount} def (${advantagedDefenders} defenders rolling with advantage)`)
+            })
+          }
+        }
+      })
+    } catch (err) {
+      console.error('[combat] Error processing army', row.id, ':', err.message)
+      continue
+    }
+    for (const fn of afterCommit) fn()
   }
 }
 
+// Battle rounds process on one shared interval for every active battle, not
+// individually per battle - expose when that interval actually next fires so
+// the client can show a real countdown instead of guessing from a single
+// battle's own last_round_at (which drifts from the shared clock).
+export let nextBattleRoundAt = Date.now() + BATTLE_INTERVAL_MS
+
 export async function processBattleRounds() {
+  nextBattleRoundAt = Date.now() + BATTLE_INTERVAL_MS
+  let active
   try {
-    const active = await pool.query("SELECT * FROM battles WHERE status='active'")
-
-    for (const battle of active.rows) {
-      const atkStr = Number(battle.attacker_strength)
-      const defStr = Number(battle.defender_strength)
-      const atkTroops = Number(battle.attacker_troops)
-      const defTroops = Number(battle.defender_troops)
-
-      const { atkDmg, defDmg, newAtkStr, newDefStr, over } = resolveRound(atkStr, defStr, BATTLE_ROUND_DAMAGE_RATE)
-      // Real troop counts decay by the same fraction their strength pool did
-      // this round, every round - not just reconstructed once at the end from
-      // an all-time participant total, which ignores losses from every round
-      // but the last and only gets worse the more reinforcement waves land.
-      const newAtkTroops = decayTroops(atkTroops, newAtkStr, atkStr)
-      const newDefTroops = decayTroops(defTroops, newDefStr, defStr)
-
-      if (over) {
-        // Battle over
-        const attackerWon = newAtkStr > newDefStr
-
-        const pNames = await pool.query('SELECT id, username FROM players WHERE id IN ($1, $2)', [battle.attacker_id, battle.defender_id])
-        const nameOf = new Map(pNames.rows.map(r => [r.id, r.username]))
-        const atkName = nameOf.get(battle.attacker_id)
-        const defName = nameOf.get(battle.defender_id)
-        const countryName = getCountry(battle.h3_index)?.name || 'the wilds'
-
-        if (attackerWon) {
-          await pool.query('DELETE FROM troops WHERE h3_index=$1', [battle.h3_index])
-          await pool.query('DELETE FROM buildings WHERE h3_index=$1', [battle.h3_index])
-          await pool.query('UPDATE hexes SET owner_id=$1, claimed_at=NOW() WHERE h3_index=$2',
-            [battle.attacker_id, battle.h3_index])
-          const atkSurvivors = Math.round(newAtkTroops)
-          if (atkSurvivors > 0) {
-            await depositTroops(battle.attacker_id, battle.h3_index, 'troop', atkSurvivors)
-            log(`[battle] ${battle.id} ATTACKER WINS at ${battle.h3_index} (${atkSurvivors} troops survive)`)
-          } else {
-            log(`[battle] ${battle.id} ATTACKER WINS at ${battle.h3_index} (no survivors)`)
-          }
-        } else {
-          // Defender wins - restore defender remnants
-          await pool.query('DELETE FROM troops WHERE h3_index=$1', [battle.h3_index])
-          const defSurvivors = Math.round(newDefTroops)
-          if (defSurvivors > 0) {
-            await depositTroops(battle.defender_id, battle.h3_index, 'troop', defSurvivors)
-            log(`[battle] ${battle.id} DEFENDER WINS at ${battle.h3_index} (${defSurvivors} troops survive)`)
-          } else {
-            log(`[battle] ${battle.id} DEFENDER WINS at ${battle.h3_index} (no survivors)`)
-          }
-        }
-
-        if (attackerWon) {
-          // Camp plunder - capturing a Wildlands camp pays out loot
-          if (isWild(defName)) {
-            await pool.query('UPDATE players SET gold=gold+$1 WHERE id=$2', [CAMP_LOOT_GOLD, battle.attacker_id])
-            await insertEvent(battle.attacker_id, 'plunder', `Camp plundered! +${CAMP_LOOT_GOLD} gold`, battle.h3_index)
-          }
-
-          const defenderData = await pool.query('SELECT capital_hex FROM players WHERE id=$1', [battle.defender_id])
-          const isCapital = defenderData.rows[0]?.capital_hex === battle.h3_index
-          if (isCapital) {
-            await pool.query(
-              'DELETE FROM training_queue WHERE owner_id=$1 AND h3_index=$2',
-              [battle.defender_id, battle.h3_index]
-            )
-            await pool.query('UPDATE players SET capital_hex=NULL WHERE id=$1', [battle.defender_id])
-            await insertEvent(battle.defender_id, 'capital_lost', `Your capital has fallen! All is not lost - claim any free hex to found a new capital and rebuild.`, battle.h3_index)
-            insertWorldEvent('capital', `${defName}'s capital has fallen to ${atkName}!`, battle.h3_index, battle.attacker_id)
-            sendPush(battle.defender_id, 'Your capital has fallen!', 'All is not lost - claim any free hex to found a new capital and rebuild.', { hex: battle.h3_index })
-            log(`[battle] ${battle.defender_id} lost their capital at ${battle.h3_index}`)
-          } else if (!isWild(defName)) {
-            insertWorldEvent('battle', `${atkName} seized ${countryName} territory from ${defName}`, battle.h3_index, battle.attacker_id)
-          }
-          await insertEvent(battle.attacker_id, 'battle_won', `Battle won at ${battle.h3_index}`, battle.h3_index)
-          await insertEvent(battle.defender_id, 'battle_lost', `Battle lost at ${battle.h3_index}`, battle.h3_index)
-          await insertEvent(battle.defender_id, 'hex_lost', `Your hex ${battle.h3_index} was captured in battle`, battle.h3_index)
-        } else {
-          if (!isWild(defName) && !isWild(atkName)) {
-            insertWorldEvent('battle', `${defName} repelled ${atkName}'s assault in ${countryName}`, battle.h3_index, battle.defender_id)
-          }
-          await insertEvent(battle.defender_id, 'battle_won', `Defended ${battle.h3_index} successfully`, battle.h3_index)
-          await insertEvent(battle.attacker_id, 'battle_lost', `Attack on ${battle.h3_index} failed`, battle.h3_index)
-        }
-
-        await pool.query(
-          "UPDATE battles SET status=$1, ended_at=NOW(), attacker_strength=$2, defender_strength=$3, attacker_troops=$4, defender_troops=$5 WHERE id=$6",
-          [attackerWon ? 'attacker_won' : 'defender_won', newAtkStr, newDefStr, newAtkTroops, newDefTroops, battle.id]
-        )
-        await pool.query("UPDATE armies SET status='arrived' WHERE status='in_battle' AND to_hex=$1", [battle.h3_index])
-        getIO()?.emit('battle:update')
-        getIO()?.emit('hexes:update')
-        getIO()?.emit('armies:update')
-
-      } else {
-        // Battle continues
-        await pool.query(`
-          UPDATE battles SET
-            attacker_strength=$1, defender_strength=$2,
-            attacker_troops=$3, defender_troops=$4,
-            attacker_losses=attacker_losses+$5, defender_losses=defender_losses+$6,
-            round_number=round_number+1, last_round_at=NOW()
-          WHERE id=$7
-        `, [newAtkStr, newDefStr, newAtkTroops, newDefTroops, defDmg, atkDmg, battle.id])
-        getIO()?.emit('battle:update')
-        log(`[battle] round ${battle.round_number + 1} at ${battle.h3_index}: ${newAtkStr.toFixed(1)} vs ${newDefStr.toFixed(1)}`)
-      }
-    }
+    active = await pool.query("SELECT id FROM battles WHERE status='active'")
   } catch (err) {
     console.error('[battle] Error:', err.message)
+    return
+  }
+
+  for (const row of active.rows) {
+    const afterCommit = []
+    try {
+      await withTransaction(async (tx) => {
+        // Locking: an overlapping processBattleRounds run (interval fired again
+        // before this one finished) must not resolve the same clash twice -
+        // wait for the other run's lock, then the status='active' re-check
+        // below yields nothing if it already resolved this battle.
+        const battleRes = await tx.query(
+          "SELECT * FROM battles WHERE id=$1 AND status='active' FOR UPDATE", [row.id]
+        )
+        const battle = battleRes.rows[0]
+        if (!battle) return
+
+        const advantagedDefenders = Number(battle.defender_advantage_troops)
+        const result = resolveBattleClash({
+          atkFrontline: Number(battle.attacker_frontline),
+          atkReserve: Number(battle.attacker_reserve),
+          defFrontline: Number(battle.defender_frontline),
+          defReserve: Number(battle.defender_reserve),
+        }, advantagedDefenders, Math.random)
+
+        const atkTotal = result.atkFrontline + result.atkReserve
+        const defTotal = result.defFrontline + result.defReserve
+
+        // Debugging log: the actual dice rolled for this clash, independent of
+        // the battle's own running totals - lets a disputed outcome ("why did
+        // the defender never lose") be inspected exactly via the admin panel
+        // instead of re-derived from aggregates. See routes/admin.js.
+        await tx.query(
+          `INSERT INTO battle_rounds
+             (battle_id, round_number, defender_advantage_troops, atk_frontline_before, def_frontline_before,
+              atk_dice, def_dice, atk_losses, def_losses, atk_troops_after, def_troops_after)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+          [battle.id, battle.round_number + 1, advantagedDefenders,
+           Number(battle.attacker_frontline), Number(battle.defender_frontline),
+           result.atkDice, result.defDice, result.atkLosses, result.defLosses,
+           atkTotal, defTotal]
+        )
+
+        if (result.over) {
+          // Battle over
+          const attackerWon = result.attackerWon
+          // Total real troop losses for the whole battle, not just this final
+          // clash - battle.*_losses is the pre-update cumulative total, so add
+          // this round's losses (not yet persisted until the UPDATE below).
+          const totalAtkLosses = Number(battle.attacker_losses) + result.atkLosses
+          const totalDefLosses = Number(battle.defender_losses) + result.defLosses
+
+          const pNames = await tx.query('SELECT id, username FROM players WHERE id IN ($1, $2)', [battle.attacker_id, battle.defender_id])
+          const nameOf = new Map(pNames.rows.map(r => [r.id, r.username]))
+          const atkName = nameOf.get(battle.attacker_id)
+          const defName = nameOf.get(battle.defender_id)
+          const countryName = getCountry(battle.h3_index)?.name || 'the wilds'
+
+          if (attackerWon) {
+            await tx.query('DELETE FROM troops WHERE h3_index=$1', [battle.h3_index])
+            await tx.query('DELETE FROM buildings WHERE h3_index=$1', [battle.h3_index])
+            await tx.query('UPDATE hexes SET owner_id=$1, claimed_at=NOW() WHERE h3_index=$2',
+              [battle.attacker_id, battle.h3_index])
+            const atkSurvivors = Math.round(atkTotal)
+            if (atkSurvivors > 0) await depositTroops(battle.attacker_id, battle.h3_index, 'troop', atkSurvivors, tx)
+            afterCommit.push(() => {
+              log(atkSurvivors > 0
+                ? `[battle] ${battle.id} ATTACKER WINS at ${battle.h3_index} (${atkSurvivors} troops survive)`
+                : `[battle] ${battle.id} ATTACKER WINS at ${battle.h3_index} (no survivors)`)
+            })
+          } else {
+            // Defender wins - restore defender remnants
+            await tx.query('DELETE FROM troops WHERE h3_index=$1', [battle.h3_index])
+            const defSurvivors = Math.round(defTotal)
+            if (defSurvivors > 0) await depositTroops(battle.defender_id, battle.h3_index, 'troop', defSurvivors, tx)
+            afterCommit.push(() => {
+              log(defSurvivors > 0
+                ? `[battle] ${battle.id} DEFENDER WINS at ${battle.h3_index} (${defSurvivors} troops survive)`
+                : `[battle] ${battle.id} DEFENDER WINS at ${battle.h3_index} (no survivors)`)
+            })
+          }
+
+          if (attackerWon) {
+            // Camp plunder - capturing a Wildlands camp pays out loot
+            if (isWild(defName)) {
+              await tx.query('UPDATE players SET gold=gold+$1 WHERE id=$2', [CAMP_LOOT_GOLD, battle.attacker_id])
+              afterCommit.push(() => insertEvent(battle.attacker_id, 'plunder', `Camp plundered! +${CAMP_LOOT_GOLD} gold`, battle.h3_index))
+            }
+
+            const defenderData = await tx.query('SELECT capital_hex FROM players WHERE id=$1', [battle.defender_id])
+            const isCapital = defenderData.rows[0]?.capital_hex === battle.h3_index
+            if (isCapital) {
+              await tx.query(
+                'DELETE FROM training_queue WHERE owner_id=$1 AND h3_index=$2',
+                [battle.defender_id, battle.h3_index]
+              )
+              await tx.query('UPDATE players SET capital_hex=NULL WHERE id=$1', [battle.defender_id])
+              afterCommit.push(() => {
+                insertEvent(battle.defender_id, 'capital_lost', `Your capital has fallen! All is not lost - claim any free hex to found a new capital and rebuild.`, battle.h3_index)
+                insertWorldEvent('capital', `${defName}'s capital has fallen to ${atkName}!`, battle.h3_index, battle.attacker_id)
+                sendPush(battle.defender_id, 'Your capital has fallen!', 'All is not lost - claim any free hex to found a new capital and rebuild.', { hex: battle.h3_index })
+                log(`[battle] ${battle.defender_id} lost their capital at ${battle.h3_index}`)
+              })
+            } else if (!isWild(defName)) {
+              afterCommit.push(() => insertWorldEvent('battle', `${atkName} seized ${countryName} territory from ${defName}`, battle.h3_index, battle.attacker_id))
+            }
+            afterCommit.push(() => {
+              insertEvent(battle.attacker_id, 'battle_won', `Battle won at ${battle.h3_index} (lost ${totalAtkLosses} troops)`, battle.h3_index)
+              insertEvent(battle.defender_id, 'battle_lost', `Battle lost at ${battle.h3_index} (lost ${totalDefLosses} troops)`, battle.h3_index)
+              insertEvent(battle.defender_id, 'hex_lost', `Your hex ${battle.h3_index} was captured in battle`, battle.h3_index)
+            })
+          } else {
+            if (!isWild(defName) && !isWild(atkName)) {
+              afterCommit.push(() => insertWorldEvent('battle', `${defName} repelled ${atkName}'s assault in ${countryName}`, battle.h3_index, battle.defender_id))
+            }
+            afterCommit.push(() => {
+              insertEvent(battle.defender_id, 'battle_won', `Defended ${battle.h3_index} successfully (lost ${totalDefLosses} troops)`, battle.h3_index)
+              insertEvent(battle.attacker_id, 'battle_lost', `Attack on ${battle.h3_index} failed (lost ${totalAtkLosses} troops)`, battle.h3_index)
+            })
+          }
+
+          await tx.query(
+            `UPDATE battles SET
+               status=$1, ended_at=NOW(),
+               attacker_frontline=$2, attacker_reserve=$3, defender_frontline=$4, defender_reserve=$5,
+               attacker_troops=$6, defender_troops=$7,
+               attacker_strength=$6, defender_strength=$7,
+               attacker_losses=attacker_losses+$8, defender_losses=defender_losses+$9
+             WHERE id=$10`,
+            [attackerWon ? 'attacker_won' : 'defender_won',
+             result.atkFrontline, result.atkReserve, result.defFrontline, result.defReserve,
+             atkTotal, defTotal,
+             result.atkLosses, result.defLosses, battle.id]
+          )
+          await tx.query("UPDATE armies SET status='arrived' WHERE status='in_battle' AND to_hex=$1", [battle.h3_index])
+          afterCommit.push(() => {
+            getIO()?.emit('battle:update')
+            getIO()?.emit('hexes:update')
+            getIO()?.emit('armies:update')
+          })
+
+        } else {
+          // Battle continues
+          await tx.query(`
+            UPDATE battles SET
+              attacker_frontline=$1, attacker_reserve=$2, defender_frontline=$3, defender_reserve=$4,
+              attacker_troops=$5, defender_troops=$6,
+              attacker_strength=$5, defender_strength=$6,
+              attacker_losses=attacker_losses+$7, defender_losses=defender_losses+$8,
+              round_number=round_number+1, last_round_at=NOW()
+            WHERE id=$9
+          `, [result.atkFrontline, result.atkReserve, result.defFrontline, result.defReserve,
+              atkTotal, defTotal,
+              result.atkLosses, result.defLosses, battle.id])
+          afterCommit.push(() => {
+            getIO()?.emit('battle:update')
+            log(`[battle] clash ${battle.round_number + 1} at ${battle.h3_index}: ${atkTotal.toFixed(0)} vs ${defTotal.toFixed(0)} (-${result.atkLosses} atk, -${result.defLosses} def)`)
+          })
+        }
+      })
+    } catch (err) {
+      console.error('[battle] Error processing battle', row.id, ':', err.message)
+      continue
+    }
+    for (const fn of afterCommit) fn()
   }
 }
 
@@ -585,15 +738,23 @@ export async function processDecay() {
 
     let anyLost = false
     for (const player of big.rows) {
-      // Candidates: no garrison, no buildings, not the capital - random sample to bound work
+      // Required garrison rises with empire size - a token 1-troop garrison
+      // only stays decay-safe for a genuinely small empire (see config.js).
+      const requiredGarrison = requiredGarrisonForHexCount(player.hex_count)
+
+      // Candidates: garrison below the required bar, no buildings, not the
+      // capital - random sample to bound work
       const cands = await pool.query(`
-        SELECT h.h3_index FROM hexes h
+        SELECT h.h3_index, COALESCE(SUM(t.quantity), 0)::int AS garrison
+        FROM hexes h
+        LEFT JOIN troops t ON t.h3_index = h.h3_index
         WHERE h.owner_id = $1
           AND h.h3_index IS DISTINCT FROM $2
-          AND NOT EXISTS (SELECT 1 FROM troops t WHERE t.h3_index = h.h3_index AND t.quantity > 0)
           AND NOT EXISTS (SELECT 1 FROM buildings b WHERE b.h3_index = h.h3_index)
+        GROUP BY h.h3_index
+        HAVING COALESCE(SUM(t.quantity), 0) < $3
         ORDER BY RANDOM() LIMIT 30
-      `, [player.id, player.capital_hex])
+      `, [player.id, player.capital_hex, requiredGarrison])
 
       let lost = 0
       for (const { h3_index } of cands.rows) {
@@ -611,8 +772,8 @@ export async function processDecay() {
       }
       if (lost > 0) {
         anyLost = true
-        insertEvent(player.id, 'decay', `${lost} unguarded border hex${lost > 1 ? 'es' : ''} slipped from your control. Garrison or build to hold the frontier.`)
-        log(`[decay] ${player.username} lost ${lost} border hexes`)
+        insertEvent(player.id, 'decay', `${lost} border hex${lost > 1 ? 'es' : ''} slipped from your control - at your empire's size, a hex needs ${requiredGarrison}+ troops or a building to hold. Garrison or build to hold the frontier.`)
+        log(`[decay] ${player.username} lost ${lost} border hexes (required garrison was ${requiredGarrison})`)
       }
     }
     if (anyLost) getIO()?.emit('hexes:update')

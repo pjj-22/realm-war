@@ -6,7 +6,6 @@ import { ALLIANCE_CREATE_COST } from '../config.js'
 
 const router = Router()
 
-// Current player's alliance + roster (null if unaffiliated)
 router.get('/mine', requireAuth, async (req, res) => {
   try {
     const me = await pool.query('SELECT alliance_id FROM players WHERE id=$1', [req.player.id])
@@ -28,7 +27,6 @@ router.get('/mine', requireAuth, async (req, res) => {
   }
 })
 
-// Found a new alliance
 router.post('/create', requireAuth, async (req, res) => {
   const { name, tag } = req.body
   if (!name || name.length < 3 || name.length > 24) return res.status(400).json({ error: 'Name must be 3-24 characters' })
@@ -56,7 +54,6 @@ router.post('/create', requireAuth, async (req, res) => {
   }
 })
 
-// Join by invite code
 router.post('/join', requireAuth, async (req, res) => {
   const { code } = req.body
   if (!code) return res.status(400).json({ error: 'Invite code required' })
@@ -75,7 +72,6 @@ router.post('/join', requireAuth, async (req, res) => {
   }
 })
 
-// Leave alliance
 router.post('/leave', requireAuth, async (req, res) => {
   try {
     await pool.query('UPDATE players SET alliance_id=NULL WHERE id=$1', [req.player.id])

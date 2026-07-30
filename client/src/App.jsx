@@ -3,6 +3,7 @@ import GameMap from './components/GameMap'
 import AuthModal from './components/AuthModal'
 import HelpModal from './components/HelpModal'
 import FTUEGuide from './components/FTUEGuide'
+import FlagOnboardingModal from './components/FlagOnboardingModal'
 import AdminPortal from './components/AdminPortal'
 import { ToastContainer, toast } from './components/Toast'
 import { api } from './api/client'
@@ -62,6 +63,9 @@ export default function App() {
         onPlayerUpdate={updates => setPlayer(p => ({ ...p, ...updates }))}
         onShowHelp={() => setShowHelp(true)}
       />
+      {player?.capital_hex && !player?.flag_pixels && (
+        <FlagOnboardingModal onDone={(pixels, motto) => setPlayer(p => ({ ...p, flag_pixels: pixels, motto }))} />
+      )}
       {showFTUE && player && (
         <FTUEGuide player={player} onDismiss={() => setShowFTUE(false)} />
       )}

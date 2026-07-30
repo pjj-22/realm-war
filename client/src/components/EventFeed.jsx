@@ -201,7 +201,6 @@ export default function EventFeed() {
 
   return (
     <div style={{ position: 'relative' }}>
-      {/* Transient dispatch popups - slide in from the right, fade out */}
       {popups.length > 0 && (
         <div style={{
           position: 'fixed', top: 56, right: 8, zIndex: 90,

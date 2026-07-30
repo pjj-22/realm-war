@@ -43,11 +43,11 @@ async function notify(ids, title, body, type) {
 }
 
 async function plague(severity) {
-  const t0 = Number((await pool.query('SELECT COALESCE(SUM(quantity),0)::int n FROM troops')).rows[0].n)
+  const t0 = Number((await pool.query('SELECT COALESCE(SUM(quantity),0)::float8 n FROM troops')).rows[0].n)
   const owners = (await pool.query('SELECT DISTINCT owner_id FROM troops')).rows.map(r => r.owner_id)
   await pool.query('UPDATE troops SET quantity = quantity - CEIL(quantity * $1::numeric)', [severity])
   await pool.query('DELETE FROM troops WHERE quantity <= 0')
-  const t1 = Number((await pool.query('SELECT COALESCE(SUM(quantity),0)::int n FROM troops')).rows[0].n)
+  const t1 = Number((await pool.query('SELECT COALESCE(SUM(quantity),0)::float8 n FROM troops')).rows[0].n)
   const killed = t0 - t1
   const pct = Math.round(severity * 100)
   const msg = `A plague sweeps the realm. ${pct}% of every army withers, and ${killed.toLocaleString()} troops lie dead.`

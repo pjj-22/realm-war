@@ -78,7 +78,6 @@ router.get('/events', async (req, res) => {
   }
 })
 
-// Current country rulers
 router.get('/crowns', async (req, res) => {
   try {
     const result = await pool.query(`

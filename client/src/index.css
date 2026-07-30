@@ -24,6 +24,7 @@ body {
 #root {
   width: 100vw;
   height: 100vh;
+  height: 100dvh;
 }
 
 @keyframes threat-pulse {
@@ -59,16 +60,37 @@ body {
   100% { transform: scale(2.4); opacity: 0; }
 }
 
-.battle-ring {
+.battle-ring-anchor {
   width: 48px;
   height: 48px;
+  position: relative;
+  pointer-events: none;
+}
+
+.battle-ring {
+  width: 100%;
+  height: 100%;
   border-radius: 50%;
   border: 3px solid #ff3333;
   animation: battle-pulse 1.5s ease-out infinite;
   pointer-events: none;
-  position: relative;
 }
 
 .battle-ring svg {
   filter: drop-shadow(0 0 4px rgba(255,60,60,0.8));
+}
+
+/* Top bar: scroll horizontally instead of clipping when content is wider
+   than the screen (narrow phones), scrollbar hidden for a clean look. */
+.rw-topbar-scroll {
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.rw-topbar-scroll::-webkit-scrollbar {
+  display: none;
+}
+.rw-topbar-scroll > * {
+  flex-shrink: 0;
 }

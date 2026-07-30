@@ -6,7 +6,7 @@ import { runTick } from '../tick.js'
 import { ensureBots } from '../bots.js'
 import { getCurrentSeason, processSeason } from '../season.js'
 import { getIO } from '../socket.js'
-import { DEV_MODE, TICK_INTERVAL_MS } from '../config.js'
+import { IS_DEV, TICK_INTERVAL_MS } from '../config.js'
 import { GM_EVENTS, triggerEvent } from '../gmEvents.js'
 
 const router = Router()
@@ -26,10 +26,9 @@ function requireAdmin(req, res, next) {
   next()
 }
 
-router.use(rateLimit({ windowMs: 60 * 1000, max: DEV_MODE ? 1000 : 60, message: 'Too many admin requests' }))
+router.use(rateLimit({ windowMs: 60 * 1000, max: IS_DEV ? 1000 : 300, message: 'Too many admin requests' }))
 router.use(requireAdmin)
 
-// Server overview
 router.get('/overview', async (req, res) => {
   try {
     const [players, bots, hexes, armies, battles, troops, gold, training, upgrades, alliances] = await Promise.all([
@@ -38,7 +37,7 @@ router.get('/overview', async (req, res) => {
       pool.query('SELECT COUNT(*)::integer AS n FROM hexes'),
       pool.query("SELECT COUNT(*)::integer AS n FROM armies WHERE status='marching'"),
       pool.query("SELECT COUNT(*)::integer AS n FROM battles WHERE status='active'"),
-      pool.query('SELECT COALESCE(SUM(quantity),0)::integer AS n FROM troops'),
+      pool.query('SELECT COALESCE(SUM(quantity),0)::float8 AS n FROM troops'),
       pool.query("SELECT COALESCE(SUM(gold),0)::integer AS n FROM players WHERE username NOT LIKE 'BOT_%' AND username NOT LIKE 'WILD_%'"),
       pool.query('SELECT COUNT(*)::integer AS n FROM training_queue'),
       pool.query('SELECT COUNT(*)::integer AS n FROM upgrade_queue'),
@@ -81,7 +80,6 @@ router.get('/activity', async (req, res) => {
   }
 })
 
-// Active battles with both sides resolved
 router.get('/battles', async (req, res) => {
   try {
     const result = await pool.query(`
@@ -103,7 +101,49 @@ router.get('/battles', async (req, res) => {
   }
 })
 
-// In-flight armies
+// Recent battles, active or concluded - for picking a battle to inspect in
+// the round-by-round dice log below (debugging a disputed outcome usually
+// happens after the fact, once someone notices the result looks off).
+router.get('/battles/recent', async (req, res) => {
+  try {
+    const limit = Math.min(Number(req.query.limit) || 30, 100)
+    const result = await pool.query(`
+      SELECT b.id, b.h3_index, b.status, b.defender_advantage_troops, b.defender_frontline, b.round_number,
+        b.attacker_troops, b.defender_troops, b.attacker_losses, b.defender_losses,
+        b.created_at, b.ended_at,
+        a.username AS attacker_name, a.color AS attacker_color,
+        d.username AS defender_name, d.color AS defender_color
+      FROM battles b
+      JOIN players a ON a.id = b.attacker_id
+      JOIN players d ON d.id = b.defender_id
+      ORDER BY b.created_at DESC
+      LIMIT $1
+    `, [limit])
+    res.json(result.rows)
+  } catch (err) {
+    console.error('[admin] GET /battles/recent failed:', err.message)
+    res.status(500).json({ error: 'Server error' })
+  }
+})
+
+// Round-by-round dice log for one battle - the actual atk_dice/def_dice
+// rolled each clash, not a reconstruction from final totals.
+router.get('/battles/:id/rounds', async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT round_number, defender_advantage_troops, atk_frontline_before, def_frontline_before,
+        atk_dice, def_dice, atk_losses, def_losses, atk_troops_after, def_troops_after, created_at
+      FROM battle_rounds
+      WHERE battle_id = $1
+      ORDER BY round_number ASC
+    `, [req.params.id])
+    res.json(result.rows)
+  } catch (err) {
+    console.error('[admin] GET /battles/:id/rounds failed:', err.message)
+    res.status(500).json({ error: 'Server error' })
+  }
+})
+
 router.get('/armies', async (req, res) => {
   try {
     const result = await pool.query(`
@@ -123,7 +163,6 @@ router.get('/armies', async (req, res) => {
   }
 })
 
-// System health: season, queues, process info, config
 router.get('/system', async (req, res) => {
   try {
     const season = getCurrentSeason()
@@ -134,7 +173,7 @@ router.get('/system', async (req, res) => {
       pool.query('SELECT COUNT(*)::integer AS n FROM country_crowns'),
     ])
     res.json({
-      dev_mode: DEV_MODE,
+      dev_mode: IS_DEV,
       tick_interval_ms: TICK_INTERVAL_MS,
       uptime_seconds: Math.floor(process.uptime()),
       memory_mb: Math.round(process.memoryUsage().rss / 1024 / 1024),
@@ -206,14 +245,13 @@ router.get('/retention', async (req, res) => {
   }
 })
 
-// All players
 router.get('/players', async (req, res) => {
   try {
     const result = await pool.query(`
       SELECT p.id, p.username, p.color, p.gold, p.capital_hex, p.login_streak,
         p.last_login_date, p.created_at,
         COALESCE(h.hex_count, 0)::integer AS hex_count,
-        COALESCE(t.total_troops, 0)::integer AS total_troops
+        COALESCE(t.total_troops, 0)::float8 AS total_troops
       FROM players p
       LEFT JOIN (SELECT owner_id, COUNT(*) AS hex_count FROM hexes GROUP BY owner_id) h ON h.owner_id = p.id
       LEFT JOIN (SELECT owner_id, SUM(quantity) AS total_troops FROM troops GROUP BY owner_id) t ON t.owner_id = p.id
@@ -226,7 +264,6 @@ router.get('/players', async (req, res) => {
   }
 })
 
-// Adjust gold
 router.post('/players/:id/gold', async (req, res) => {
   const { delta } = req.body
   if (typeof delta !== 'number') return res.status(400).json({ error: 'delta required' })
@@ -243,7 +280,6 @@ router.post('/players/:id/gold', async (req, res) => {
   }
 })
 
-// Delete player (cascade hexes, troops, buildings, armies)
 router.delete('/players/:id', async (req, res) => {
   try {
     const check = await pool.query('SELECT username FROM players WHERE id=$1', [req.params.id])
@@ -266,7 +302,6 @@ router.delete('/players/:id', async (req, res) => {
   }
 })
 
-// Force tick
 router.post('/tick', async (req, res) => {
   try {
     await runTick()
@@ -293,11 +328,15 @@ router.post('/season/end', async (req, res) => {
   }
 })
 
-// Reset bots - wipe all BOT_ players and re-seed
 router.post('/bots/reset', async (req, res) => {
   try {
     const bots = await pool.query('SELECT id FROM players WHERE username LIKE \'BOT_%\'')
     for (const { id } of bots.rows) {
+      // battles has no ON DELETE CASCADE on attacker_id/defender_id (unlike
+      // most other player-owned tables) - clear it first or the DELETE FROM
+      // players below hits a foreign key violation. battle_participants
+      // cascades from battles.id, so this covers it too.
+      await pool.query('DELETE FROM battles WHERE attacker_id=$1 OR defender_id=$1', [id])
       await pool.query('DELETE FROM armies WHERE owner_id=$1', [id])
       await pool.query('DELETE FROM troops WHERE owner_id=$1', [id])
       const owned = await pool.query('SELECT h3_index FROM hexes WHERE owner_id=$1', [id])
@@ -317,10 +356,8 @@ router.post('/bots/reset', async (req, res) => {
   }
 })
 
-// Available game-master events and their tunable knob (drives the admin UI)
 router.get('/events/types', (req, res) => res.json(GM_EVENTS))
 
-// Fire an instant, global "act of god" event
 router.post('/event', async (req, res) => {
   const { type, param } = req.body
   try {

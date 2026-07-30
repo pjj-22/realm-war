@@ -17,7 +17,9 @@ import chatRoutes from './routes/chat.js'
 import seasonRoutes from './routes/season.js'
 import { initPush } from './push.js'
 import { startTick } from './tick.js'
-import { DEV_MODE, STARTING_GOLD, STARTING_MANA, TICK_INTERVAL_MS, BUILDING_TIME_SECONDS, CHAT_ENABLED } from './config.js'
+import { MODE, IS_DEV, STARTING_GOLD, STARTING_MANA, TICK_INTERVAL_MS, BUILDING_TIME_SECONDS, CHAT_ENABLED, TROOP_STATS, BATTLE_INTERVAL_MS, BUILDING_COSTS, FORT_ADVANTAGE_TROOPS, ENTRENCH_ADVANTAGE_PER_NEIGHBOR, ENTRENCH_MAX_NEIGHBORS, MIN_TROOPS_TO_CLAIM, DECAY_HEX_THRESHOLD, DECAY_SCALE_HEXES_PER_STEP } from './config.js'
+import { STRATEGIC_ADVANTAGE_TROOPS } from './strategic.js'
+import { FRONTLINE_CAP, MAX_ADVANTAGED_DEFENDERS } from './combat.js'
 import { pool } from './db.js'
 import { requireAuth } from './auth.js'
 import { initSocket } from './socket.js'
@@ -26,14 +28,14 @@ dotenv.config()
 
 // ─── Boot-time environment guards ─────────────────────────────────────────────
 // Fail fast on misconfiguration instead of silently running with dev settings.
-const PROD = process.env.NODE_ENV === 'production'
+// MODE is the single source of truth for pacing (config.js) - no separate
+// NODE_ENV check to keep in sync with it.
 const PLACEHOLDER_SECRETS = ['change_this_to_a_random_secret', 'realmwar_dev_secret_change_in_production', 'dev_admin_1234']
 
 function assertEnv() {
   const problems = []
   if (!process.env.JWT_SECRET) problems.push('JWT_SECRET is not set (auth would break at runtime)')
-  if (PROD) {
-    if (DEV_MODE) problems.push('DEV_MODE must be set to false in production (dev balance: 9999 gold, 30s ticks)')
+  if (MODE === 'prod') {
     if (PLACEHOLDER_SECRETS.includes(process.env.JWT_SECRET)) problems.push('JWT_SECRET is a known placeholder - generate one: openssl rand -base64 32')
     if (process.env.ADMIN_SECRET && (PLACEHOLDER_SECRETS.includes(process.env.ADMIN_SECRET) || process.env.ADMIN_SECRET.length < 16))
       problems.push('ADMIN_SECRET is a placeholder or under 16 chars - generate one: openssl rand -base64 32')
@@ -73,12 +75,33 @@ app.use('/api/seasons', seasonRoutes)
 
 app.get('/api/health', (_, res) => res.json({
   ok: true,
-  devMode: DEV_MODE,
+  mode: MODE,
+  devMode: IS_DEV,
   tick_interval_ms: TICK_INTERVAL_MS,
   building_time_seconds: BUILDING_TIME_SECONDS,
+  troop_gold_cost: TROOP_STATS.troop.gold,
+  battle_interval_ms: BATTLE_INTERVAL_MS,
+  battle_frontline_cap: FRONTLINE_CAP,
+  // Formula constants for the client to compute a hex's defense breakdown
+  // (forts/entrenchment/strategic -> advantaged defenders) itself from data
+  // it already has loaded, instead of a per-hex-click API call - see
+  // BottomDrawer's defenseBreakdown.
+  fort_advantage_troops: FORT_ADVANTAGE_TROOPS,
+  entrench_advantage_per_neighbor: ENTRENCH_ADVANTAGE_PER_NEIGHBOR,
+  entrench_max_neighbors: ENTRENCH_MAX_NEIGHBORS,
+  strategic_advantage_troops: STRATEGIC_ADVANTAGE_TROOPS,
+  max_advantaged_defenders: MAX_ADVANTAGED_DEFENDERS,
+  min_troops_to_claim: MIN_TROOPS_TO_CLAIM,
+  decay_hex_threshold: DECAY_HEX_THRESHOLD,
+  decay_scale_hexes_per_step: DECAY_SCALE_HEXES_PER_STEP,
+  building_costs: {
+    mine: BUILDING_COSTS.mine.gold,
+    barracks: BUILDING_COSTS.barracks.gold,
+    fort: BUILDING_COSTS.fort.gold,
+  },
 }))
 
-if (DEV_MODE) {
+if (IS_DEV) {
   // Top up resources without re-registering
   app.post('/api/dev/refill', requireAuth, async (req, res) => {
     await pool.query('UPDATE players SET gold=$1 WHERE id=$2', [STARTING_GOLD, req.player.id])
@@ -99,6 +122,23 @@ async function runMigrations() {
   await pool.query('ALTER TABLE battles ADD COLUMN IF NOT EXISTS attacker_troops NUMERIC NOT NULL DEFAULT 0')
   await pool.query('ALTER TABLE battles ADD COLUMN IF NOT EXISTS defender_troops NUMERIC NOT NULL DEFAULT 0')
   await pool.query('ALTER TABLE battles ADD COLUMN IF NOT EXISTS def_multiplier NUMERIC NOT NULL DEFAULT 1')
+
+  // Frontline/reserve dice combat: only a capped frontline slice of each side's
+  // troops actually fights each clash, refilled from reserve afterward - see
+  // combat.js resolveBattleClash. attacker_troops/defender_troops remain the
+  // total (frontline+reserve) for display.
+  await pool.query('ALTER TABLE battles ADD COLUMN IF NOT EXISTS attacker_frontline NUMERIC NOT NULL DEFAULT 0')
+  await pool.query('ALTER TABLE battles ADD COLUMN IF NOT EXISTS defender_frontline NUMERIC NOT NULL DEFAULT 0')
+  await pool.query('ALTER TABLE battles ADD COLUMN IF NOT EXISTS attacker_reserve NUMERIC NOT NULL DEFAULT 0')
+  await pool.query('ALTER TABLE battles ADD COLUMN IF NOT EXISTS defender_reserve NUMERIC NOT NULL DEFAULT 0')
+
+  // How many of the defender's frontline fight with advantage (roll 2, take
+  // the higher) from forts/entrenchment/strategic hexes - see combat.js. Both
+  // def_multiplier (probability-multiplier design) and defender_frontline_cap
+  // (raw capacity-increase design, which turned out exploitable - see git
+  // history) are obsolete and kept around unused so historical rows still read.
+  await pool.query('ALTER TABLE battles ADD COLUMN IF NOT EXISTS defender_frontline_cap INTEGER NOT NULL DEFAULT 10')
+  await pool.query('ALTER TABLE battles ADD COLUMN IF NOT EXISTS defender_advantage_troops INTEGER NOT NULL DEFAULT 0')
 
   // battles.created_at is in schema.sql but older DBs only have the legacy started_at;
   // ensure the canonical column exists and backfill it from started_at where present
@@ -159,6 +199,8 @@ async function runMigrations() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )`)
   await pool.query('ALTER TABLE players ADD COLUMN IF NOT EXISTS alliance_id INTEGER REFERENCES alliances(id) ON DELETE SET NULL')
+  await pool.query('ALTER TABLE players ADD COLUMN IF NOT EXISTS flag_pixels TEXT')
+  await pool.query('ALTER TABLE players ADD COLUMN IF NOT EXISTS motto TEXT')
   await pool.query(`
     CREATE TABLE IF NOT EXISTS chat_messages (
       id SERIAL PRIMARY KEY,
@@ -202,6 +244,44 @@ async function runMigrations() {
       seized_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )`)
   await pool.query('CREATE INDEX IF NOT EXISTS idx_wonder_history_hex ON wonder_history (h3_index, seized_at DESC)')
+
+  // Round-by-round combat log for debugging balance issues - one row per
+  // clash, capturing the actual dice rolled so a disputed outcome (e.g. "why
+  // did the defender never lose") can be inspected exactly instead of
+  // re-derived from the battle's final totals. See tick.js processBattleRounds.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS battle_rounds (
+      id SERIAL PRIMARY KEY,
+      battle_id INTEGER NOT NULL REFERENCES battles(id) ON DELETE CASCADE,
+      round_number INTEGER NOT NULL,
+      defender_advantage_troops INTEGER NOT NULL,
+      atk_frontline_before INTEGER NOT NULL,
+      def_frontline_before INTEGER NOT NULL,
+      atk_dice INTEGER[] NOT NULL,
+      def_dice INTEGER[] NOT NULL,
+      atk_losses INTEGER NOT NULL,
+      def_losses INTEGER NOT NULL,
+      atk_troops_after NUMERIC NOT NULL,
+      def_troops_after NUMERIC NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`)
+  await pool.query('CREATE INDEX IF NOT EXISTS idx_battle_rounds_battle ON battle_rounds (battle_id, round_number)')
+
+  // battle_rounds churned through two short-lived designs (def_multiplier,
+  // then defender_frontline_cap) before landing on the advantage-dice model -
+  // rename in place on any DB that still has an older column name.
+  await pool.query(`
+    DO $$
+    BEGIN
+      IF EXISTS (SELECT 1 FROM information_schema.columns
+                 WHERE table_name='battle_rounds' AND column_name='def_multiplier') THEN
+        ALTER TABLE battle_rounds RENAME COLUMN def_multiplier TO defender_advantage_troops;
+      ELSIF EXISTS (SELECT 1 FROM information_schema.columns
+                 WHERE table_name='battle_rounds' AND column_name='defender_frontline_cap') THEN
+        ALTER TABLE battle_rounds RENAME COLUMN defender_frontline_cap TO defender_advantage_troops;
+      END IF;
+    END $$;`)
+
   console.log('[db] Migrations complete')
 }
 

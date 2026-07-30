@@ -17,13 +17,14 @@ import { useResourceTicker } from '../hooks/useResourceTicker'
 import { useIsMobile } from '../hooks/useIsMobile'
 import { api } from '../api/client'
 import { GoldIcon, SearchIcon, AllianceIcon, SwordsIcon, WarningIcon, KeepIcon } from './Icons'
+import { resolveFlag, flagImageId, flagToImageData } from '../flags'
+import { shortHex } from '../text'
 
 
 const HEX_RESOLUTION = 7
 // Chat ships behind a flag until there's moderation (see server config.js)
 const CHAT_ON = import.meta.env.VITE_CHAT_ENABLED === 'true'
 
-// Register an SVG as a map sprite (no-op if already present)
 function addSvgImage(map, id, svg) {
   if (map.hasImage?.(id)) return
   const img = new Image()
@@ -222,6 +223,9 @@ function hexToGeoJSONFeature(cell, claimed, visibleSet) {
       upgrade_level: claimed?.upgrade_level || 0,
       country_name: claimed?.country_name || null,
       country_continent: claimed?.country_continent || null,
+      capital_hex: claimed?.capital_hex || null,
+      flag_pixels: claimed?.flag_pixels || null,
+      motto: claimed?.motto || null,
       fog,
     },
     geometry: { type: 'Polygon', coordinates: [coords] },
@@ -256,25 +260,69 @@ function buildVisibleSet(claimedHexes, playerId, allyIds, ring = 1) {
     const isOwn = claimed.owner_id === playerId
     const isAlly = !!allyIds && allyIds.has(claimed.owner_id)
     if (!isOwn && !isAlly) continue
-    // Own + allied hexes + N-ring adjacency visible
     gridDisk(cell, ring).forEach(c => visible.add(c))
   }
   return visible
 }
 
-function buildClaimedPoints(claimedHexes, visibleSet) {
+// requiredGarrison/playerId are optional - only your own hexes ever show the
+// decay warning, and only once your empire is big enough to be at risk at all.
+function buildClaimedPoints(claimedHexes, visibleSet, playerId, requiredGarrison = 0) {
   const features = Object.entries(claimedHexes).map(([cell, claimed]) => {
     const [lat, lng] = cellToLatLng(cell)
     const isVisible = !visibleSet || visibleSet.has(cell) || claimed.projected
+    const troopCount = claimed.troop_count || 0
+
+    // Mirrors BottomDrawer's atDecayRisk exactly: own, undeveloped, border,
+    // under-garrisoned hex, once the empire is past the decay threshold.
+    let decayRisk = false
+    if (playerId && requiredGarrison > 0 && claimed.owner_id === playerId
+      && claimed.capital_hex !== cell && troopCount < requiredGarrison
+      && parseTypes(claimed.building_types).length === 0) {
+      const neighbors = gridDisk(cell, 1).filter(n => n !== cell)
+      const friendlyCount = neighbors.filter(n => claimedHexes[n]?.owner_id === playerId).length
+      decayRisk = friendlyCount < neighbors.length // border hex only - interior never decays
+    }
+
     return {
       type: 'Feature',
       properties: {
-        troop_count: isVisible ? (claimed.troop_count || 0) : -1,
+        troop_count: isVisible ? troopCount : -1,
+        decay_risk: decayRisk,
       },
       geometry: { type: 'Point', coordinates: [lng, lat] },
     }
   })
   return { type: 'FeatureCollection', features }
+}
+
+// One point per capital hex, carrying the flag image id registered for that
+// owner - see ensureFlagImages, which keeps map.addImage in sync with this.
+function buildCapitalFeatures(claimedHexes) {
+  const features = []
+  for (const [cell, claimed] of Object.entries(claimedHexes)) {
+    if (claimed.capital_hex !== cell) continue
+    const [lat, lng] = cellToLatLng(cell)
+    const flagString = resolveFlag(claimed)
+    features.push({
+      type: 'Feature',
+      properties: { owner: claimed.owner_id, iconId: flagImageId(claimed.owner_id, flagString) },
+      geometry: { type: 'Point', coordinates: [lng, lat] },
+    })
+  }
+  return { type: 'FeatureCollection', features }
+}
+
+// Register (or refresh) the map image for every capital currently in view -
+// a no-op for owners already registered under their current flag's image id;
+// a changed flag naturally gets a new id (see flagImageId) so it just works.
+function ensureFlagImages(map, claimedHexes) {
+  for (const claimed of Object.values(claimedHexes)) {
+    if (claimed.capital_hex !== claimed.h3_index) continue
+    const flagString = resolveFlag(claimed)
+    const id = flagImageId(claimed.owner_id, flagString)
+    if (!map.hasImage(id)) map.addImage(id, flagToImageData(flagString))
+  }
 }
 
 // Pip colors by building type - matches BottomDrawer dots
@@ -312,21 +360,22 @@ function buildPipFeatures(claimedHexes) {
 
 function HarvestCountdown({ nextTickAt, onExpire, compact }) {
   const [secs, setSecs] = useState(0)
-  const firedRef = useRef(false)
+  const retryRef = useRef(null)
   useEffect(() => {
-    firedRef.current = false
+    clearInterval(retryRef.current)
     function tick() {
       const remaining = Math.max(0, Math.round((new Date(nextTickAt) - Date.now()) / 1000))
       setSecs(remaining)
-      if (remaining === 0 && !firedRef.current) {
-        firedRef.current = true
-        // Re-fetch stats after a brief delay to let the server tick complete
-        setTimeout(onExpire, 1500)
+      // Hitting 0 doesn't guarantee the real server tick has landed yet (clock
+      // skew, request latency) - keep re-fetching until nextTickAt actually
+      // moves into the future instead of trusting a single one-shot refetch.
+      if (remaining === 0 && !retryRef.current) {
+        retryRef.current = setInterval(onExpire, 2000)
       }
     }
     tick()
     const id = setInterval(tick, 1000)
-    return () => clearInterval(id)
+    return () => { clearInterval(id); clearInterval(retryRef.current); retryRef.current = null }
   }, [nextTickAt, onExpire])
   const m = Math.floor(secs / 60), s = secs % 60
   const label = m > 0 ? `${m}m ${String(s).padStart(2,'0')}s` : `${secs}s`
@@ -408,6 +457,7 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
   const [marchMode, setMarchMode] = useState(null) // { fromHex, type, quantity }
   const [rallyMode, setRallyMode] = useState(null) // fromHex string or null
   const [armies, setArmies] = useState([])
+  const [pendingClaims, setPendingClaims] = useState([]) // your troops on not-yet-owned hexes
   const [activeBattles, setActiveBattles] = useState([])
   const [stats, setStats] = useState(null)
   const [activeBattle, setActiveBattle] = useState(null)
@@ -422,10 +472,9 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
   const ownedHexCount = Object.values(claimedRef.current).filter(h => h.owner_id === player?.id).length
   const totalTroops = Object.values(claimedRef.current).filter(h => h.owner_id === player?.id).reduce((s, h) => s + (h.troop_count || 0), 0)
 
-  const { display: resources } = useResourceTicker(player, ownedHexCount, [], stats?.tick_interval_ms)
+  const { display: resources } = useResourceTicker(player)
   const isMobile = useIsMobile()
 
-  // Load all claimed hexes from server
   const loadClaimed = useCallback(async () => {
     try {
       const hexes = await api.getHexes()
@@ -440,6 +489,28 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
   const strategicRef = useRef({})
   const zonesRef = useRef(new Map()) // h3 → city name, for click enrichment
   const zoneBonusRef = useRef(2)     // server's ZONE_BONUS_PER_HEX, for click enrichment
+
+  // Decay-scaling formula constants, for the on-map warning badge below -
+  // mirrors config.js's requiredGarrisonForHexCount() exactly. Also carries
+  // min_troops_to_claim for the pending-claim "3/5" indicator.
+  const decayConfigRef = useRef({ decay_hex_threshold: 30, decay_scale_hexes_per_step: 10, min_troops_to_claim: 5 })
+  useEffect(() => {
+    api.getConfig().then(cfg => {
+      decayConfigRef.current = {
+        decay_hex_threshold: cfg.decay_hex_threshold ?? 30,
+        decay_scale_hexes_per_step: cfg.decay_scale_hexes_per_step ?? 10,
+        min_troops_to_claim: cfg.min_troops_to_claim ?? 5,
+      }
+    }).catch(() => {})
+  }, [])
+
+  // Entrenchment count for the defense-breakdown card in BottomDrawer - reads
+  // the same claimedRef map already loaded for map rendering, so no extra
+  // network round-trip is needed just to look at a hex.
+  const getFriendlyNeighborCount = useCallback((h3, ownerId) => {
+    if (!ownerId) return 0
+    return gridDisk(h3, 1).filter(n => n !== h3 && claimedRef.current[n]?.owner_id === ownerId).length
+  }, [])
 
   // Shared enrichment for hex selection - adds city-zone + strategic-hex info
   // on top of base hex props, whether the hex came from a map click or a
@@ -520,7 +591,6 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
     if (!map.current?.getSource('strategic')) return
     try {
       const hexes = await api.getStrategicHexes()
-      // Store for click enrichment
       const byIndex = {}
       hexes.forEach(h => { byIndex[h.h3_index] = h })
       strategicRef.current = byIndex
@@ -614,6 +684,10 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
     try { setArmies(await api.getArmies()) } catch {}
   }, [])
 
+  const loadPendingClaims = useCallback(async () => {
+    try { setPendingClaims(player ? await api.getPendingClaims() : []) } catch {}
+  }, [player])
+
   const loadActiveBattles = useCallback(async () => {
     try { setActiveBattles(await api.getActiveBattles()) } catch {}
   }, [])
@@ -641,16 +715,27 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
         setSeasonHistory(hist)
         const prev = hist.find(h => h.number === s.number - 1) || hist[0]
         if (prev) setEndedSeason(prev)
-        // Player state (gold, capital) was reset server-side - resync
         if (playerRef.current) api.me().then(p => onPlayerUpdate?.(p)).catch(() => {})
       }
       localStorage.setItem('rw_season', String(s.number))
     } catch { /* no active season */ }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Initial loads on mount
   useEffect(() => { loadClaimed() }, [loadClaimed])
   useEffect(() => { loadArmies() }, [loadArmies])
+  useEffect(() => { loadPendingClaims() }, [loadPendingClaims])
+
+  useEffect(() => {
+    if (!map.current?.getSource('pending-claims')) return
+    const needed = decayConfigRef.current.min_troops_to_claim
+    const features = pendingClaims.map(({ h3_index, quantity }) => {
+      try {
+        const [lat, lng] = cellToLatLng(h3_index)
+        return { type: 'Feature', properties: { quantity, needed }, geometry: { type: 'Point', coordinates: [lng, lat] } }
+      } catch { return null }
+    }).filter(Boolean)
+    map.current.getSource('pending-claims').setData({ type: 'FeatureCollection', features })
+  }, [pendingClaims])
   useEffect(() => { loadActiveBattles() }, [loadActiveBattles])
   useEffect(() => { if (player) loadStats() }, [player?.id, loadStats])
   useEffect(() => { loadStrategic() }, [loadStrategic])
@@ -675,10 +760,10 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
 
   // Socket-driven updates - replace polling intervals
   useSocket({
-    'hexes:update': () => { loadClaimed(); loadStrategic() },
-    'armies:update': loadArmies,
-    'battle:update': loadActiveBattles,
-    'tick': loadStats,
+    'hexes:update': () => { loadClaimed(); loadStrategic(); loadPendingClaims() },
+    'armies:update': () => { loadArmies(); loadPendingClaims() },
+    'battle:update': () => { loadActiveBattles(); api.me().then(p => onPlayerUpdate?.(p)).catch(() => {}) },
+    'tick': () => { loadStats(); api.me().then(p => onPlayerUpdate?.(p)).catch(() => {}) },
     'season:update': () => { loadSeason(); loadLandmarks() },
     'wonder:update': loadLandmarks,
   })
@@ -711,6 +796,16 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
       attributionControl: false,
     })
     if (import.meta.env.DEV) window.__map = map.current
+
+    // MapLibre sizes its canvas from the container's dimensions at construction
+    // time and never re-checks on its own. Mobile browsers (esp. iOS Safari)
+    // often haven't settled their real viewport width/toolbar state at that
+    // exact moment, so the canvas can get stuck rendering at a stale, too-narrow
+    // size even though the container itself is the correct full width - a
+    // ResizeObserver catches that (and any later layout change) and tells the
+    // map to re-measure.
+    const resizeObserver = new ResizeObserver(() => map.current?.resize())
+    resizeObserver.observe(mapContainer.current)
 
     map.current.on('load', () => {
       // Sprites for garrison + building badges
@@ -821,9 +916,15 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
           'icon-size': ['interpolate', ['linear'], ['zoom'], 7, 0.32, 10, 0.46],
           'icon-anchor': 'right',
           'icon-offset': [2, 32],
+          // Decay warning rides along in the same text field (not a separate
+          // layer) so it always sits directly next to the number regardless
+          // of how many digits the troop count has - no offset-guessing.
           'text-field': ['case',
             ['==', ['get', 'troop_count'], -1], '?',
-            ['>', ['get', 'troop_count'], 0], ['to-string', ['get', 'troop_count']],
+            ['>', ['get', 'troop_count'], 0], ['format',
+              ['to-string', ['get', 'troop_count']], {},
+              ['case', ['boolean', ['get', 'decay_risk'], false], '  ⚠', ''], { 'text-color': '#e0a030' },
+            ],
             ''
           ],
           'text-font': ['Noto Sans Regular'],
@@ -839,6 +940,31 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
         paint: {
           'text-color': 'rgba(255,255,255,0.95)',
           'text-halo-color': 'rgba(0,0,0,0.8)',
+          'text-halo-width': 2,
+        },
+      })
+
+      // Your own troops sitting on a hex you don't own yet (mid-claim, waiting
+      // on MIN_TROOPS_TO_CLAIM) - without this, those troops are real in the
+      // DB but invisible on the map, reading as "my troops disappeared."
+      map.current.addSource('pending-claims', {
+        type: 'geojson',
+        data: { type: 'FeatureCollection', features: [] },
+      })
+      map.current.addLayer({
+        id: 'pending-claim-labels',
+        type: 'symbol',
+        source: 'pending-claims',
+        minzoom: 7,
+        layout: {
+          'text-field': ['concat', ['to-string', ['get', 'quantity']], '/', ['to-string', ['get', 'needed']]],
+          'text-font': ['Noto Sans Regular'],
+          'text-size': 13,
+          'text-allow-overlap': true,
+        },
+        paint: {
+          'text-color': '#c9a04a',
+          'text-halo-color': 'rgba(0,0,0,0.85)',
           'text-halo-width': 2,
         },
       })
@@ -913,6 +1039,29 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
           'text-color': '#cdb2ee',
           'text-halo-color': 'rgba(0,0,0,0.85)',
           'text-halo-width': 1.6,
+        },
+      })
+
+      // Capital flags - pixel-art banners, one per player, only worth
+      // rendering once you're zoomed in enough to actually see them
+      map.current.addSource('capitals', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } })
+      map.current.addLayer({
+        id: 'capital-flags',
+        type: 'symbol',
+        source: 'capitals',
+        minzoom: 12,
+        layout: {
+          'icon-image': ['image', ['get', 'iconId']],
+          // A res-7 hex is ~2.4km across; a real-world Mercator pixel scale
+          // doubles every zoom level, so an exponential-base-2 stop pair (not
+          // linear) is what actually keeps the flag pinned to ~half the
+          // hex's on-screen width at every zoom, not just at two endpoints -
+          // the old linear curve held its top value constant past zoom 10,
+          // so flags stopped growing while the hex kept getting bigger *and*
+          // stayed a flat pixel size well below zoom 10, dwarfing tiny hexes.
+          'icon-size': ['interpolate', ['exponential', 2], ['zoom'], 12, 0.5, 16, 8],
+          'icon-allow-overlap': true,
+          'icon-ignore-placement': true,
         },
       })
 
@@ -1160,7 +1309,6 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
     })
     map.current.on('mouseleave', 'hex-fill', () => { map.current.getCanvas().style.cursor = '' })
 
-    // Clicking an overview hex zooms into that area
     map.current.on('click', 'overview-hex-fill', (e) => {
       const center = e.lngLat
       map.current.flyTo({ center: [center.lng, center.lat], zoom: 7, speed: 0.8 })
@@ -1182,6 +1330,7 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
     })
 
     return () => {
+      resizeObserver.disconnect()
       Object.values(battleMarkersRef.current).forEach(m => m.remove())
       battleMarkersRef.current = {}
       map.current?.remove()
@@ -1210,10 +1359,31 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
     // Add new markers
     for (const battle of activeBattles) {
       if (battleMarkersRef.current[battle.h3_index]) continue
-      const [lat, lng] = cellToLatLng(battle.h3_index)
+      let lat, lng
+      try {
+        ;[lat, lng] = cellToLatLng(battle.h3_index)
+      } catch (err) {
+        console.warn('[battle-ring] cellToLatLng failed for', battle.h3_index, err)
+        continue
+      }
+      if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+        console.warn('[battle-ring] non-finite lat/lng for', battle.h3_index, { lat, lng })
+        continue
+      }
+      // MapLibre positions the marker's root element itself by writing an
+      // inline `transform: translate(...)` to it every frame. A CSS animation
+      // on that same element that also animates `transform` (like the
+      // battle-ring pulse) overrides that inline value completely, so the
+      // marker renders at its unpositioned default (top-left of the map
+      // container) instead of tracking the hex. Keep the outer element plain
+      // and put the pulsing animation on an inner child instead - same
+      // pattern as the army-threat-marker/army-threat-ring pair above.
       const el = document.createElement('div')
-      el.className = 'battle-ring'
-      el.innerHTML = `<svg viewBox="0 0 16 16" style="position:absolute;top:50%;left:50%;width:24px;height:24px;transform:translate(-50%,-50%)"><g stroke="#ff5050" stroke-width="1.6" stroke-linecap="round" fill="none"><path d="M3 2.5l9 9M13 2.5l-9 9"/><path d="M10.6 11.4l-1.4 1.4M5.4 11.4l1.4 1.4"/></g></svg>`
+      el.className = 'battle-ring-anchor'
+      const ring = document.createElement('div')
+      ring.className = 'battle-ring'
+      ring.innerHTML = `<svg viewBox="0 0 16 16" style="position:absolute;top:50%;left:50%;width:24px;height:24px;transform:translate(-50%,-50%)"><g stroke="#ff5050" stroke-width="1.6" stroke-linecap="round" fill="none"><path d="M3 2.5l9 9M13 2.5l-9 9"/><path d="M10.6 11.4l-1.4 1.4M5.4 11.4l1.4 1.4"/></g></svg>`
+      el.appendChild(ring)
       const marker = new maplibregl.Marker({ element: el, anchor: 'center' })
         .setLngLat([lng, lat])
         .addTo(map.current)
@@ -1262,8 +1432,23 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
     visibleSetRef.current = visibleSet
     armyVisibleSetRef.current = p ? buildVisibleSet(claimedRef.current, p.id, allyIdsRef.current, ARMY_VISION_RINGS) : null
     map.current.getSource('claimed').setData(buildClaimedGeoJSON(claimedRef.current, visibleSet))
-    map.current.getSource('claimed-points')?.setData(buildClaimedPoints(claimedRef.current, visibleSet))
+
+    // Same requiredGarrisonForHexCount formula as config.js - mirrors
+    // BottomDrawer's decay-risk card, but for every owned hex at a glance.
+    let requiredGarrison = 0
+    if (p) {
+      const myHexCount = Object.values(claimedRef.current).filter(h => h.owner_id === p.id).length
+      const { decay_hex_threshold, decay_scale_hexes_per_step } = decayConfigRef.current
+      if (myHexCount > decay_hex_threshold) {
+        requiredGarrison = 1 + Math.floor((myHexCount - decay_hex_threshold) / decay_scale_hexes_per_step)
+      }
+    }
+    map.current.getSource('claimed-points')?.setData(buildClaimedPoints(claimedRef.current, visibleSet, p?.id, requiredGarrison))
     map.current.getSource('building-pips')?.setData(buildPipFeatures(claimedRef.current))
+    if (map.current.getSource('capitals')) {
+      ensureFlagImages(map.current, claimedRef.current)
+      map.current.getSource('capitals').setData(buildCapitalFeatures(claimedRef.current))
+    }
     updateOverview()
   }
 
@@ -1441,17 +1626,34 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
     e.preventDefault()
     const q = searchQuery.trim()
     if (!q) return
-    // Direct H3 index (15 hex chars starting with 8)
+    // Direct H3 index (15 hex chars starting with 8) - a specific hex, so
+    // zoom all the way in on it (same level as jumping to a hex from Armies).
     if (/^8[0-9a-f]{14}$/i.test(q)) {
       try {
         const [lat, lng] = cellToLatLng(q)
-        map.current?.flyTo({ center: [lng, lat], zoom: 9 })
+        map.current?.flyTo({ center: [lng, lat], zoom: 12 })
         setSearchOpen(false)
         setSearchQuery('')
       } catch { toast('Invalid hex index') }
       return
     }
-    // Geocode with Nominatim
+    // Short hex tag (the #XXXXXX shown when you click a claimed hex) - only
+    // ever shown for claimed hexes, so only search among those. Falls through
+    // to geocoding below if nothing matches, rather than erroring outright,
+    // since a short hex-looking string could coincidentally also be a place.
+    if (/^[0-9a-f]{3,9}$/i.test(q)) {
+      const needle = q.toUpperCase()
+      const match = Object.keys(claimedRef.current).find(h3 => shortHex(h3) === needle)
+      if (match) {
+        const [lat, lng] = cellToLatLng(match)
+        map.current?.flyTo({ center: [lng, lat], zoom: 12 })
+        setSearchOpen(false)
+        setSearchQuery('')
+        return
+      }
+    }
+    // Geocode with Nominatim - a place name, not a specific hex, so a wider
+    // zoom stays appropriate (zooming to hex-level on "France" would be wrong).
     try {
       const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&format=json&limit=1`
       const res = await fetch(url, { headers: { 'Accept-Language': 'en' } })
@@ -1470,7 +1672,7 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
   const goldOverCap = goldCap !== null && resources.gold >= goldCap
 
   return (
-    <div style={{ position: 'relative', width: '100vw', height: '100vh' }}>
+    <div style={{ position: 'relative', width: '100vw', height: '100dvh' }}>
       <div ref={mapContainer} style={{ position: 'absolute', inset: 0 }} />
 
       {activeBattles.length > 0 && (
@@ -1478,7 +1680,7 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
       )}
 
       {/* ── Top bar ────────────────────────────────────────────── */}
-      <div style={{
+      <div className="rw-topbar-scroll" style={{
         position: 'absolute', top: 0, left: 0, right: 0, height: 48,
         background: 'rgba(5,3,14,0.94)',
         borderBottom: '1px solid rgba(255,255,255,0.06)',
@@ -1541,7 +1743,7 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
               {stats && !isMobile && <GoldIncomeTooltip hexCount={stats.hex_count || 0} mines={stats.mines || 0} incomeByCountry={stats.income_by_country} />}
             </div>
             {stats?.next_tick_at && <HarvestCountdown nextTickAt={stats.next_tick_at} onExpire={loadStats} compact={isMobile} />}
-            {!isMobile && <span style={{ fontSize: 13, color: '#7a6890' }}>▲ {stats?.hex_count ?? ownedHexCount}</span>}
+            {!isMobile && <span style={{ fontSize: 13, color: '#7a6890' }}>⬢ {stats?.hex_count ?? ownedHexCount}</span>}
             {!isMobile && totalTroops > 0 && <span style={{ fontSize: 13, color: '#7a6890' }}><SwordsIcon size={12} color="#7a6890" /> {totalTroops}</span>}
             {!isMobile && import.meta.env.DEV && (
               <button
@@ -1656,8 +1858,9 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
         </button>
       )}
 
-      {/* ── Home - floating, shown when your capital is off screen ── */}
-      {player?.capital_hex && !capitalInView && (
+      {/* ── Home - floating, shown when your capital is off screen (hidden
+          while the drawer/battle panel is up, which sits over the same spot) ── */}
+      {player?.capital_hex && !capitalInView && !selectedHex && !activeBattle && (
         <button
           title="Return to your capital"
           onClick={() => {
@@ -1826,6 +2029,9 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
           hex={selectedHex}
           player={player}
           stats={stats}
+          ownedHexCount={ownedHexCount}
+          getFriendlyNeighborCount={getFriendlyNeighborCount}
+          onStatsRefresh={loadStats}
           onClaim={handleClaim}
           onLoginRequired={onLoginRequired}
           onBuild={(updatedPlayer, h3Index, buildingType) => {

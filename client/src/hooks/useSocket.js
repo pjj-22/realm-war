@@ -7,7 +7,7 @@ let socket = null
 
 export function getSocket() {
   if (!socket) {
-    socket = io(SOCKET_URL, { transports: ['websocket'] })
+    socket = io(SOCKET_URL, { transports: ['polling', 'websocket'] })
   }
   return socket
 }

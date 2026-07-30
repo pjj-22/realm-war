@@ -7,7 +7,6 @@ import { rateLimit } from '../ratelimit.js'
 
 const router = Router()
 
-// Last 50 messages in a channel ('global' or 'alliance')
 router.get('/', requireAuth, async (req, res) => {
   const channel = req.query.channel === 'alliance' ? 'alliance' : 'global'
   try {
@@ -39,7 +38,6 @@ router.get('/', requireAuth, async (req, res) => {
   }
 })
 
-// Send a message
 router.post('/', requireAuth, rateLimit({ windowMs: 10 * 1000, max: 5, key: req => `chat:${req.player.id}`, message: 'Easy there - sending too fast' }), async (req, res) => {
   const { channel, text } = req.body
   const trimmed = (text || '').trim()

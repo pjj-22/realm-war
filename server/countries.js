@@ -228,6 +228,30 @@ function pointInPolygonCoords(pt, coords) {
   return true
 }
 
+// Distance from a point to a line segment, in degrees - not geodesically
+// exact, but plenty precise for a small fallback buffer near a coastline.
+function pointToSegmentDistSq(px, py, ax, ay, bx, by) {
+  const dx = bx - ax, dy = by - ay
+  const lenSq = dx * dx + dy * dy
+  let t = lenSq === 0 ? 0 : ((px - ax) * dx + (py - ay) * dy) / lenSq
+  t = Math.max(0, Math.min(1, t))
+  const cx = ax + t * dx, cy = ay + t * dy
+  const ddx = px - cx, ddy = py - cy
+  return ddx * ddx + ddy * ddy
+}
+
+// Minimum distance from a point to a polygon's outer ring (holes ignored -
+// only used as a fallback proximity measure, not for containment).
+function distanceToRing(pt, ring) {
+  const [x, y] = pt
+  let best = Infinity
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const d = pointToSegmentDistSq(x, y, ring[j][0], ring[j][1], ring[i][0], ring[i][1])
+    if (d < best) best = d
+  }
+  return Math.sqrt(best)
+}
+
 const countryPolygons = []
 
 for (const feature of countriesFC.features) {
@@ -257,6 +281,12 @@ console.log(`[countries] Loaded ${countriesFC.features.length} countries (${coun
 
 const cache = new Map()
 
+// ~33km at the equator (less at higher latitude) - enough to bridge a
+// simplified-coastline gap (a strait, harbor, or artificial island the 1:50M
+// dataset cut a corner on), not enough to attribute genuinely open ocean to
+// whichever coast happens to be nearest.
+const NEAREST_COUNTRY_BUFFER_DEG = 0.3
+
 export function getCountry(h3Index) {
   if (cache.has(h3Index)) return cache.get(h3Index)
 
@@ -269,6 +299,24 @@ export function getCountry(h3Index) {
       result = info
       break
     }
+  }
+
+  // Fallback: the exact point-in-polygon test can miss real land right at a
+  // coastline, strait, or harbor, because the 1:50M country dataset is
+  // simplified and sometimes cuts a sliver out of the coast that the finer
+  // land/ocean terrain data still counts as land (e.g. central Manhattan /
+  // Jersey City reading as "no country" despite being nowhere near remote).
+  // If nothing contained the point, use the nearest polygon within a small
+  // buffer instead of leaving it unattributed.
+  if (!result) {
+    let bestDist = Infinity, bestInfo = null
+    for (const { coords, minLng, maxLng, minLat, maxLat, info } of countryPolygons) {
+      if (lng < minLng - NEAREST_COUNTRY_BUFFER_DEG || lng > maxLng + NEAREST_COUNTRY_BUFFER_DEG ||
+          lat < minLat - NEAREST_COUNTRY_BUFFER_DEG || lat > maxLat + NEAREST_COUNTRY_BUFFER_DEG) continue
+      const d = distanceToRing([lng, lat], coords[0])
+      if (d < bestDist) { bestDist = d; bestInfo = info }
+    }
+    if (bestDist <= NEAREST_COUNTRY_BUFFER_DEG) result = bestInfo
   }
 
   cache.set(h3Index, result)

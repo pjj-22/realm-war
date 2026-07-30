@@ -3,15 +3,21 @@
 // db.js's real pool - no refactor of the combat engine itself, so what's
 // under test is exactly the code that runs in production.
 //
-// These specifically guard the two live bugs found and fixed in one session:
+// Combat resolves via frontline/reserve dice clashes (combat.js), not a
+// continuous strength pool - only FRONTLINE_CAP troops per side fight any one
+// clash, refilled from reserve afterward. attacker_strength/defender_strength
+// are kept as a display approximation (troops / troops*multiplier) recomputed
+// every clash; the real state lives in the frontline/reserve columns.
+//
+// These specifically guard bugs found and fixed across the project's history:
 // 1. A defender (or their ally) reinforcing a hex already under siege used to
 //    be silently deposited into `troops` and erased when the battle ended -
 //    only attackers could reinforce mid-battle.
-// 2. Survivors were computed once at the end from an all-time participant
-//    total x only the final round's strength ratio, ignoring losses from
-//    every round but the last - increasingly wrong the longer/more-reinforced
-//    a battle got. Troop counts now decay every round in lockstep with
-//    strength (decayTroops), so this can't drift.
+// 2. Survivors used to be computed once at the end from an all-time
+//    participant total x only the final round's strength ratio, ignoring
+//    losses from every round but the last. The frontline/reserve model can't
+//    have this bug structurally - survivors are just the literal remaining
+//    frontline + reserve count, never reconstructed from a ratio.
 import { test, mock, beforeEach } from 'node:test'
 import assert from 'node:assert/strict'
 import { newDb } from 'pg-mem'
@@ -70,22 +76,26 @@ await pool.query(`
       arrives_at  TIMESTAMPTZ NOT NULL
     );
     CREATE TABLE battles (
-      id                SERIAL PRIMARY KEY,
-      h3_index          TEXT NOT NULL,
-      attacker_id       INTEGER NOT NULL,
-      defender_id       INTEGER NOT NULL,
-      attacker_strength NUMERIC NOT NULL DEFAULT 0,
-      defender_strength NUMERIC NOT NULL DEFAULT 0,
-      attacker_troops   NUMERIC NOT NULL DEFAULT 0,
-      defender_troops   NUMERIC NOT NULL DEFAULT 0,
-      def_multiplier    NUMERIC NOT NULL DEFAULT 1,
-      attacker_losses   NUMERIC NOT NULL DEFAULT 0,
-      defender_losses   NUMERIC NOT NULL DEFAULT 0,
-      round_number      INTEGER NOT NULL DEFAULT 0,
-      last_round_at     TIMESTAMPTZ,
-      ended_at          TIMESTAMPTZ,
-      status            TEXT NOT NULL DEFAULT 'active',
-      created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      id                  SERIAL PRIMARY KEY,
+      h3_index            TEXT NOT NULL,
+      attacker_id         INTEGER NOT NULL,
+      defender_id         INTEGER NOT NULL,
+      attacker_strength   NUMERIC NOT NULL DEFAULT 0,
+      defender_strength   NUMERIC NOT NULL DEFAULT 0,
+      attacker_troops     NUMERIC NOT NULL DEFAULT 0,
+      defender_troops     NUMERIC NOT NULL DEFAULT 0,
+      attacker_frontline  NUMERIC NOT NULL DEFAULT 0,
+      attacker_reserve    NUMERIC NOT NULL DEFAULT 0,
+      defender_frontline  NUMERIC NOT NULL DEFAULT 0,
+      defender_reserve    NUMERIC NOT NULL DEFAULT 0,
+      defender_advantage_troops INTEGER NOT NULL DEFAULT 0,
+      attacker_losses     NUMERIC NOT NULL DEFAULT 0,
+      defender_losses     NUMERIC NOT NULL DEFAULT 0,
+      round_number        INTEGER NOT NULL DEFAULT 0,
+      last_round_at       TIMESTAMPTZ,
+      ended_at            TIMESTAMPTZ,
+      status              TEXT NOT NULL DEFAULT 'active',
+      created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
     CREATE TABLE battle_participants (
       id         SERIAL PRIMARY KEY,
@@ -95,6 +105,21 @@ await pool.query(`
       troop_type TEXT NOT NULL DEFAULT 'troop',
       quantity   INTEGER NOT NULL,
       joined_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE TABLE battle_rounds (
+      id                    SERIAL PRIMARY KEY,
+      battle_id             INTEGER NOT NULL,
+      round_number          INTEGER NOT NULL,
+      defender_advantage_troops INTEGER NOT NULL,
+      atk_frontline_before  INTEGER NOT NULL,
+      def_frontline_before  INTEGER NOT NULL,
+      atk_dice              INTEGER[] NOT NULL,
+      def_dice              INTEGER[] NOT NULL,
+      atk_losses            INTEGER NOT NULL,
+      def_losses            INTEGER NOT NULL,
+      atk_troops_after      NUMERIC NOT NULL,
+      def_troops_after      NUMERIC NOT NULL,
+      created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
     CREATE TABLE events (
       id         SERIAL PRIMARY KEY,
@@ -116,6 +141,7 @@ await pool.query(`
 
 beforeEach(async () => {
   await pool.query(`
+    DELETE FROM battle_rounds;
     DELETE FROM battle_participants;
     DELETE FROM battles;
     DELETE FROM armies;
@@ -180,10 +206,16 @@ test('battle starts with attacker str = raw troops, defender str = troops x mult
   const battle = await getBattle()
   assert.ok(battle, 'battle should have started')
   assert.equal(Number(battle.attacker_strength), 12)
-  assert.equal(Number(battle.defender_strength), 10)   // no forts/entrenchment here -> multiplier 1
-  assert.equal(Number(battle.def_multiplier), 1)
+  assert.equal(Number(battle.defender_strength), 10)   // strength is just the real troop count now
+  assert.equal(Number(battle.defender_advantage_troops), 0)   // no fort/entrenchment/strategic here -> no advantage
   assert.equal(Number(battle.attacker_troops), 12)
   assert.equal(Number(battle.defender_troops), 10)
+  // Both armies fit entirely within FRONTLINE_CAP (10) or just over it -
+  // attacker has 2 in reserve, defender's 10 troops exactly fill the frontline
+  assert.equal(Number(battle.attacker_frontline), 10)
+  assert.equal(Number(battle.attacker_reserve), 2)
+  assert.equal(Number(battle.defender_frontline), 10)
+  assert.equal(Number(battle.defender_reserve), 0)
 })
 
 test('BUG FIX: defender reinforcing their own besieged hex joins the battle, not silently deposited', async () => {
@@ -198,8 +230,11 @@ test('BUG FIX: defender reinforcing their own besieged hex joins the battle, not
   await processCombat() // should join the active battle, not deposit into troops
 
   const battle = await getBattle()
-  assert.equal(Number(battle.defender_strength), 30, 'reinforcement must add to defender_strength')
+  // Reinforcements land in reserve, not a strength pool - strength is only
+  // recomputed when a clash actually resolves (processBattleRounds), not on arrival.
   assert.equal(Number(battle.defender_troops), 30, 'reinforcement must add to defender_troops')
+  assert.equal(Number(battle.defender_reserve), 20, 'reinforcement must land in reserve, ready to refill the frontline')
+  assert.equal(Number(battle.defender_frontline), 10, 'frontline is untouched until the next clash')
 
   const army = (await pool.query(
     "SELECT status FROM armies WHERE owner_id=2 AND from_hex=$1", [DEF_HOME2]
@@ -230,16 +265,17 @@ test('BUG FIX: ally reinforcing a besieged hex joins the defender side', async (
   await processCombat()
 
   const battle = await getBattle()
-  assert.equal(Number(battle.defender_strength), 18)
+  assert.equal(Number(battle.defender_troops), 18)
+  assert.equal(Number(battle.defender_reserve), 8, 'ally reinforcement lands in the defender reserve')
   const participant = (await pool.query(
     "SELECT side FROM battle_participants WHERE player_id=3"
   )).rows[0]
   assert.equal(participant.side, 'defender')
 })
 
-test('defender reinforcement gets the same defense multiplier the original garrison had', async () => {
+test('reinforcement lands raw in reserve - advantaged defender count is fixed at battle start, not baked into arrival', async () => {
   await seedPlayers()
-  // Two adjacent defender hexes -> entrenchment bonus applies to the multiplier
+  // Two adjacent defender hexes -> entrenchment adds an advantaged defender
   await pool.query("INSERT INTO hexes (h3_index, owner_id) VALUES ($1, 2), ($2, 2)", [BATTLE_HEX, DEF_HOME2])
   await pool.query("INSERT INTO buildings (h3_index, type, created_at) VALUES ($1, 'fort', NOW() - interval '1 hour')", [BATTLE_HEX])
   await pool.query("INSERT INTO troops (owner_id, h3_index, type, quantity) VALUES (2, $1, 'troop', 10)", [BATTLE_HEX])
@@ -247,56 +283,58 @@ test('defender reinforcement gets the same defense multiplier the original garri
   await processCombat()
 
   const started = await getBattle()
-  const multiplier = Number(started.def_multiplier)
-  assert.ok(multiplier > 1, 'fort should have boosted the multiplier above 1x')
+  const advantaged = Number(started.defender_advantage_troops)
+  assert.ok(advantaged > 0, 'fort + entrenchment should have given the defender some advantaged troops')
 
   await march(2, DEF_HOME2, BATTLE_HEX, 20)
   await processCombat()
 
   const after = await getBattle()
-  const expectedStrength = Number(started.defender_strength) + 20 * multiplier
-  assert.ok(Math.abs(Number(after.defender_strength) - expectedStrength) < 1e-9,
-    'reinforcement strength must use the SAME multiplier as the original garrison')
-  assert.equal(Number(after.defender_troops), Number(started.defender_troops) + 20,
-    'reinforcement troop count must be added raw (no multiplier - troops are a headcount)')
+  // No scaling applied at arrival - a reinforcing troop is a real troop,
+  // full stop. The advantaged-defender count only affects how a clash
+  // resolves, not what lands in reserve.
+  assert.equal(Number(after.defender_reserve) - Number(started.defender_reserve), 20,
+    'reinforcement must add the raw troop count to reserve, unscaled')
+  assert.equal(Number(after.defender_troops), Number(started.defender_troops) + 20)
+  assert.equal(Number(after.defender_advantage_troops), advantaged, 'the advantaged-defender count itself is unchanged by reinforcement')
 })
 
-test('BUG FIX: survivors reflect every round of losses, not just the final round applied to an inflated all-time total', async () => {
+test('survivors are bounded by what was actually ever committed, and reinforcements are counted', async () => {
   await seedPlayers()
   await pool.query("INSERT INTO hexes (h3_index, owner_id) VALUES ($1, 2), ($2, 2)", [BATTLE_HEX, DEF_HOME2])
   await pool.query("INSERT INTO troops (owner_id, h3_index, type, quantity) VALUES (2, $1, 'troop', 10)", [BATTLE_HEX])
   await march(1, ATK_HOME, BATTLE_HEX, 12)
   await processCombat()
-  await processBattleRounds() // round 1: defender already takes losses before reinforcement arrives
+  await processBattleRounds() // clash 1: defender already takes losses before reinforcement arrives
 
   const midBattle = await getBattle()
   assert.ok(Number(midBattle.round_number) >= 1)
 
-  // Reinforce AFTER the original garrison has already lost strength
+  // Reinforce AFTER the original garrison has already taken losses
   await march(2, DEF_HOME2, BATTLE_HEX, 20)
   await processCombat()
 
-  // Run the battle to completion
+  // Run the battle to completion (real RNG - dice decide the winner, unlike
+  // the old deterministic percentage formula, so this only asserts structural
+  // invariants that must hold regardless of who wins).
   let resolved = null
-  for (let i = 0; i < 20 && !resolved; i++) {
+  for (let i = 0; i < 100 && !resolved; i++) {
     await processBattleRounds()
     const r = await pool.query("SELECT * FROM battles WHERE h3_index=$1 AND status!='active'", [BATTLE_HEX])
     resolved = r.rows[0]
   }
-  assert.ok(resolved, 'battle should have resolved within 20 rounds')
-  assert.equal(resolved.status, 'defender_won')
+  assert.ok(resolved, 'battle should have resolved within 100 clashes')
 
-  const survivorTroops = (await pool.query(
-    "SELECT quantity FROM troops WHERE owner_id=2 AND h3_index=$1", [BATTLE_HEX]
+  const winnerId = resolved.status === 'attacker_won' ? 1 : 2
+  const totalEverCommitted = winnerId === 1 ? 12 : 30 // attacker never reinforced; defender got +20
+  const survivorRow = (await pool.query(
+    "SELECT quantity FROM troops WHERE owner_id=$1 AND h3_index=$2", [winnerId, BATTLE_HEX]
   )).rows[0]
 
-  // Old (buggy) formula: totalQty ever committed (10 + 20 = 30) x final-round
-  // ratio only, ignoring the original garrison's earlier losses - it could
-  // credit MORE survivors than were ever on the field at once (~78 in the
-  // manually-verified case during development). The fix must stay bounded by
-  // what was actually ever committed, and can never invent troops from thin air.
-  assert.ok(survivorTroops.quantity <= 30, `survivors (${survivorTroops.quantity}) exceed total ever committed (30) - old bug reintroduced`)
-  assert.ok(survivorTroops.quantity > 0, 'defender won, so some survivors must remain')
+  assert.ok(survivorRow, 'winner must have surviving troops deposited on the hex')
+  assert.ok(survivorRow.quantity > 0, 'winner must have at least one survivor')
+  assert.ok(survivorRow.quantity <= totalEverCommitted,
+    `survivors (${survivorRow.quantity}) exceed total ever committed (${totalEverCommitted})`)
 })
 
 test('attacker wins outright when defenseless (owned hex, zero troops): hex taken, no battle row created', async () => {
@@ -326,7 +364,8 @@ test('unaffiliated third party joins the attacker side against a two-way battle'
   await processCombat()
 
   const battle = await getBattle()
-  assert.equal(Number(battle.attacker_strength), 18)
+  assert.equal(Number(battle.attacker_troops), 18)
+  assert.equal(Number(battle.attacker_reserve), 8, 'the opportunist\'s troops land in the attacker reserve')
   const participant = (await pool.query("SELECT side FROM battle_participants WHERE player_id=3")).rows[0]
   assert.equal(participant.side, 'attacker')
 })

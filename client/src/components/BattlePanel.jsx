@@ -3,31 +3,27 @@ import { api } from '../api/client'
 import { useSocket } from '../hooks/useSocket'
 import { useIsMobile } from '../hooks/useIsMobile'
 import { SwordsIcon } from './Icons'
+import Tooltip from './Tooltip'
 
-const ROUND_MS = 15000
-const DAMAGE_RATE = 0.15
-
-function RoundTimer({ lastRoundAt }) {
-  const [secsLeft, setSecsLeft] = useState(ROUND_MS / 1000)
-  const baseRef = useRef(Date.now())
+function RoundTimer({ nextRoundAt }) {
+  const [secsLeft, setSecsLeft] = useState(0)
 
   useEffect(() => {
-    if (lastRoundAt) baseRef.current = new Date(lastRoundAt).getTime()
-  }, [lastRoundAt])
-
-  useEffect(() => {
+    if (!nextRoundAt) return
+    const target = new Date(nextRoundAt).getTime()
     function update() {
-      const next = baseRef.current + ROUND_MS
-      setSecsLeft(Math.max(0, Math.ceil((next - Date.now()) / 1000)))
+      setSecsLeft(Math.max(0, Math.ceil((target - Date.now()) / 1000)))
     }
     update()
     const id = setInterval(update, 500)
     return () => clearInterval(id)
-  }, [lastRoundAt])
+  }, [nextRoundAt])
 
+  const m = Math.floor(secsLeft / 60), s = secsLeft % 60
+  const label = m > 0 ? `${m}m ${String(s).padStart(2, '0')}s` : `${s}s`
   return (
-    <span style={{ fontSize: 12, color: secsLeft <= 3 ? '#ff8080' : '#9a6a6a', whiteSpace: 'nowrap' }}>
-      {secsLeft > 0 ? `next round in ${secsLeft}s` : 'resolving round…'}
+    <span style={{ fontSize: 12, color: secsLeft <= 10 ? '#ff8080' : '#9a6a6a', whiteSpace: 'nowrap' }}>
+      next round in {label}
     </span>
   )
 }
@@ -40,10 +36,11 @@ function InfoTooltip({ children }) {
         display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
         width: 16, height: 16, borderRadius: '50%', flexShrink: 0,
         border: '1px solid rgba(190,60,50,0.5)', color: '#c08080',
-        fontSize: 11, cursor: 'default', position: 'relative',
+        fontSize: 11, cursor: 'pointer', position: 'relative',
       }}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
+      onClick={() => setHover(h => !h)}
     >
       ?
       {hover && (
@@ -53,7 +50,7 @@ function InfoTooltip({ children }) {
           borderRadius: 6, padding: '12px 14px',
           fontSize: 12, color: '#c9b99a', fontFamily: 'Georgia, serif',
           boxShadow: '0 4px 20px rgba(0,0,0,0.6)',
-          zIndex: 100, width: 260, textAlign: 'left', lineHeight: 1.6, whiteSpace: 'normal',
+          zIndex: 100, width: 260, maxWidth: 'calc(100vw - 32px)', textAlign: 'left', lineHeight: 1.6, whiteSpace: 'normal',
         }}>
           {children}
         </div>
@@ -78,7 +75,7 @@ function SoldierIcon({ color, dead, mirror }) {
   )
 }
 
-function StrengthBar({ strength, maxStrength, initialStrength, initialQty, color, losses, side }) {
+function StrengthBar({ strength, maxStrength, initialQty, color, losses, side }) {
   const pct = maxStrength > 0 ? Math.min(100, (strength / maxStrength) * 100) : 0
 
   // Fixed two rows of real 1:1 soldier icons - past that, fold the rest into
@@ -89,8 +86,10 @@ function StrengthBar({ strength, maxStrength, initialStrength, initialQty, color
   const overCap = peakQty > CAP
   const shownIcons = overCap ? CAP - 1 : peakQty
 
-  const aliveFrac = initialStrength > 0 ? Math.max(0, Math.min(1, strength / initialStrength)) : 0
-  const aliveTotal = Math.round(peakQty * aliveFrac)
+  // Real losses (tracked exactly in combat.js), not a strength-ratio estimate -
+  // strength is fort/terrain-boosted for the defender, so a ratio against it
+  // doesn't land on the real troop count the way this needs to.
+  const aliveTotal = Math.max(0, peakQty - Math.round(losses || 0))
   const aliveShown = Math.min(shownIcons, aliveTotal)
   const overflowAlive = Math.max(0, aliveTotal - shownIcons)
 
@@ -109,7 +108,6 @@ function StrengthBar({ strength, maxStrength, initialStrength, initialQty, color
           float: side === 'right' ? 'right' : 'left',
         }} />
       </div>
-      {/* The army itself - soldiers fall as strength drops, capped at two rows */}
       <div style={{
         display: 'grid', gridTemplateColumns: `repeat(${COLS}, auto)`, gap: 3, marginTop: 10,
         justifyContent: side === 'right' ? 'end' : 'start',
@@ -120,18 +118,24 @@ function StrengthBar({ strength, maxStrength, initialStrength, initialQty, color
           return <SoldierIcon key={i} color={color} dead={dead} mirror={side === 'right'} />
         })}
         {overCap && (
-          <span style={{
-            display: 'flex', alignItems: 'center',
-            fontSize: 12, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap',
-            color: overflowAlive > 0 ? color : '#665050',
-            opacity: overflowAlive > 0 ? 0.85 : 0.4,
-          }} title={`${overflowAlive} more troops not individually pictured`}>
+          <Tooltip
+            text={`${overflowAlive} more troops not individually pictured`}
+            style={{
+              display: 'flex', alignItems: 'center',
+              fontSize: 12, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap',
+              color: overflowAlive > 0 ? color : '#665050',
+              opacity: overflowAlive > 0 ? 0.85 : 0.4,
+            }}
+          >
             …{overflowAlive}
-          </span>
+          </Tooltip>
         )}
       </div>
-      <div style={{ fontSize: 13, color: '#9a7a7a', marginTop: 6 }}>
-        Lost: ~{Math.max(0, peakQty - aliveTotal)} troops
+      <div style={{ fontSize: 13, color: '#c9b99a', marginTop: 6 }}>
+        {aliveTotal} troops remaining
+      </div>
+      <div style={{ fontSize: 13, color: '#9a7a7a' }}>
+        Lost: {Math.round(losses || 0)} troops
       </div>
     </div>
   )
@@ -140,8 +144,13 @@ function StrengthBar({ strength, maxStrength, initialStrength, initialQty, color
 export default function BattlePanel({ hex, player, onMarchStart, onClose }) {
   const isMobile = useIsMobile()
   const [data, setData] = useState(null)
-  const [display, setDisplay] = useState(null)
-  const lastFetchRef = useRef(null)
+  const [roundMs, setRoundMs] = useState(60 * 1000)
+
+  useEffect(() => {
+    api.getConfig().then(cfg => {
+      if (cfg.battle_interval_ms) setRoundMs(cfg.battle_interval_ms)
+    }).catch(() => {})
+  }, [])
 
   useEffect(() => { load() }, [hex.h3])
   useSocket({ 'battle:update': load })
@@ -149,56 +158,28 @@ export default function BattlePanel({ hex, player, onMarchStart, onClose }) {
   async function load() {
     try {
       const result = await api.getBattle(hex.h3)
-      if (result.battle) {
-        setData(result)
-        setDisplay({
-          atkStr: Number(result.battle.attacker_strength),
-          defStr: Number(result.battle.defender_strength),
-          atkLoss: Number(result.battle.attacker_losses),
-          defLoss: Number(result.battle.defender_losses),
-        })
-        lastFetchRef.current = Date.now()
-      } else {
-        setData(null)
-      }
+      setData(result.battle ? result : null)
     } catch {}
   }
-
-  // Smooth interpolation between polls
-  useEffect(() => {
-    if (!display) return
-    const interval = setInterval(() => {
-      const elapsed = (Date.now() - (lastFetchRef.current || Date.now())) / 1000
-      const damagePerSec = DAMAGE_RATE / (ROUND_MS / 1000)
-      setDisplay(prev => {
-        if (!prev) return prev
-        const atkDmg = prev.defStr * damagePerSec * 0.1
-        const defDmg = prev.atkStr * damagePerSec * 0.1
-        return {
-          atkStr: Math.max(0, prev.atkStr - atkDmg),
-          defStr: Math.max(0, prev.defStr - defDmg),
-          atkLoss: prev.atkLoss + defDmg,
-          defLoss: prev.defLoss + atkDmg,
-        }
-      })
-    }, 100)
-    return () => clearInterval(interval)
-  }, [data])
 
   if (!data?.battle) return null
 
   const { battle, participants } = data
-  const initialAtkStr = Number(battle.attacker_strength) + Number(battle.attacker_losses)
-  const initialDefStr = Number(battle.defender_strength) + Number(battle.defender_losses)
+  // Combat resolves in discrete dice clashes, not a continuously-decaying pool -
+  // there's nothing to smoothly animate between polls, so this shows the real
+  // last-synced numbers only (same reasoning as the gold display).
+  const display = {
+    atkStr: Number(battle.attacker_strength),
+    defStr: Number(battle.defender_strength),
+    atkLoss: Number(battle.attacker_losses),
+    defLoss: Number(battle.defender_losses),
+  }
+  const initialAtkStr = display.atkStr + display.atkLoss
+  const initialDefStr = display.defStr + display.defLoss
   const maxStr = Math.max(initialAtkStr, initialDefStr, 1)
-  // Each round the weaker side loses (strongerStr × DAMAGE_RATE), so rounds ≈ weaker / (stronger × rate)
-  const roundsLeft = display
-    ? Math.max(1, Math.ceil(
-        Math.min(display.atkStr, display.defStr) /
-        (Math.max(display.atkStr, display.defStr, 0.001) * DAMAGE_RATE)
-      ))
-    : '?'
   const isParticipant = player && (player.id === battle.attacker_id || player.id === battle.defender_id)
+  const concluded = battle.status !== 'active'
+  const attackerWon = battle.status === 'attacker_won'
 
   const attackers = participants.filter(p => p.side === 'attacker')
   const defenders = participants.filter(p => p.side === 'defender')
@@ -218,27 +199,42 @@ export default function BattlePanel({ hex, player, onMarchStart, onClose }) {
       boxShadow: '0 -4px 40px rgba(0,0,0,0.7), inset 0 1px 0 rgba(220,80,60,0.2)',
       color: '#c9b99a', fontFamily: 'Georgia, serif',
       zIndex: 20,
+      paddingBottom: 'env(safe-area-inset-bottom)',
     }}>
-      {/* Header */}
       <div style={{
-        display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10,
+        display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: isMobile ? 6 : 10,
         padding: isMobile ? '12px 16px' : '14px 28px',
         borderBottom: '1px solid rgba(190,60,50,0.2)',
       }}>
-        <span style={{ fontSize: isMobile ? 14 : 16, letterSpacing: isMobile ? 2 : 4, color: '#e07060', textTransform: 'uppercase', whiteSpace: 'nowrap' }}>
-          <SwordsIcon size={15} color="#e07060" /> Battle in Progress
+        <span style={{
+          fontSize: isMobile ? 14 : 16, letterSpacing: isMobile ? 2 : 4,
+          color: concluded ? (attackerWon ? '#70e090' : '#ff8080') : '#e07060',
+          textTransform: 'uppercase', whiteSpace: 'nowrap',
+        }}>
+          <SwordsIcon size={15} color={concluded ? (attackerWon ? '#70e090' : '#ff8080') : '#e07060'} />{' '}
+          {concluded ? `${attackerWon ? battle.attacker_username : battle.defender_username} Wins!` : 'Battle in Progress'}
         </span>
-        <div style={{ display: 'flex', alignItems: 'center', gap: isMobile ? 8 : 14 }}>
+        <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: isMobile ? 8 : 14 }}>
           <span style={{ fontSize: 13, color: '#9a6a6a', whiteSpace: 'nowrap' }}>
-            {isMobile ? 'R' : 'Round '}{battle.round_number} · ~{Math.max(0, roundsLeft)} left
+            {isMobile ? 'C' : 'Clash '}{battle.round_number}
           </span>
-          <RoundTimer lastRoundAt={battle.last_round_at} />
+          {!isMobile && !concluded && <RoundTimer nextRoundAt={data.next_round_at} />}
           <InfoTooltip>
-            <b style={{ color: '#e0a090' }}>Str</b> (strength) is combat power, not headcount.
-            Attackers: 1 troop = 1 str. Defenders get a bonus from forts, terrain,
-            and compact borders, so their str can be higher than their troop count.
+            Combat resolves in <b style={{ color: '#e0a090' }}>clashes</b>, not one long grind: both
+            sides field up to 10 troops on the frontline, each rolls a d20, and pairings are random
+            (not highest-vs-highest) - low roll loses that pairing (ties favor the defender). Losers
+            are removed; survivors refill the frontline from reserve for the next clash.
             <br /><br />
-            Each round, both sides lose 15% of the <i>other</i> side's current strength.
+            <b style={{ color: '#e0a090' }}>Fortification</b> doesn't add more dice or a bigger
+            frontline - up to 5 of the defender's frontline instead roll <b>with advantage</b> (2
+            dice, take the higher): fort +3, compact borders +1 per friendly neighbor (max +4),
+            strategic hex +2. This hex's defender:{' '}
+            <b style={{ color: '#e0a090' }}>
+              {Math.min(Number(battle.defender_advantage_troops) || 0, Number(battle.defender_frontline) || 0)} of {Number(battle.defender_frontline) || 0}
+            </b> frontline troops rolling with advantage.
+            <br /><br />
+            <b style={{ color: '#e0a090' }}>Str</b> shown below is just the real troop count on
+            each side - no hidden multiplier.
             <br /><br />
             <b style={{ color: '#e0a090' }}>Figures</b> below = real troops, one icon each,
             up to two rows. Past that, the rest show as a plain "…N" count instead.
@@ -247,8 +243,7 @@ export default function BattlePanel({ hex, player, onMarchStart, onClose }) {
         </div>
       </div>
 
-      <div style={{ padding: isMobile ? '16px 16px 20px' : '22px 32px 26px', maxHeight: isMobile ? '52vh' : '42vh', overflowY: 'auto' }}>
-        {/* Combatant names */}
+      <div style={{ padding: isMobile ? '16px 16px 20px' : '22px 32px 26px', maxHeight: isMobile ? '52dvh' : '42vh', overflowY: 'auto' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
           <span style={{ fontSize: 17, display: 'flex', alignItems: 'center', gap: 8 }}>
             <span style={{ width: 12, height: 12, borderRadius: '50%', background: battle.attacker_color, display: 'inline-block' }} />
@@ -261,17 +256,37 @@ export default function BattlePanel({ hex, player, onMarchStart, onClose }) {
           </span>
         </div>
 
-        {/* Strength bars */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: '#9a7a7a', marginTop: -8, marginBottom: 12 }}>
+          <span>Attacker frontline: {battle.attacker_frontline} / 10</span>
+          <span>
+            Defender frontline: {battle.defender_frontline} / 10
+            {Number(battle.defender_advantage_troops) > 0 && ` · ${Math.min(Number(battle.defender_advantage_troops), Number(battle.defender_frontline) || 0)} w/ advantage`}
+          </span>
+        </div>
+
+        {concluded && (
+          <div style={{
+            textAlign: 'center', padding: '10px 14px', marginBottom: 16, borderRadius: 6,
+            background: attackerWon ? 'rgba(40,120,60,0.18)' : 'rgba(120,40,40,0.18)',
+            border: `1px solid ${attackerWon ? 'rgba(70,180,100,0.4)' : 'rgba(180,70,70,0.4)'}`,
+            fontSize: 14, color: attackerWon ? '#a0e0b0' : '#e0a0a0',
+          }}>
+            {attackerWon
+              ? `${battle.attacker_username} took the hex with ${Math.round(Number(battle.attacker_troops))} troops surviving.`
+              : `${battle.defender_username} held the hex with ${Math.round(Number(battle.defender_troops))} troops surviving.`}
+          </div>
+        )}
+
         {display && (
           <div style={{ display: 'flex', gap: isMobile ? 16 : 40, marginBottom: 16 }}>
             <StrengthBar
               strength={display.atkStr} maxStrength={maxStr}
-              initialStrength={initialAtkStr} initialQty={totalAtkQty}
+              initialQty={totalAtkQty}
               color={battle.attacker_color} losses={display.atkLoss} side="left"
             />
             <StrengthBar
               strength={display.defStr} maxStrength={maxStr}
-              initialStrength={initialDefStr} initialQty={totalDefQty}
+              initialQty={totalDefQty}
               color={battle.defender_color} losses={display.defLoss} side="right"
             />
           </div>
@@ -279,7 +294,6 @@ export default function BattlePanel({ hex, player, onMarchStart, onClose }) {
 
         <div style={{ borderTop: '1px solid rgba(190,60,50,0.15)', marginBottom: 14 }} />
 
-        {/* Participants */}
         <div style={{ display: 'flex', gap: isMobile ? 16 : 40 }}>
           <div style={{ flex: 1 }}>
             <div style={{ fontSize: 13, color: '#c05050', letterSpacing: 2, marginBottom: 8, textTransform: 'uppercase' }}>Attackers</div>
@@ -301,7 +315,6 @@ export default function BattlePanel({ hex, player, onMarchStart, onClose }) {
           </div>
         </div>
 
-        {/* Reinforce button */}
         {isParticipant && onMarchStart && (
           <button
             onClick={() => {

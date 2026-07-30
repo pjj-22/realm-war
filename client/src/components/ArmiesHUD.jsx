@@ -145,7 +145,6 @@ export default function ArmiesHUD({ armies, activeBattles = [], player, claimedR
 
   return (
     <div style={{ position: 'absolute', top: 56, left: 16, fontFamily: 'Georgia, serif', zIndex: 10 }}>
-      {/* Toggle button */}
       <button onClick={() => setOpen(o => !o)} style={{
         display: 'flex', alignItems: 'center', gap: 8, padding: '8px 14px',
         background: 'rgba(10,8,25,0.85)',
@@ -156,14 +155,13 @@ export default function ArmiesHUD({ armies, activeBattles = [], player, claimedR
         <span><SwordsIcon size={13} color="#c9b99a" /> Armies</span>
         {ownedHexes.length > 0 && (
           <span style={{ background: '#3a2a6a', borderRadius: 10, padding: '2px 8px', fontSize: 12 }}>
-            {ownedHexes.length}▲
+            {ownedHexes.length}⬢
           </span>
         )}
         {threats.length > 0 && <span style={{ color: '#ff6060', fontSize: 12 }}><WarningIcon size={12} color="#ff6060" />{threats.length}</span>}
         {activeBattles.length > 0 && <span style={{ color: '#ff4444', fontSize: 12 }}><SwordsIcon size={11} color="#ff4444" />{activeBattles.length}</span>}
       </button>
 
-      {/* Panel */}
       {open && (
         <div style={{
           marginTop: 4,
@@ -174,7 +172,6 @@ export default function ArmiesHUD({ armies, activeBattles = [], player, claimedR
           maxHeight: '65vh', overflowY: 'auto',
         }}>
 
-          {/* Threats */}
           {threats.length > 0 && (
             <>
               <SectionLabel color="#c06060"><WarningIcon size={12} color="#c06060" /> Incoming ({threats.length})</SectionLabel>
@@ -185,7 +182,6 @@ export default function ArmiesHUD({ armies, activeBattles = [], player, claimedR
             </>
           )}
 
-          {/* Your marching armies */}
           {myArmies.length > 0 && (
             <>
               <SectionLabel color="#8a7aaa">Marching ({myArmies.length})</SectionLabel>
@@ -196,7 +192,6 @@ export default function ArmiesHUD({ armies, activeBattles = [], player, claimedR
             </>
           )}
 
-          {/* Hex list */}
           {ownedHexes.length > 0 ? (
             <>
               <SectionLabel color="#6a5a8a">Territory ({ownedHexes.length})</SectionLabel>

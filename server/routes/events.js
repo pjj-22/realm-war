@@ -4,7 +4,6 @@ import { requireAuth } from '../auth.js'
 
 const router = Router()
 
-// Get last 20 events for the player, mark them read (?peek=1 skips mark-read)
 router.get('/', requireAuth, async (req, res) => {
   try {
     const result = await pool.query(
@@ -26,7 +25,6 @@ router.get('/', requireAuth, async (req, res) => {
   }
 })
 
-// Cheap unread count poll
 router.get('/count', requireAuth, async (req, res) => {
   try {
     const result = await pool.query(

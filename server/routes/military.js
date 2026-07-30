@@ -9,7 +9,6 @@ import { notifyIncomingAttack } from '../notify.js'
 
 const router = Router()
 
-// Get troops + training queue + armies for a hex
 router.get('/hex/:h3Index', requireAuth, async (req, res) => {
   const { h3Index } = req.params
   try {
@@ -26,14 +25,12 @@ router.get('/hex/:h3Index', requireAuth, async (req, res) => {
   }
 })
 
-// Train troops
 router.post('/train', requireAuth, async (req, res) => {
   const { h3Index, type, quantity } = req.body
   if (!h3Index || !type || !quantity || quantity < 1) return res.status(400).json({ error: 'Invalid request' })
   if (!TROOP_STATS[type]) return res.status(400).json({ error: 'Invalid troop type' })
 
   try {
-    // Must own the hex
     const hex = await pool.query('SELECT owner_id FROM hexes WHERE h3_index=$1', [h3Index])
     if (hex.rows[0]?.owner_id !== req.player.id) return res.status(403).json({ error: 'You do not own this hex' })
 
@@ -80,17 +77,14 @@ router.post('/train', requireAuth, async (req, res) => {
   }
 })
 
-// Send army to a hex
 router.post('/march', requireAuth, async (req, res) => {
   const { fromHex, toHex, type, quantity } = req.body
   if (!fromHex || !toHex || !type || !quantity) return res.status(400).json({ error: 'Invalid request' })
 
   try {
-    // Must own from hex
     const hex = await pool.query('SELECT owner_id FROM hexes WHERE h3_index=$1', [fromHex])
     if (hex.rows[0]?.owner_id !== req.player.id) return res.status(403).json({ error: 'You do not own this hex' })
 
-    // Calculate arrival time - ocean hexes cost 10× march time
     const stats = TROOP_STATS[type]
     const dist = Math.max(1, gridDistance(fromHex, toHex))
     const multiplier = isOcean(toHex) ? OCEAN_MARCH_MULTIPLIER : 1
@@ -126,7 +120,6 @@ router.post('/march', requireAuth, async (req, res) => {
   }
 })
 
-// Recall a marching army
 router.delete('/armies/:id', requireAuth, async (req, res) => {
   const { id } = req.params
   try {
@@ -137,7 +130,6 @@ router.delete('/armies/:id', requireAuth, async (req, res) => {
     if (!army.rows[0]) return res.status(404).json({ error: 'Army not found' })
     const a = army.rows[0]
 
-    // Return troops to origin hex
     await pool.query(
       `INSERT INTO troops (owner_id, h3_index, type, quantity)
        VALUES ($1,$2,$3,$4)
@@ -153,7 +145,6 @@ router.delete('/armies/:id', requireAuth, async (req, res) => {
   }
 })
 
-// Set rally point for a hex
 router.post('/rally', requireAuth, async (req, res) => {
   const { fromHex, rallyHex } = req.body
   if (!fromHex || !rallyHex) return res.status(400).json({ error: 'fromHex and rallyHex required' })
@@ -170,7 +161,6 @@ router.post('/rally', requireAuth, async (req, res) => {
   }
 })
 
-// Clear rally point for a hex
 router.delete('/rally/:h3Index', requireAuth, async (req, res) => {
   const { h3Index } = req.params
   try {
@@ -189,8 +179,8 @@ router.delete('/rally/:h3Index', requireAuth, async (req, res) => {
 router.get('/armies', async (req, res) => {
   try {
     const result = await pool.query(`
-      WITH power AS (SELECT owner_id, SUM(quantity)::int AS total FROM troops GROUP BY owner_id)
-      SELECT a.*, p.color, p.username, COALESCE(power.total, 0)::int AS owner_power
+      WITH power AS (SELECT owner_id, SUM(quantity)::float8 AS total FROM troops GROUP BY owner_id)
+      SELECT a.*, p.color, p.username, COALESCE(power.total, 0)::float8 AS owner_power
       FROM armies a
       JOIN players p ON p.id = a.owner_id
       LEFT JOIN power ON power.owner_id = a.owner_id
@@ -204,6 +194,27 @@ router.get('/armies', async (req, res) => {
     res.json(rows)
   } catch (err) {
     console.error('[military] GET /armies failed:', err.message)
+    res.status(500).json({ error: 'Server error' })
+  }
+})
+
+// Your own troops sitting on hexes you don't own yet - either mid-claim
+// (below MIN_TROOPS_TO_CLAIM, waiting on reinforcement) or on an abandoned
+// hex nobody re-claimed. Without this, those troops are real in the DB but
+// invisible on the map, which reads as "my troops just disappeared."
+router.get('/pending-claims', requireAuth, async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT t.h3_index, SUM(t.quantity)::int AS quantity
+      FROM troops t
+      LEFT JOIN hexes h ON h.h3_index = t.h3_index
+      WHERE t.owner_id = $1 AND (h.h3_index IS NULL OR h.owner_id IS NULL)
+      GROUP BY t.h3_index
+      HAVING SUM(t.quantity) > 0
+    `, [req.player.id])
+    res.json(result.rows)
+  } catch (err) {
+    console.error('[military] GET /pending-claims failed:', err.message)
     res.status(500).json({ error: 'Server error' })
   }
 })

@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { api } from '../api/client'
 import { BannerIcon, SwordsIcon, KeepIcon, BoltIcon, TargetIcon } from './Icons'
+import { useIsMobile } from '../hooks/useIsMobile'
 
 const STEPS = [
   {
@@ -12,7 +13,7 @@ const STEPS = [
   {
     id: 'train',
     title: 'Train your troops',
-    body: 'Open the Military tab on your hex and queue some troops. Training is slow without a Barracks - we\'ll fix that next.',
+    body: 'Open the Military tab on your hex and queue some troops. Training is slow here - your capital\'s one building slot is already taken by its free Mine, so a faster Barracks will have to go on the next hex you claim.',
     icon: SwordsIcon,
   },
   {
@@ -32,10 +33,10 @@ const STEPS = [
 const STORAGE_KEY = 'rw_ftue_step'
 
 export default function FTUEGuide({ player, onDismiss }) {
+  const isMobile = useIsMobile()
   const [stepId, setStepId] = useState(() => localStorage.getItem(STORAGE_KEY) || 'claim')
   const [dismissed, setDismissed] = useState(false)
 
-  // Auto-advance from 'claim' step once player has a capital hex
   useEffect(() => {
     if (stepId === 'claim' && player?.capital_hex) {
       advance('train')
@@ -62,8 +63,12 @@ export default function FTUEGuide({ player, onDismiss }) {
 
   return (
     <div style={{
-      position: 'absolute', top: 60, left: 16,
-      width: 260,
+      position: 'absolute',
+      top: isMobile ? 'calc(env(safe-area-inset-top) + 52px)' : 60,
+      left: isMobile ? 12 : 16,
+      right: isMobile ? 12 : 'auto',
+      width: isMobile ? 'auto' : 260,
+      maxWidth: isMobile ? 'none' : 260,
       background: 'linear-gradient(180deg, rgba(18,10,30,0.97), rgba(10,6,20,0.98))',
       border: '1px solid rgba(160,110,200,0.4)',
       borderRadius: 8,
@@ -72,7 +77,6 @@ export default function FTUEGuide({ player, onDismiss }) {
       zIndex: 25,
       overflow: 'hidden',
     }}>
-      {/* Progress dots */}
       <div style={{ display: 'flex', gap: 4, padding: '10px 14px 0', justifyContent: 'center' }}>
         {STEPS.map((s, i) => (
           <div key={s.id} style={{
@@ -94,50 +98,61 @@ export default function FTUEGuide({ player, onDismiss }) {
           {step.body}
         </p>
         {step.id === 'claim' && (
-          <button
-            onClick={async () => {
-              try {
-                const s = await api.suggestStart()
-                window.dispatchEvent(new CustomEvent('rw:flyto', { detail: { lat: s.lat, lng: s.lng, zoom: 9.5 } }))
-              } catch { /* no suggestion available */ }
-            }}
-            style={{
-              width: '100%', padding: '7px 0', marginBottom: 8,
-              background: 'rgba(200,140,40,0.18)',
-              border: '1px solid rgba(220,160,60,0.45)',
-              borderRadius: 4, color: '#e0b060',
-              cursor: 'pointer', fontSize: 14,
-              letterSpacing: 1, fontFamily: 'Georgia, serif',
-            }}>
-            <TargetIcon size={13} color="#e0b060" /> Take me to the front
-          </button>
+          <>
+            <button
+              onClick={async () => {
+                try {
+                  const s = await api.suggestStart()
+                  window.dispatchEvent(new CustomEvent('rw:flyto', { detail: { lat: s.lat, lng: s.lng, zoom: 9.5 } }))
+                } catch { /* no suggestion available */ }
+              }}
+              style={{
+                width: '100%', padding: '7px 0', marginBottom: 6,
+                background: 'rgba(200,140,40,0.18)',
+                border: '1px solid rgba(220,160,60,0.45)',
+                borderRadius: 4, color: '#e0b060',
+                cursor: 'pointer', fontSize: 14,
+                letterSpacing: 1, fontFamily: 'Georgia, serif',
+              }}>
+              <TargetIcon size={13} color="#e0b060" /> Take me to the front
+            </button>
+            <p style={{ fontSize: 14, color: '#8a7898', lineHeight: 1.6, margin: '0 0 14px' }}>
+              Fast action, but risky - established players are already fighting
+              nearby. If you'd rather build up safely first, just click any hex
+              on the map instead.
+            </p>
+          </>
         )}
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-          <button
-            onClick={() => advance(STEPS[idx + 1]?.id || null)}
-            style={{
-              flex: 1, padding: '7px 0',
-              background: 'rgba(120,60,200,0.25)',
-              border: '1px solid rgba(160,80,220,0.4)',
-              borderRadius: 4, color: '#c090f0',
-              cursor: 'pointer', fontSize: 14,
-              letterSpacing: 1, fontFamily: 'Georgia, serif',
-            }}>
-            {isLast ? 'Got it - good luck!' : 'Got it →'}
-          </button>
-          {idx > 0 && (
+          {step.id === 'claim' ? (
+            <span style={{ flex: 1, fontSize: 12, color: '#5a4860', fontStyle: 'italic' }}>
+              This advances on its own once you claim a hex.
+            </span>
+          ) : (
             <button
-              onClick={() => { localStorage.setItem(STORAGE_KEY, 'done'); setDismissed(true); onDismiss?.() }}
+              onClick={() => advance(STEPS[idx + 1]?.id || null)}
               style={{
-                padding: '7px 10px', background: 'none',
-                border: '1px solid rgba(255,255,255,0.08)',
-                borderRadius: 4, color: '#5a4860',
+                flex: 1, padding: '7px 0',
+                background: 'rgba(120,60,200,0.25)',
+                border: '1px solid rgba(160,80,220,0.4)',
+                borderRadius: 4, color: '#c090f0',
                 cursor: 'pointer', fontSize: 14,
-                fontFamily: 'Georgia, serif',
+                letterSpacing: 1, fontFamily: 'Georgia, serif',
               }}>
-              Skip
+              {isLast ? 'Got it - good luck!' : 'Got it →'}
             </button>
           )}
+          <button
+            onClick={() => { localStorage.setItem(STORAGE_KEY, 'done'); setDismissed(true); onDismiss?.() }}
+            style={{
+              padding: '7px 10px', background: 'none',
+              border: '1px solid rgba(255,255,255,0.08)',
+              borderRadius: 4, color: '#5a4860',
+              cursor: 'pointer', fontSize: 14,
+              fontFamily: 'Georgia, serif',
+            }}>
+            Skip
+          </button>
         </div>
       </div>
     </div>

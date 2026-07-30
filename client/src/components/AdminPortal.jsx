@@ -156,7 +156,7 @@ function RetentionRow({ label, cohort, retained, pct }) {
   )
 }
 
-const TABS = ['Overview', 'Retention', 'Activity', 'Battles', 'Armies', 'Events', 'Players', 'System']
+const TABS = ['Overview', 'Retention', 'Activity', 'Battles', 'Battle Log', 'Armies', 'Events', 'Players', 'System']
 
 export default function AdminPortal() {
   const [secret, setSecret] = useState(() => sessionStorage.getItem('rw_admin_secret') || '')
@@ -174,6 +174,14 @@ export default function AdminPortal() {
   const [battles, setBattles] = useState([])
   const [armies, setArmies] = useState([])
   const [system, setSystem] = useState(null)
+
+  // Battle Log tab - loaded lazily (not part of the 5s global poll) since the
+  // dice-roll detail is only needed while someone's actively debugging one fight.
+  const [recentBattles, setRecentBattles] = useState([])
+  const [recentBusy, setRecentBusy] = useState(false)
+  const [selectedBattleId, setSelectedBattleId] = useState(null)
+  const [battleRounds, setBattleRounds] = useState([])
+  const [roundsBusy, setRoundsBusy] = useState(false)
 
   const [tickBusy, setTickBusy] = useState(false)
   const [botBusy, setBotBusy] = useState(false)
@@ -223,12 +231,31 @@ export default function AdminPortal() {
 
   useEffect(() => { if (secret) loadAll(secret) }, []) // eslint-disable-line
 
-  // auto-refresh poller
   useEffect(() => {
     if (!authed || !auto) return
     const t = setInterval(() => loadAll(), 5000)
     return () => clearInterval(t)
   }, [authed, auto, loadAll])
+
+  const loadRecentBattles = useCallback(async () => {
+    setRecentBusy(true)
+    try { setRecentBattles(await adminRequest('GET', '/battles/recent', null, secret)) }
+    catch (e) { alert(e.message) }
+    setRecentBusy(false)
+  }, [secret])
+
+  useEffect(() => { if (authed && tab === 'Battle Log') loadRecentBattles() }, [authed, tab, loadRecentBattles])
+
+  useEffect(() => {
+    if (selectedBattleId == null) { setBattleRounds([]); return }
+    let cancelled = false
+    setRoundsBusy(true)
+    adminRequest('GET', `/battles/${selectedBattleId}/rounds`, null, secret)
+      .then(rows => { if (!cancelled) setBattleRounds(rows) })
+      .catch(e => !cancelled && alert(e.message))
+      .finally(() => !cancelled && setRoundsBusy(false))
+    return () => { cancelled = true }
+  }, [selectedBattleId, secret])
 
   async function forceTick() {
     setTickBusy(true)
@@ -439,6 +466,75 @@ export default function AdminPortal() {
                 </tbody>
               </table>
             </div>}
+        </>
+      )}
+
+      {/* ─── Battle Log ─── */}
+      {tab === 'Battle Log' && (
+        <>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+            <SectionTitle>Recent Battles ({recentBattles.length})</SectionTitle>
+            <button onClick={loadRecentBattles} style={btnStyle()} disabled={recentBusy}>{recentBusy ? '…' : '↻ Refresh'}</button>
+          </div>
+          {recentBattles.length === 0
+            ? <Empty>No battles recorded yet.</Empty>
+            : <div style={{ ...CARD_STYLE, padding: 0, overflowX: 'auto', marginBottom: 20 }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                <thead><tr style={{ borderBottom: '1px solid #4a3a6a' }}>
+                  {['Hex', 'Attacker', 'Defender', 'Advantaged Def', 'Status', 'Rounds', 'Atk Lost', 'Def Lost', 'When'].map(h => <th key={h} style={TH}>{h}</th>)}
+                </tr></thead>
+                <tbody>
+                  {recentBattles.map(b => (
+                    <tr
+                      key={b.id} style={{ ...ROW, cursor: 'pointer', background: selectedBattleId === b.id ? 'rgba(154,122,212,0.15)' : 'transparent' }}
+                      onClick={() => setSelectedBattleId(b.id)}
+                    >
+                      <td style={{ ...TD, fontFamily: 'monospace', color: '#8a7a9a' }}>{hex(b.h3_index)}</td>
+                      <td style={TD}>{dot(b.attacker_color)} <span style={{ marginLeft: 6 }}>{b.attacker_name}</span></td>
+                      <td style={TD}>{dot(b.defender_color)} <span style={{ marginLeft: 6 }}>{b.defender_name}</span></td>
+                      <td style={{ ...TD, color: '#d4a843' }} title="Of the defender's current frontline, this many roll with advantage (2 dice, take the higher). Fort +3, entrenchment +1/friendly neighbor (max +4), strategic hex +2, capped at 5 total - and can't exceed how many defenders are actually still on the frontline.">
+                        {b.defender_advantage_troops > 0 ? `${Math.min(Number(b.defender_advantage_troops), Number(b.defender_frontline) || 0)} / ${b.defender_frontline}` : 'none'}
+                      </td>
+                      <td style={{ ...TD, color: b.status === 'active' ? '#ff8a6a' : b.status === 'attacker_won' ? '#ff8a6a' : '#8a9aff' }}>{b.status}</td>
+                      <td style={TD}>{b.round_number}</td>
+                      <td style={{ ...TD, color: '#ff8a6a' }}>{Number(b.attacker_losses)}</td>
+                      <td style={{ ...TD, color: '#8a9aff' }}>{Number(b.defender_losses)}</td>
+                      <td style={{ ...TD, color: '#8a7a9a', fontSize: 12 }}>{ago(b.ended_at || b.created_at)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>}
+
+          {selectedBattleId != null && (
+            <>
+              <SectionTitle>Clash-by-clash dice log · Battle #{selectedBattleId} {roundsBusy && '(loading…)'}</SectionTitle>
+              {battleRounds.length === 0 && !roundsBusy
+                ? <Empty>No rounds logged for this battle.</Empty>
+                : <div style={{ ...CARD_STYLE, padding: 0, overflowX: 'auto' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                    <thead><tr style={{ borderBottom: '1px solid #4a3a6a' }}>
+                      {['Round', 'Atk Frontline', 'Atk Dice', 'Def Frontline', 'Def Dice', 'Atk Lost', 'Def Lost', 'Atk Left', 'Def Left'].map(h => <th key={h} style={TH}>{h}</th>)}
+                    </tr></thead>
+                    <tbody>
+                      {battleRounds.map(r => (
+                        <tr key={r.round_number} style={ROW}>
+                          <td style={TD}>#{r.round_number}</td>
+                          <td style={{ ...TD, color: '#8a7a9a' }}>{r.atk_frontline_before}</td>
+                          <td style={{ ...TD, fontFamily: 'monospace', color: '#ff8a6a' }}>{r.atk_dice.join(', ')}</td>
+                          <td style={{ ...TD, color: '#8a7a9a' }}>{r.def_frontline_before}</td>
+                          <td style={{ ...TD, fontFamily: 'monospace', color: '#8a9aff' }}>{r.def_dice.join(', ')}</td>
+                          <td style={{ ...TD, color: '#ff8a6a' }}>-{r.atk_losses}</td>
+                          <td style={{ ...TD, color: '#8a9aff' }}>-{r.def_losses}</td>
+                          <td style={{ ...TD, color: '#ff8a6a' }}>{Math.round(Number(r.atk_troops_after))}</td>
+                          <td style={{ ...TD, color: '#8a9aff' }}>{Math.round(Number(r.def_troops_after))}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>}
+            </>
+          )}
         </>
       )}
 

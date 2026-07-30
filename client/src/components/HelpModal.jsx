@@ -7,7 +7,7 @@ const S = {
   box: {
     background: '#080502', border: '1px solid rgba(160,110,30,0.5)', borderRadius: 10,
     padding: '28px 32px', width: '100%', maxWidth: 480,
-    maxHeight: '90vh', overflowY: 'auto',
+    maxHeight: '100%', overflowY: 'auto',
     boxShadow: '0 0 60px rgba(160,100,20,0.3)',
     fontFamily: 'Georgia, serif', color: '#c9b99a',
   },
@@ -56,12 +56,14 @@ function Row({ icon, label, desc }) {
 
 import { useState, useEffect } from 'react'
 import { api } from '../api/client'
+import { useViewportOverlayFix } from '../hooks/useViewportOverlayFix'
 import {
   GoldIcon, PickaxeIcon, KeepIcon, ShieldIcon, SwordsIcon, FlameIcon, WaveIcon,
   BannerIcon, TentIcon, CrownIcon, AllianceIcon, LeafIcon, BellIcon,
 } from './Icons'
 
 export default function HelpModal({ onClose }) {
+  const overlayRef = useViewportOverlayFix()
   const [tickLabel, setTickLabel] = useState('10 minutes')
 
   useEffect(() => {
@@ -73,7 +75,7 @@ export default function HelpModal({ onClose }) {
   }, [])
 
   return (
-    <div style={S.overlay}>
+    <div ref={overlayRef} style={S.overlay}>
       <div style={{ ...S.box, position: 'relative' }}>
         <button
           onClick={onClose}
@@ -115,8 +117,8 @@ export default function HelpModal({ onClose }) {
             desc="The backbone of your economy. Build these on as many hexes as you can." />
           <Row icon={<KeepIcon size={15} />} label="Barracks - 10× faster training"
             desc="You can train anywhere you hold, but without a barracks recruits trickle in painfully slowly. A barracks speeds training tenfold on that hex." />
-          <Row icon={<ShieldIcon size={15} />} label="Fort - +40% defender strength"
-            desc="Makes your troops significantly harder to defeat when defending that hex." />
+          <Row icon={<ShieldIcon size={15} />} label="Fort - 3 defenders roll with advantage"
+            desc="When this hex is attacked, up to 3 of your defenders roll two dice and keep the higher each clash instead of one. Stacks with entrenchment and strategic hexes." />
         </div>
 
         <div style={S.section}>

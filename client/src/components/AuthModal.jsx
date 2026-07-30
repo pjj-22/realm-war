@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { HexColorPicker } from 'react-colorful'
 import { api } from '../api/client'
+import { useViewportOverlayFix } from '../hooks/useViewportOverlayFix'
 
 const PRESET_COLORS = ['#e05050', '#e09030', '#d0c030', '#50c050', '#3090e0', '#8050d0', '#d050a0']
 
@@ -8,11 +9,13 @@ const styles = {
   overlay: {
     position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.8)',
     display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100,
+    padding: 16,
   },
   box: {
     background: '#0e0b1e', border: '1px solid #4a3a7a', borderRadius: 8,
     padding: '32px 40px', minWidth: 320,
     boxShadow: '0 0 60px rgba(80,40,160,0.4)',
+    maxHeight: '100%', overflowY: 'auto',
   },
   title: {
     color: '#c9b99a', fontSize: 22, letterSpacing: 4,
@@ -42,6 +45,7 @@ const styles = {
 }
 
 export default function AuthModal({ onAuth, onDismiss, initialMode = 'login' }) {
+  const overlayRef = useViewportOverlayFix()
   const [mode, setMode] = useState(initialMode)
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
@@ -68,7 +72,7 @@ export default function AuthModal({ onAuth, onDismiss, initialMode = 'login' }) 
   }
 
   return (
-    <div style={styles.overlay}>
+    <div ref={overlayRef} style={styles.overlay}>
       <div style={styles.box}>
         <div style={styles.title}>Realm War</div>
         <form onSubmit={submit}>

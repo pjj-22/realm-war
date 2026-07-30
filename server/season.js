@@ -40,7 +40,7 @@ export function getCurrentSeason() {
 export async function computeStandings(limit = 10) {
   const r = await pool.query(`
     WITH hx AS (SELECT owner_id, COUNT(*)::int AS n FROM hexes GROUP BY owner_id),
-         tr AS (SELECT owner_id, SUM(quantity)::int AS n FROM troops GROUP BY owner_id),
+         tr AS (SELECT owner_id, SUM(quantity)::float8 AS n FROM troops GROUP BY owner_id),
          cr AS (SELECT player_id, COUNT(*)::int AS n FROM country_crowns GROUP BY player_id),
          ch AS (SELECT winner_id, COUNT(*)::int AS n FROM seasons WHERE status='ended' AND winner_id IS NOT NULL GROUP BY winner_id)
     SELECT p.id, p.username, p.color, a.tag AS alliance_tag,
@@ -79,7 +79,6 @@ export async function processSeason() {
     )
     console.log(`[season] Season ${season.number} ENDED - Champion: ${winner?.username || 'nobody'}`)
 
-    // Announce
     await pool.query(
       'INSERT INTO world_events (type, message, player_id) VALUES ($1,$2,$3)',
       ['season', winner
@@ -93,7 +92,6 @@ export async function processSeason() {
         [standings[i].id, 'season', `Season ${season.number} final standings: #${i + 1} with ${standings[i].hex_count} hexes`]
       )
     }
-    // Push to everyone who opted in
     const subs = await pool.query('SELECT DISTINCT player_id FROM push_subscriptions')
     for (const { player_id } of subs.rows) {
       sendPush(player_id, `Season ${season.number} is over!`,

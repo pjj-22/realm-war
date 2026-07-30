@@ -19,7 +19,6 @@ function Sparkline({ data, width, height, color = '#8060c0' }) {
   const points = data.map(d => `${px(new Date(d.recorded_at).getTime()).toFixed(1)},${py(d.hex_count).toFixed(1)}`)
   const polyline = points.join(' ')
 
-  // Area fill path
   const areaPath = `M${points[0]} L${points.join(' L')} L${px(times[times.length - 1]).toFixed(1)},${height} L${px(times[0]).toFixed(1)},${height} Z`
 
   return (
@@ -32,7 +31,6 @@ function Sparkline({ data, width, height, color = '#8060c0' }) {
       </defs>
       <path d={areaPath} fill="url(#chartFill)" />
       <polyline points={polyline} fill="none" stroke={color} strokeWidth="1.5" strokeLinejoin="round" strokeLinecap="round" />
-      {/* Current value dot */}
       <circle
         cx={px(times[times.length - 1]).toFixed(1)}
         cy={py(counts[counts.length - 1]).toFixed(1)}
@@ -82,15 +80,14 @@ export default function HistoryChart({ player }) {
 
   return (
     <div style={{ fontFamily: 'Georgia, serif' }}>
-      {/* Stat chips */}
       <div style={{ display: 'flex', gap: 16, marginBottom: 10 }}>
         <div>
           <div style={{ fontSize: 11, color: '#6a5878', letterSpacing: 2, textTransform: 'uppercase', marginBottom: 2 }}>Current</div>
-          <div style={{ fontSize: 18, color: '#c9b99a' }}>{current}<span style={{ fontSize: 12, color: '#6a5878', marginLeft: 4 }}>▲</span></div>
+          <div style={{ fontSize: 18, color: '#c9b99a' }}>{current}<span style={{ fontSize: 12, color: '#6a5878', marginLeft: 4 }}>⬢</span></div>
         </div>
         <div>
           <div style={{ fontSize: 11, color: '#6a5878', letterSpacing: 2, textTransform: 'uppercase', marginBottom: 2 }}>Peak</div>
-          <div style={{ fontSize: 18, color: current === peak ? '#c9a020' : '#c9b99a' }}>{peak}<span style={{ fontSize: 12, color: '#6a5878', marginLeft: 4 }}>▲</span></div>
+          <div style={{ fontSize: 18, color: current === peak ? '#c9a020' : '#c9b99a' }}>{peak}<span style={{ fontSize: 12, color: '#6a5878', marginLeft: 4 }}>⬢</span></div>
         </div>
         <div style={{ marginLeft: 'auto', textAlign: 'right' }}>
           <div style={{ fontSize: 11, color: '#6a5878', letterSpacing: 2, textTransform: 'uppercase', marginBottom: 2 }}>Span</div>
@@ -98,7 +95,6 @@ export default function HistoryChart({ player }) {
         </div>
       </div>
 
-      {/* Chart */}
       <div style={{
         background: 'rgba(255,255,255,0.02)',
         border: '1px solid rgba(255,255,255,0.06)',

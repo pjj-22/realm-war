@@ -49,8 +49,8 @@ const DEFS = [
   { name: 'Gibraltar',     primary: false, chokepoint: true, lat:  36.140, lng:  -5.354 },
 ]
 
-export const STRATEGIC_BONUS_GOLD    = 5   // +5g per tick (all strategic hexes)
-export const STRATEGIC_DEFENSE_BONUS = 0.2 // +20% defender strength
+export const STRATEGIC_BONUS_GOLD      = 5 // +5g per tick (all strategic hexes)
+export const STRATEGIC_ADVANTAGE_TROOPS = 2 // +2 advantaged defenders
 
 // ─── City zones - a visible ring of influence around each city ────────────────
 // Owning hexes inside a city's zone pays a flat per-hex bonus. This replaces the

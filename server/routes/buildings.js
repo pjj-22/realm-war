@@ -7,7 +7,6 @@ const router = Router()
 const VALID_TYPES = Object.keys(BUILDING_COSTS)
 const MAX_BUILDINGS_PER_HEX = 1
 
-// Get all buildings on a hex + slot info + upgrade status
 router.get('/:h3Index', async (req, res) => {
   try {
     const { h3Index } = req.params
@@ -37,7 +36,6 @@ router.get('/:h3Index', async (req, res) => {
   }
 })
 
-// Build on a hex
 router.post('/', requireAuth, async (req, res) => {
   const { h3Index, type } = req.body
   if (!h3Index || !type) return res.status(400).json({ error: 'h3Index and type required' })
@@ -51,7 +49,6 @@ router.post('/', requireAuth, async (req, res) => {
     if (!hexRow.rows[0] || hexRow.rows[0].owner_id !== req.player.id) {
       return res.status(403).json({ error: 'You do not own this hex' })
     }
-    // One building per hex
     const existing = await pool.query('SELECT type FROM buildings WHERE h3_index=$1', [h3Index])
     if (existing.rows.length >= MAX_BUILDINGS_PER_HEX) {
       return res.status(400).json({ error: 'This hex already has a building' })
@@ -78,7 +75,6 @@ router.post('/', requireAuth, async (req, res) => {
   }
 })
 
-// Demolish a specific building by id
 router.delete('/:id', requireAuth, async (req, res) => {
   try {
     const building = await pool.query('SELECT b.*, h.owner_id FROM buildings b JOIN hexes h ON h.h3_index=b.h3_index WHERE b.id=$1', [req.params.id])
@@ -93,7 +89,6 @@ router.delete('/:id', requireAuth, async (req, res) => {
   }
 })
 
-// Start hex upgrade
 router.post('/:h3Index/upgrade', requireAuth, async (req, res) => {
   const { h3Index } = req.params
   try {

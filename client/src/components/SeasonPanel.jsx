@@ -24,7 +24,6 @@ function useCountdown(endsAt) {
   return left
 }
 
-// Top-bar chip: season number + live countdown
 export function SeasonChip({ season, onClick, isMobile }) {
   const left = useCountdown(season.ends_at)
   const urgent = left < 60 * 1000
@@ -72,7 +71,7 @@ function StandingsTable({ rows, highlight }) {
               </span>
             )}
           </span>
-          <span style={{ fontSize: 13, color: '#9a8aaa' }}>{r.hex_count}▲</span>
+          <span style={{ fontSize: 13, color: '#9a8aaa' }}>{r.hex_count}⬢</span>
           <span style={{ fontSize: 13, color: '#8a7aaa' }}>{r.total_troops}<SwordsIcon size={10} color="#8a7aaa" /></span>
           {r.crowns > 0 && <span style={{ fontSize: 13, color: '#c9a040' }}>{r.crowns}<CrownIcon size={11} /></span>}
         </div>
@@ -104,7 +103,6 @@ export default function SeasonPanel({ season, history, player, onClose }) {
     api.getMonuments().then(setMonuments).catch(() => {})
   }, [])
   const monumentBySeason = new Map(monuments.map(m => [m.season_number, m]))
-  // Close the dashboard and fly the map to a landmark
   const flyTo = (lat, lng) => {
     window.dispatchEvent(new CustomEvent('rw:flyto', { detail: { lat, lng, zoom: 8.5 } }))
     onClose()
@@ -190,7 +188,7 @@ export default function SeasonPanel({ season, history, player, onClose }) {
                   <span style={{ color: r.place === 1 ? '#f0d080' : r.place <= 3 ? '#c0a0f0' : '#c4b498' }}>
                     {r.place <= 3 ? <MedalIcon rank={r.place} size={14} /> : `#${r.place}`}
                   </span>{' '}
-                  <span style={{ color: '#7a6890', fontSize: 11 }}>{r.hexes}▲</span>
+                  <span style={{ color: '#7a6890', fontSize: 11 }}>{r.hexes}⬢</span>
                 </span>
               ))}
             </div>

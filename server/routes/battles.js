@@ -1,9 +1,13 @@
 import { Router } from 'express'
 import { pool } from '../db.js'
+import { nextBattleRoundAt } from '../tick.js'
 
 const router = Router()
 
-// Get active battle at a hex (public - anyone can watch)
+// Get the battle at a hex - active if one's in progress, otherwise the most
+// recently concluded one (briefly) so the client can actually show the
+// deciding clash's result instead of the panel just vanishing the instant
+// status flips away from 'active'.
 router.get('/hex/:h3Index', async (req, res) => {
   try {
     const result = await pool.query(`
@@ -13,7 +17,10 @@ router.get('/hex/:h3Index', async (req, res) => {
       FROM battles b
       JOIN players pa ON pa.id = b.attacker_id
       JOIN players pd ON pd.id = b.defender_id
-      WHERE b.h3_index = $1 AND b.status = 'active'
+      WHERE b.h3_index = $1
+        AND (b.status = 'active' OR b.ended_at > NOW() - INTERVAL '20 seconds')
+      ORDER BY (b.status = 'active') DESC, b.id DESC
+      LIMIT 1
     `, [req.params.h3Index])
 
     if (!result.rows[0]) return res.json({ battle: null })
@@ -26,14 +33,17 @@ router.get('/hex/:h3Index', async (req, res) => {
       ORDER BY bp.joined_at ASC
     `, [result.rows[0].id])
 
-    res.json({ battle: result.rows[0], participants: parts.rows })
+    res.json({
+      battle: result.rows[0],
+      participants: parts.rows,
+      next_round_at: new Date(nextBattleRoundAt).toISOString(),
+    })
   } catch (err) {
     console.error('[battles] GET /hex/:h3Index failed:', err.message)
     res.status(500).json({ error: 'Server error' })
   }
 })
 
-// Get all active battles (for map overlay)
 router.get('/active', async (req, res) => {
   try {
     const result = await pool.query(`

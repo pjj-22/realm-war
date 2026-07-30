@@ -3,15 +3,14 @@ import bcrypt from 'bcryptjs'
 import { pool } from '../db.js'
 import { signToken, requireAuth } from '../auth.js'
 import { rateLimit } from '../ratelimit.js'
-import { DEV_MODE } from '../config.js'
+import { IS_DEV } from '../config.js'
 import { STARTING_GOLD, STARTING_MANA, TICK_INTERVAL_MS, BUILDING_TIME_SECONDS, GOLD_CAP_BASE } from '../config.js'
 import { nextTickAt } from '../tick.js'
 import { getCountry } from '../countries.js'
 
 const router = Router()
 
-// Register
-router.post('/register', rateLimit({ windowMs: 60 * 60 * 1000, max: DEV_MODE ? 1000 : 10, message: 'Too many accounts created - try later' }), async (req, res) => {
+router.post('/register', rateLimit({ windowMs: 60 * 60 * 1000, max: IS_DEV ? 1000 : 10, message: 'Too many accounts created - try later' }), async (req, res) => {
   const { username, password, color } = req.body
   if (!username || !password) return res.status(400).json({ error: 'Username and password required' })
   if (username.length < 3 || username.length > 32) return res.status(400).json({ error: 'Username must be 3-32 characters' })
@@ -33,8 +32,7 @@ router.post('/register', rateLimit({ windowMs: 60 * 60 * 1000, max: DEV_MODE ? 1
   }
 })
 
-// Login
-router.post('/login', rateLimit({ windowMs: 10 * 60 * 1000, max: DEV_MODE ? 1000 : 20, message: 'Too many login attempts - try later' }), async (req, res) => {
+router.post('/login', rateLimit({ windowMs: 10 * 60 * 1000, max: IS_DEV ? 1000 : 20, message: 'Too many login attempts - try later' }), async (req, res) => {
   const { username, password } = req.body
   if (!username || !password) return res.status(400).json({ error: 'Username and password required' })
 
@@ -51,7 +49,6 @@ router.post('/login', rateLimit({ windowMs: 10 * 60 * 1000, max: DEV_MODE ? 1000
 
     const { password_hash, last_login_date, login_streak, ...playerData } = player
 
-    // Daily login bonus
     let loginBonus = null
     const today = new Date().toISOString().split('T')[0]
     const lastDate = last_login_date ? last_login_date.toISOString().split('T')[0] : null
@@ -74,14 +71,13 @@ router.post('/login', rateLimit({ windowMs: 10 * 60 * 1000, max: DEV_MODE ? 1000
   }
 })
 
-// Leaderboard (public)
 router.get('/leaderboard', async (req, res) => {
   try {
     const result = await pool.query(`
       WITH hx AS (SELECT owner_id, COUNT(*)::int AS n FROM hexes GROUP BY owner_id),
-           tr AS (SELECT owner_id, SUM(quantity)::int AS n FROM troops GROUP BY owner_id),
+           tr AS (SELECT owner_id, SUM(quantity)::float8 AS n FROM troops GROUP BY owner_id),
            ch AS (SELECT winner_id, COUNT(*)::int AS n FROM seasons WHERE status='ended' AND winner_id IS NOT NULL GROUP BY winner_id)
-      SELECT p.username, p.color, p.capital_hex, a.tag AS alliance_tag,
+      SELECT p.username, p.color, p.capital_hex, p.flag_pixels, a.tag AS alliance_tag,
         COALESCE(hx.n, 0) AS hex_count,
         COALESCE(tr.n, 0) AS total_troops,
         COALESCE(ch.n, 0) AS champion_titles
@@ -101,7 +97,6 @@ router.get('/leaderboard', async (req, res) => {
   }
 })
 
-// Player stats (authenticated)
 router.get('/stats', requireAuth, async (req, res) => {
   try {
     const result = await pool.query(`
@@ -122,7 +117,6 @@ router.get('/stats', requireAuth, async (req, res) => {
     row.next_tick_at = new Date(nextTickAt).toISOString()
     row.tick_interval_ms = TICK_INTERVAL_MS
 
-    // Income breakdown by country - group owned hexes + their mines by country
     const hexRows = await pool.query(`
       SELECT h.h3_index,
         COALESCE(SUM(CASE WHEN b.type='mine' AND EXTRACT(EPOCH FROM (NOW() - b.created_at)) >= $2 THEN 1 ELSE 0 END), 0)::integer AS mines
@@ -154,11 +148,10 @@ router.get('/stats', requireAuth, async (req, res) => {
   }
 })
 
-// Get current player
 router.get('/me', requireAuth, async (req, res) => {
   try {
     const result = await pool.query(
-      'SELECT id, username, color, gold, capital_hex FROM players WHERE id = $1',
+      'SELECT id, username, color, gold, capital_hex, flag_pixels, motto FROM players WHERE id = $1',
       [req.player.id]
     )
     res.json(result.rows[0])
@@ -168,7 +161,30 @@ router.get('/me', requireAuth, async (req, res) => {
   }
 })
 
-// Hex history - returns up to 120 datapoints over the last 30 days
+// Save capital flag - one 16x16 pixel grid, one palette-index char per pixel,
+// plus an optional short motto. Set once at onboarding; no edit route by
+// design (see client FlagOnboardingModal).
+const FLAG_PATTERN = /^[0-9a-n]{256}$/
+const MOTTO_MAX = 50
+router.post('/flag', requireAuth, async (req, res) => {
+  const { flagPixels, motto } = req.body
+  if (typeof flagPixels !== 'string' || !FLAG_PATTERN.test(flagPixels)) {
+    return res.status(400).json({ error: 'Invalid flag data' })
+  }
+  if (motto != null && (typeof motto !== 'string' || motto.length > MOTTO_MAX)) {
+    return res.status(400).json({ error: `Motto must be ${MOTTO_MAX} characters or fewer` })
+  }
+  // Strip control characters (still allow ordinary spaces/punctuation)
+  const cleanMotto = motto ? motto.replace(/[\x00-\x1f\x7f]/g, '').trim().slice(0, MOTTO_MAX) : null
+  try {
+    await pool.query('UPDATE players SET flag_pixels = $1, motto = $2 WHERE id = $3', [flagPixels, cleanMotto || null, req.player.id])
+    res.json({ ok: true })
+  } catch (err) {
+    console.error('[players] POST /flag failed:', err.message)
+    res.status(500).json({ error: 'Server error' })
+  }
+})
+
 router.get('/history', requireAuth, async (req, res) => {
   try {
     const rows = await pool.query(

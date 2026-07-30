@@ -5,28 +5,27 @@ import { requireAuth } from '../auth.js'
 import { getIO } from '../socket.js'
 import { isOcean } from '../terrain.js'
 import { getCountry } from '../countries.js'
-import { STARTING_TROOPS, PROJECTION_GARRISON, PROJECTION_EMPIRE } from '../config.js'
+import { STARTING_TROOPS, PROJECTION_GARRISON, PROJECTION_EMPIRE, MIN_TROOPS_TO_CLAIM } from '../config.js'
 import { STRATEGIC_HEXES, STRATEGIC_BONUS_GOLD } from '../strategic.js'
 import { seedCampsAround } from '../wild.js'
 import { foundCapital } from '../founding.js'
 
 const router = Router()
 
-// Get all claimed hexes
 router.get('/', async (req, res) => {
   try {
     const result = await pool.query(`
-      WITH power AS (SELECT owner_id, SUM(quantity)::int AS total FROM troops GROUP BY owner_id)
-      SELECT h.h3_index, h.owner_id, h.upgrade_level, h.rally_hex, h.claimed_at, p.color, p.username, p.capital_hex,
-        COALESCE(SUM(DISTINCT t.quantity), 0)::integer AS troop_count,
-        COALESCE(MAX(power.total), 0)::integer AS owner_power,
+      WITH power AS (SELECT owner_id, SUM(quantity)::float8 AS total FROM troops GROUP BY owner_id)
+      SELECT h.h3_index, h.owner_id, h.upgrade_level, h.rally_hex, h.claimed_at, p.color, p.username, p.capital_hex, p.flag_pixels, p.motto,
+        COALESCE(SUM(DISTINCT t.quantity), 0)::float8 AS troop_count,
+        COALESCE(MAX(power.total), 0)::float8 AS owner_power,
         COALESCE(array_agg(DISTINCT b.type) FILTER (WHERE b.type IS NOT NULL), '{}') AS building_types
       FROM hexes h
       JOIN players p ON p.id = h.owner_id
       LEFT JOIN power ON power.owner_id = h.owner_id
       LEFT JOIN troops t ON t.h3_index = h.h3_index
       LEFT JOIN buildings b ON b.h3_index = h.h3_index
-      GROUP BY h.h3_index, h.owner_id, h.upgrade_level, h.rally_hex, p.color, p.username, p.capital_hex
+      GROUP BY h.h3_index, h.owner_id, h.upgrade_level, h.rally_hex, p.color, p.username, p.capital_hex, p.flag_pixels, p.motto
     `)
     const rows = result.rows.map(h => {
       const info = getCountry(h.h3_index)
@@ -51,7 +50,7 @@ router.get('/', async (req, res) => {
   }
 })
 
-// Strategic hexes - all locations with current ownership
+
 router.get('/strategic', async (req, res) => {
   try {
     const indexes = Array.from(STRATEGIC_HEXES.keys())
@@ -115,7 +114,6 @@ router.post('/terrain', (req, res) => {
   res.json(result)
 })
 
-// Claim a hex
 router.post('/claim', requireAuth, async (req, res) => {
   const { h3Index } = req.body
   if (!h3Index) return res.status(400).json({ error: 'h3Index required' })
@@ -129,34 +127,64 @@ router.post('/claim', requireAuth, async (req, res) => {
     if (existing.rows[0]?.owner_id) return res.status(409).json({ error: 'Hex already claimed' })
 
     const player = await pool.query('SELECT id, capital_hex FROM players WHERE id = $1', [req.player.id])
-    const isFirstHex = !player.rows[0].capital_hex
+    const hasCapital = !!player.rows[0].capital_hex
 
-    if (!isFirstHex) {
+    // capital_hex goes NULL both for a brand-new player AND for someone whose
+    // capital was just destroyed - those are very different situations. A
+    // destroyed-capital player who still owns other territory is NOT starting
+    // over, so they must march troops here like any other claim and don't get
+    // a second round of starter gifts. Only a player with truly nothing left
+    // (no capital AND no other hexes) gets the free, march-free bootstrap.
+    const hexCountRes = await pool.query('SELECT COUNT(*)::int AS cnt FROM hexes WHERE owner_id=$1', [req.player.id])
+    const ownsAnyHexes = hexCountRes.rows[0].cnt > 0
+    const isBootstrapping = !hasCapital && !ownsAnyHexes
+    const needsNewCapital = !hasCapital && ownsAnyHexes
+
+    if (!isBootstrapping) {
+      // Claiming an empty hex needs a real commitment, not one scout troop -
+      // this is the actual lever against "spread everywhere for free," not
+      // just a slower decay clock afterward.
       const troops = await pool.query(
-        'SELECT 1 FROM troops WHERE owner_id=$1 AND h3_index=$2 AND quantity > 0 LIMIT 1',
+        'SELECT COALESCE(SUM(quantity), 0)::int AS qty FROM troops WHERE owner_id=$1 AND h3_index=$2',
         [req.player.id, h3Index]
       )
-      if (troops.rows.length === 0) {
-        return res.status(400).json({ error: 'March troops here first to claim this hex' })
+      if (troops.rows[0].qty < MIN_TROOPS_TO_CLAIM) {
+        return res.status(400).json({ error: `March at least ${MIN_TROOPS_TO_CLAIM} troops here first to claim this hex` })
       }
     }
 
-    await pool.query(
-      'INSERT INTO hexes (h3_index, owner_id, claimed_at) VALUES ($1, $2, NOW()) ON CONFLICT (h3_index) DO UPDATE SET owner_id = $2, claimed_at = NOW()',
+    // Atomic claim: the WHERE guard on the conflict action means two concurrent
+    // claims on the same hex can't both win. Only the request that actually flips
+    // an unowned row gets a row back; the loser gets 409 instead of silently
+    // stealing the hex or double-founding a capital on it (see founding.js for
+    // the same pattern one level down).
+    const claimed = await pool.query(
+      `INSERT INTO hexes (h3_index, owner_id, claimed_at) VALUES ($1, $2, NOW())
+       ON CONFLICT (h3_index) DO UPDATE SET owner_id = $2, claimed_at = NOW()
+       WHERE hexes.owner_id IS NULL
+       RETURNING h3_index`,
       [h3Index, req.player.id]
     )
+    if (claimed.rows.length === 0) {
+      return res.status(409).json({ error: 'Hex already claimed' })
+    }
 
-    if (isFirstHex) {
+    if (isBootstrapping) {
       // Atomic founding: only the first of any concurrent (double-click) claims wins
       // and hands out the one-time starter gifts. See server/founding.js.
       await foundCapital(pool, req.player.id, h3Index, {
         startingTroops: STARTING_TROOPS,
         onWin: seedCampsAround,
       })
+    } else if (needsNewCapital) {
+      // Re-designating a capital after losing one, but with existing territory
+      // intact - no starter gifts (they're not starting over), and the WHERE
+      // guard is still load-bearing against a concurrent double-claim.
+      await pool.query('UPDATE players SET capital_hex=$1 WHERE id=$2 AND capital_hex IS NULL', [h3Index, req.player.id])
     }
 
     getIO()?.emit('hexes:update')
-    res.json({ success: true, isCapital: isFirstHex })
+    res.json({ success: true, isCapital: isBootstrapping || needsNewCapital })
   } catch (err) {
     console.error('[hexes] POST /claim failed:', err.message)
     res.status(500).json({ error: 'Server error' })

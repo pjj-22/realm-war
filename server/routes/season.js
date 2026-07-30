@@ -4,7 +4,6 @@ import { getCurrentSeason, computeStandings } from '../season.js'
 
 const router = Router()
 
-// Current season + live standings (public)
 router.get('/current', async (req, res) => {
   try {
     let season = getCurrentSeason()
@@ -27,7 +26,6 @@ router.get('/current', async (req, res) => {
   }
 })
 
-// Hall of fame: past seasons with champion + final standings snapshot (public)
 router.get('/history', async (req, res) => {
   try {
     const r = await pool.query(`

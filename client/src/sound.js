@@ -95,7 +95,6 @@ export async function playSound(name) {
   } catch { /* audio unavailable (no user gesture yet) */ }
 }
 
-// Map dispatch types to sounds
 const TYPE_SOUND = {
   incoming_attack: 'horn',
   under_attack: 'horn',

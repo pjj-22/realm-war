@@ -5,6 +5,17 @@ import { MineArt, BarracksArt, FortArt, BuildingIcon } from './BuildingArt'
 import { useIsMobile } from '../hooks/useIsMobile'
 import { useSocket } from '../hooks/useSocket'
 import { toast } from './Toast'
+import { resolveFlag, drawFlagToCanvas } from '../flags'
+import { shortHex } from '../text'
+import Tooltip from './Tooltip'
+
+function CapitalFlag({ hex, size = 40 }) {
+  const ref = useRef(null)
+  useEffect(() => {
+    if (ref.current) drawFlagToCanvas(resolveFlag({ flag_pixels: hex.flag_pixels, username: hex.username }), ref.current, size / 16)
+  }, [hex.flag_pixels, hex.username, size])
+  return <canvas ref={ref} style={{ width: size, height: size, imageRendering: 'pixelated', borderRadius: 3, border: '1px solid rgba(160,110,30,0.35)', flexShrink: 0 }} />
+}
 
 const PULSE_CSS = `
 @keyframes goldPulse {
@@ -33,8 +44,8 @@ const BUILDING_DEFS = [
   },
   {
     type: 'fort', label: 'Fort', color: '#5a9840', goldCost: 10,
-    effect: '+40% defender strength',
-    desc: 'A fortified position that strengthens your garrison. Each fort adds 40% to the defensive strength of troops holding this hex.',
+    effect: '+3 defenders roll with advantage',
+    desc: "A fortified position: when this hex is attacked, up to 3 of your defenders roll two dice and keep the higher (instead of one) each clash. Stacks with entrenchment (compact borders) and strategic hexes, up to 5 advantaged defenders total.",
   },
 ]
 
@@ -206,7 +217,7 @@ function UpgradeBar({ completes_at, onExpire }) {
 
 // ── main component ────────────────────────────────────────────────────────────
 
-export default function BottomDrawer({ hex, player, stats, onClaim, onLoginRequired, onBuild, onPlayerUpdate, onMarchStart, onSetRallyMode, onClose }) {
+export default function BottomDrawer({ hex, player, stats, onClaim, onLoginRequired, onBuild, onPlayerUpdate, onMarchStart, onSetRallyMode, onClose, onStatsRefresh, getFriendlyNeighborCount, ownedHexCount }) {
   const isMobile = useIsMobile()
   const isOwn    = !!(player && hex?.username === player.username)
   const isClaimed = !!hex?.owner
@@ -219,6 +230,26 @@ export default function BottomDrawer({ hex, player, stats, onClaim, onLoginRequi
   const [trainQty, setTrainQty] = useState(10)
   const [dispatchQty, setDispatchQty] = useState({ troop: 0 })
   const [busy, setBusy] = useState(false)
+  const [troopGoldCost, setTroopGoldCost] = useState(1)
+  const [buildingCosts, setBuildingCosts] = useState({})
+  // Formula constants for the defense breakdown and decay/claim rules below -
+  // fetched once here (same request that already grabs troop/building costs)
+  // rather than a per-hex-click API call, since the only per-hex inputs
+  // (forts, friendly neighbors, strategic, hex count) are already available
+  // from data loaded elsewhere.
+  const [gameConfig, setGameConfig] = useState({
+    fort_advantage_troops: 3, entrench_advantage_per_neighbor: 1,
+    entrench_max_neighbors: 4, strategic_advantage_troops: 2, max_advantaged_defenders: 5,
+    min_troops_to_claim: 5, decay_hex_threshold: 30, decay_scale_hexes_per_step: 10,
+  })
+
+  useEffect(() => {
+    api.getConfig().then(cfg => {
+      if (cfg.troop_gold_cost) setTroopGoldCost(cfg.troop_gold_cost)
+      if (cfg.building_costs) setBuildingCosts(cfg.building_costs)
+      setGameConfig(prev => ({ ...prev, ...cfg }))
+    }).catch(() => {})
+  }, [])
 
   useEffect(() => { setTab('territory') }, [hex?.h3])
 
@@ -244,7 +275,6 @@ export default function BottomDrawer({ hex, player, stats, onClaim, onLoginRequi
   }, [hex?.h3, loadBuildings, loadMilitary])
   useSocket({ 'armies:update': loadMilitary, tick: loadMilitary })
 
-  // Auto-refresh when upgrade timer expires
   useEffect(() => {
     if (!buildingData?.upgrading) return
     const ms = new Date(buildingData.upgrading.completes_at) - Date.now()
@@ -258,18 +288,25 @@ export default function BottomDrawer({ hex, player, stats, onClaim, onLoginRequi
   const [tickSecs, setTickSecs] = useState(null)
   useEffect(() => {
     if (!stats?.next_tick_at || !stats?.tick_interval_ms) return
+    let retry = null
     function update() {
       const now = Date.now()
       const end = new Date(stats.next_tick_at).getTime()
       const interval = stats.tick_interval_ms
       const elapsed = interval - Math.max(0, end - now)
       setTickPct(Math.min(100, (elapsed / interval) * 100))
-      setTickSecs(Math.max(0, Math.ceil((end - now) / 1000)))
+      const secsLeft = Math.max(0, Math.ceil((end - now) / 1000))
+      setTickSecs(secsLeft)
+      // Same clock-skew/latency guard as the map's harvest countdown - don't
+      // just sit at 0, keep asking the server until it actually has a new tick.
+      if (secsLeft === 0 && !retry && onStatsRefresh) {
+        retry = setInterval(onStatsRefresh, 2000)
+      }
     }
     update()
     const id = setInterval(update, 500)
-    return () => clearInterval(id)
-  }, [stats?.next_tick_at, stats?.tick_interval_ms])
+    return () => { clearInterval(id); clearInterval(retry) }
+  }, [stats?.next_tick_at, stats?.tick_interval_ms, onStatsRefresh])
 
   // ── derived data ─────────────────────────────────────────────
 
@@ -368,9 +405,41 @@ export default function BottomDrawer({ hex, player, stats, onClaim, onLoginRequi
     const isHiddenGarrison = !isOwn && enemyTroopCount === -1
     const totalTroops = isOwn ? troops.reduce((s, [, n]) => s + n, 0) : Math.max(0, enemyTroopCount)
     const totalIncome = income.gold + (hex.strategic_bonus || 0) + (inZone ? ZONE_BONUS : 0)
-    const forts = buildingData?.buildings?.filter(b => b.type === 'fort').length || 0
-    const hasFortBonus = forts > 0 || hex.strategic_name
-    const defMult = 1 + forts * 0.4 + (hex.strategic_name ? 0.2 : 0)
+
+    // Defense breakdown, computed entirely from data already loaded (building
+    // list, strategic flag, and a neighbor lookup against the map's own hex
+    // cache) - no dedicated network round-trip per hex click. Mirrors
+    // combat.js's advantagedDefenderCount() formula exactly; if that formula
+    // changes, this needs to change with it.
+    const activeForts = buildingData?.buildings?.filter(b => b.type === 'fort' && b.is_complete).length || 0
+    const friendlyNeighbors = getFriendlyNeighborCount?.(hex.h3, hex.owner) || 0
+    const isStrategicHex = !!hex.strategic_name
+    const fortAdvantage = activeForts * gameConfig.fort_advantage_troops
+    const entrenchAdvantage = Math.min(friendlyNeighbors, gameConfig.entrench_max_neighbors) * gameConfig.entrench_advantage_per_neighbor
+    const strategicAdvantage = isStrategicHex ? gameConfig.strategic_advantage_troops : 0
+    const rawAdvantageTotal = fortAdvantage + entrenchAdvantage + strategicAdvantage
+    const advantagedDefenders = Math.min(gameConfig.max_advantaged_defenders, rawAdvantageTotal)
+    const advantageCapped = rawAdvantageTotal > advantagedDefenders
+    const hasFortBonus = advantagedDefenders > 0
+    // Plain-text breakdown for a native hover tooltip - keeps the card itself
+    // a clean single number (like Garrison), with the "why" one hover away.
+    const defenseTooltip = [
+      activeForts > 0 && `Fort${activeForts > 1 ? ` ×${activeForts}` : ''}: +${fortAdvantage}`,
+      friendlyNeighbors > 0 && `${friendlyNeighbors} friendly neighbor${friendlyNeighbors > 1 ? 's' : ''}: +${entrenchAdvantage}`,
+      isStrategicHex && `Strategic hex: +${strategicAdvantage}`,
+      advantageCapped && `${rawAdvantageTotal} total, capped at ${gameConfig.max_advantaged_defenders}`,
+    ].filter(Boolean).join('\n')
+
+    // Decay risk: the required garrison rises with total owned hex count -
+    // mirrors config.js's requiredGarrisonForHexCount() exactly.
+    const requiredGarrison = ownedHexCount > gameConfig.decay_hex_threshold
+      ? 1 + Math.floor((ownedHexCount - gameConfig.decay_hex_threshold) / gameConfig.decay_scale_hexes_per_step)
+      : 0
+    const isUndeveloped = !buildingData?.buildings?.length
+    const isCapitalHex = hex.capital_hex === hex.h3
+    const isBorderHex = friendlyNeighbors < 6 // fully-surrounded interior hexes never decay
+    const atDecayRisk = isOwn && !isCapitalHex && isUndeveloped && isBorderHex && requiredGarrison > 0 && totalTroops < requiredGarrison
+
     const hasBarracks = buildingData?.buildings?.some(b => b.type === 'barracks')
 
     // Estimated total gold generated - segments by when each building was actually built
@@ -419,17 +488,28 @@ export default function BottomDrawer({ hex, player, stats, onClaim, onLoginRequi
             <div style={{ fontSize: 14, color: '#5a4828', marginBottom: 12 }}>Login to start your empire here.</div>
             <Btn onClick={onLoginRequired} muted>Login to Claim</Btn>
           </>
-        ) : !player.capital_hex ? (
+        ) : !player.capital_hex && !ownedHexCount ? (
+          // Truly starting from nothing (new player, or fully wiped out) -
+          // the one case that's still free and march-free. See routes/hexes.js.
           <>
             <div style={{ fontSize: 14, color: '#7a6040', marginBottom: 12 }}>
               Claim this hex to found your capital. You'll receive starting troops and a free mine.
             </div>
             <Btn onClick={() => onClaim(hex.h3)}>Found Your Capital Here</Btn>
           </>
+        ) : !player.capital_hex ? (
+          // Capital was destroyed but other territory survived - re-founding
+          // costs the same as any claim now, no second round of starter gifts.
+          <>
+            <div style={{ fontSize: 14, color: '#5a4828', marginBottom: 12 }}>
+              March at least {gameConfig.min_troops_to_claim} troops here first, then claim it to found your new capital.
+            </div>
+            <Btn onClick={() => onClaim(hex.h3)} muted>Found New Capital Here</Btn>
+          </>
         ) : (
           <>
             <div style={{ fontSize: 14, color: '#5a4828', marginBottom: 12 }}>
-              March troops here first, then claim it to expand your empire.
+              March at least {gameConfig.min_troops_to_claim} troops here first, then claim it to expand your empire.
             </div>
             <Btn onClick={() => onClaim(hex.h3)} muted>Claim Territory</Btn>
           </>
@@ -441,7 +521,6 @@ export default function BottomDrawer({ hex, player, stats, onClaim, onLoginRequi
       <>
         <style>{PULSE_CSS}</style>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          {/* Strategic banner */}
           {hex.strategic_name && (
             <div style={{
               display: 'flex', alignItems: 'center', gap: 10,
@@ -480,9 +559,7 @@ export default function BottomDrawer({ hex, player, stats, onClaim, onLoginRequi
             </div>
           )}
 
-          {/* Stat cards row */}
           <div style={{ display: 'flex', gap: 10 }}>
-            {/* Income card */}
             <div style={{
               flex: 1, padding: '14px 16px',
               background: 'rgba(160,100,20,0.12)',
@@ -499,23 +576,28 @@ export default function BottomDrawer({ hex, player, stats, onClaim, onLoginRequi
               <div style={{ fontSize: 12, color: '#7a6040', marginTop: 2 }}>per tick</div>
             </div>
 
-            {/* Garrison card */}
-            <div style={{
-              flex: 1, padding: '14px 16px',
-              background: totalTroops > 0 ? 'rgba(120,90,20,0.12)' : 'rgba(255,255,255,0.03)',
-              border: `1px solid ${totalTroops > 0 ? 'rgba(200,170,60,0.2)' : 'rgba(255,255,255,0.06)'}`,
-              borderRadius: 6,
-            }}>
-              <div style={{ fontSize: 11, color: '#9a7040', letterSpacing: 2, textTransform: 'uppercase', marginBottom: 6 }}>Garrison</div>
-              <div style={{ fontSize: 26, color: totalTroops > 0 ? '#d4b870' : '#4a3828', fontVariantNumeric: 'tabular-nums' }}>
-                {isHiddenGarrison ? '?' : totalTroops > 0 ? totalTroops : '-'}
+            {/* Garrison card - flips to a decay warning when this border hex's
+                garrison is below what your current empire size requires */}
+            <Tooltip
+              style={{ flex: 1 }}
+              text={atDecayRisk ? `Empires above ${gameConfig.decay_hex_threshold} hexes need a bigger garrison per hex - yours needs ${requiredGarrison}+ here (or a building) to avoid decay.` : null}
+            >
+              <div style={{
+                padding: '14px 16px', cursor: atDecayRisk ? 'help' : 'default',
+                background: atDecayRisk ? 'rgba(140,60,20,0.15)' : totalTroops > 0 ? 'rgba(120,90,20,0.12)' : 'rgba(255,255,255,0.03)',
+                border: `1px solid ${atDecayRisk ? 'rgba(220,120,40,0.4)' : totalTroops > 0 ? 'rgba(200,170,60,0.2)' : 'rgba(255,255,255,0.06)'}`,
+                borderRadius: 6,
+              }}>
+                <div style={{ fontSize: 11, color: atDecayRisk ? '#c07830' : '#9a7040', letterSpacing: 2, textTransform: 'uppercase', marginBottom: 6 }}>Garrison</div>
+                <div style={{ fontSize: 26, color: atDecayRisk ? '#e0a050' : totalTroops > 0 ? '#d4b870' : '#4a3828', fontVariantNumeric: 'tabular-nums' }}>
+                  {isHiddenGarrison ? '?' : totalTroops > 0 ? totalTroops : '-'}
+                </div>
+                <div style={{ fontSize: 12, color: atDecayRisk ? '#c07830' : '#7a6040', marginTop: 2 }}>
+                  {isHiddenGarrison ? 'hidden in fog' : atDecayRisk ? `⚠ needs ${requiredGarrison}+` : totalTroops > 0 ? 'troops ready' : 'undefended'}
+                </div>
               </div>
-              <div style={{ fontSize: 12, color: '#7a6040', marginTop: 2 }}>
-                {isHiddenGarrison ? 'hidden in fog' : totalTroops > 0 ? 'troops ready' : 'undefended'}
-              </div>
-            </div>
+            </Tooltip>
 
-            {/* Total generated card */}
             {isOwn && totalGenerated !== null && totalGenerated > 0 && (
               <div style={{
                 flex: 1, padding: '14px 16px',
@@ -531,24 +613,26 @@ export default function BottomDrawer({ hex, player, stats, onClaim, onLoginRequi
               </div>
             )}
 
-            {/* Defense card - only show if boosted */}
+            {/* Defense card - a clean single number like Garrison; hover/tap
+                to see which sources (fort/entrenchment/strategic) add up to it */}
             {hasFortBonus && (
-              <div style={{
-                flex: 1, padding: '14px 16px',
-                background: 'rgba(40,80,40,0.15)',
-                border: '1px solid rgba(60,120,60,0.3)',
-                borderRadius: 6,
-              }}>
-                <div style={{ fontSize: 11, color: '#607040', letterSpacing: 2, textTransform: 'uppercase', marginBottom: 6 }}>Defense</div>
-                <div style={{ fontSize: 26, color: '#70b850', fontVariantNumeric: 'tabular-nums' }}>
-                  {defMult.toFixed(1)}x
+              <Tooltip text={defenseTooltip} style={{ flex: 1 }}>
+                <div style={{
+                  padding: '14px 16px', cursor: 'help',
+                  background: 'rgba(40,80,40,0.15)',
+                  border: '1px solid rgba(60,120,60,0.3)',
+                  borderRadius: 6,
+                }}>
+                  <div style={{ fontSize: 11, color: '#607040', letterSpacing: 2, textTransform: 'uppercase', marginBottom: 6 }}>Defense</div>
+                  <div style={{ fontSize: 26, color: '#70b850', fontVariantNumeric: 'tabular-nums' }}>
+                    {advantagedDefenders}
+                  </div>
+                  <div style={{ fontSize: 12, color: '#5a7040', marginTop: 2 }}>w/ advantage</div>
                 </div>
-                <div style={{ fontSize: 12, color: '#5a7040', marginTop: 2 }}>strength multiplier</div>
-              </div>
+              </Tooltip>
             )}
           </div>
 
-          {/* Held since */}
           {isOwn && hex.claimed_at && (() => {
             const ms = Date.now() - new Date(hex.claimed_at).getTime()
             const days = Math.floor(ms / 86400000)
@@ -561,7 +645,6 @@ export default function BottomDrawer({ hex, player, stats, onClaim, onLoginRequi
             )
           })()}
 
-          {/* Tick progress bar */}
           {isOwn && tickSecs !== null && (
             <div>
               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: '#6a5838', marginBottom: 4 }}>
@@ -579,7 +662,6 @@ export default function BottomDrawer({ hex, player, stats, onClaim, onLoginRequi
             </div>
           )}
 
-          {/* Buildings row */}
           {buildingData?.buildings?.length > 0 && (
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
               {buildingData.buildings.map(b => {
@@ -601,7 +683,6 @@ export default function BottomDrawer({ hex, player, stats, onClaim, onLoginRequi
             </div>
           )}
 
-          {/* Quick actions for own hex */}
           {isOwn && (
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', paddingTop: 4, borderTop: '1px solid rgba(255,255,255,0.06)' }}>
               {!buildingData?.buildings?.length && (
@@ -640,7 +721,6 @@ export default function BottomDrawer({ hex, player, stats, onClaim, onLoginRequi
 
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-        {/* Built */}
         <div>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 10 }}>
             <Label>Built</Label>
@@ -699,7 +779,6 @@ export default function BottomDrawer({ hex, player, stats, onClaim, onLoginRequi
           })}
         </div>
 
-        {/* Build options - shown whenever slots remain */}
         {canBuild && (
           <div>
             <Label>Build ({slotsLeft} slot{slotsLeft !== 1 ? 's' : ''} left)</Label>
@@ -726,7 +805,7 @@ export default function BottomDrawer({ hex, player, stats, onClaim, onLoginRequi
                       <div style={{ fontSize: 15, color: '#d4c4a0', marginBottom: 3, display: 'flex', alignItems: 'center', gap: 10 }}>
                         <span>{b.label}</span>
                         <span style={{ fontSize: 12, color: '#8a7060', display: 'flex', alignItems: 'center', gap: 3 }}>
-                          <GoldIcon size={10} /> {b.goldCost}
+                          <GoldIcon size={10} /> {buildingCosts[b.type] ?? b.goldCost}
                         </span>
                       </div>
                       <div style={{ fontSize: 13, color: '#7a6840', marginBottom: 5 }}>{b.effect}</div>
@@ -838,7 +917,7 @@ export default function BottomDrawer({ hex, player, stats, onClaim, onLoginRequi
 
         {/* Right: train + queues */}
         <div style={{ flex: 1 }}>
-          <Label>Train Troops · <GoldIcon size={10} /> 1 each</Label>
+          <Label>Train Troops · <GoldIcon size={10} /> {troopGoldCost} each</Label>
           <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginBottom: 12 }}>
             {TRAIN_PRESETS.map(n => (
               <button key={n} onClick={() => setTrainQty(n)} style={{
@@ -861,7 +940,27 @@ export default function BottomDrawer({ hex, player, stats, onClaim, onLoginRequi
           {military?.training?.length > 0 && (
             <div style={{ marginTop: 16 }}>
               <Label>Training Queue</Label>
-              {military.training.map(j => <TrainBar key={j.id} job={j} />)}
+              {/* Jobs of the same type are chained back-to-back on the server
+                  (each new batch starts when the last one finishes), so N
+                  clicks means N separate rows for what's really one continuous
+                  production line - merge them into a single bar per type
+                  instead of showing N redundant ones. */}
+              {Object.values(
+                military.training.reduce((groups, j) => {
+                  (groups[j.type] ??= []).push(j)
+                  return groups
+                }, {})
+              ).map(jobs => {
+                const sorted = [...jobs].sort((a, b) => new Date(a.started_at) - new Date(b.started_at))
+                const merged = {
+                  id: sorted.map(j => j.id).join('-'),
+                  type: sorted[0].type,
+                  started_at: sorted[0].started_at,
+                  completes_at: sorted[sorted.length - 1].completes_at,
+                  quantity: sorted.reduce((sum, j) => sum + j.quantity, 0),
+                }
+                return <TrainBar key={merged.id} job={merged} />
+              })}
             </div>
           )}
 
@@ -912,6 +1011,7 @@ export default function BottomDrawer({ hex, player, stats, onClaim, onLoginRequi
       fontFamily: 'Georgia, serif',
       color: '#c4b498',
       zIndex: 20,
+      paddingBottom: 'env(safe-area-inset-bottom)',
     }}>
       {/* Header - always visible */}
       <div
@@ -924,14 +1024,28 @@ export default function BottomDrawer({ hex, player, stats, onClaim, onLoginRequi
         }}
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          {isClaimed && <Dot color={hex.color} />}
+          {isClaimed && hex.capital_hex === hex.h3 && <CapitalFlag hex={hex} />}
+          {isClaimed && hex.capital_hex !== hex.h3 && <Dot color={hex.color} />}
           <div>
             <span style={{ fontSize: 16, color: isClaimed ? '#e8d090' : '#5a4a28', letterSpacing: 2 }}>
               {ownerLabel}
             </span>
+            {isClaimed && (
+              <Tooltip
+                text={hex.h3}
+                style={{ fontSize: 11, color: '#8a7850', marginLeft: 8, fontFamily: 'monospace', letterSpacing: 0.5, opacity: 0.85 }}
+              >
+                #{shortHex(hex.h3)}
+              </Tooltip>
+            )}
             {isClaimed && hex.country_name && (
               <div style={{ fontSize: 14, color: '#8a7850', marginTop: 1 }}>
                 {hex.country_name}{hex.country_continent ? ` · ${hex.country_continent}` : ''}
+              </div>
+            )}
+            {isClaimed && hex.capital_hex === hex.h3 && hex.motto && (
+              <div style={{ fontSize: 13, color: '#a08850', fontStyle: 'italic', marginTop: 2 }}>
+                "{hex.motto}"
               </div>
             )}
           </div>
@@ -968,7 +1082,7 @@ export default function BottomDrawer({ hex, player, stats, onClaim, onLoginRequi
             ))}
           </div>
 
-          <div style={{ padding: isMobile ? '16px 16px 20px' : '24px 32px 28px', overflowY: 'auto', height: isMobile ? '48vh' : '36vh' }}>
+          <div style={{ padding: isMobile ? '16px 16px 20px' : '24px 32px 28px', overflowY: 'auto', height: isMobile ? '48dvh' : '36vh' }}>
             {tab === 'territory' && TerritoryPanel()}
             {tab === 'buildings' && BuildingsPanel()}
             {tab === 'military'  && MilitaryPanel()}

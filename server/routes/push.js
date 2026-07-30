@@ -11,7 +11,6 @@ router.get('/key', (req, res) => {
   res.json({ key: process.env.VAPID_PUBLIC_KEY })
 })
 
-// Register this browser's push subscription
 router.post('/subscribe', requireAuth, async (req, res) => {
   const { subscription } = req.body
   if (!subscription?.endpoint || !subscription?.keys) {
@@ -30,7 +29,6 @@ router.post('/subscribe', requireAuth, async (req, res) => {
   }
 })
 
-// Unregister
 router.delete('/subscribe', requireAuth, async (req, res) => {
   const { endpoint } = req.body
   if (!endpoint) return res.status(400).json({ error: 'endpoint required' })
