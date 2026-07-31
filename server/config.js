@@ -6,6 +6,7 @@
 // index.js's boot guard only enforces real secrets/config once MODE=prod is
 // set explicitly.
 import dotenv from 'dotenv'
+import { getNumCells } from 'h3-js'
 dotenv.config()
 
 const VALID_MODES = ['dev', 'test', 'prod']
@@ -121,6 +122,20 @@ export function requiredGarrisonForHexCount(hexCount) {
   if (hexCount <= DECAY_HEX_THRESHOLD) return 0
   return 1 + Math.floor((hexCount - DECAY_HEX_THRESHOLD) / DECAY_SCALE_HEXES_PER_STEP)
 }
+
+// ─── World scale ────────────────────────────────────────────────────────────
+// The hex grid resolution the whole game is built on (server/strategic.js and
+// bots.js each still have their own local HEX_RES = 7 - this doesn't replace
+// those, just gives the total-hex-count math below one real source instead
+// of a guessed number).
+export const HEX_RESOLUTION = 7
+
+// Exact total hex count on the map (whole globe, land + ocean - ocean hexes
+// are marchable, just not claimable) at HEX_RESOLUTION, straight from H3's
+// icosahedral grid formula via getNumCells(). Not an estimate: this is the
+// same deterministic count H3 itself uses, so it's exact and automatically
+// correct if HEX_RESOLUTION ever changes.
+export const WORLD_HEX_COUNT = getNumCells(HEX_RESOLUTION)
 
 // ─── Claiming ─────────────────────────────────────────────────────────────────
 // An unclaimed hex needs a real commitment to take, not a single scout troop -

@@ -94,3 +94,23 @@ body {
 .rw-topbar-scroll > * {
   flex-shrink: 0;
 }
+
+/* BottomDrawer tab content: thin themed scrollbar instead of the default
+   OS one, which reads as a stray gray bar against this dark/parchment UI. */
+.rw-drawer-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(200,150,40,0.35) transparent;
+}
+.rw-drawer-scroll::-webkit-scrollbar {
+  width: 7px;
+}
+.rw-drawer-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+.rw-drawer-scroll::-webkit-scrollbar-thumb {
+  background: rgba(200,150,40,0.35);
+  border-radius: 4px;
+}
+.rw-drawer-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(200,150,40,0.55);
+}

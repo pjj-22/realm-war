@@ -28,7 +28,7 @@ export async function notifyIncomingAttack(attackerId, toHex, quantity, arrivesA
       'INSERT INTO events (player_id, type, message, hex_index) VALUES ($1,$2,$3,$4)',
       [owner.id, 'incoming_attack', message, toHex]
     )
-    getIO()?.emit('events:new')
+    getIO()?.to(`player-${owner.id}`).emit('events:new')
     sendPush(owner.id, 'Incoming attack!', message, { hex: toHex })
   } catch (err) {
     console.error('[notify] incoming attack error:', err.message)

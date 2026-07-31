@@ -1,7 +1,6 @@
 import { latLngToCell, gridDisk, gridDistance } from 'h3-js'
 import { getCountry } from './countries.js'
-
-const HEX_RES = 7
+import { HEX_RESOLUTION } from './config.js'
 
 const DEFS = [
   // Europe
@@ -59,32 +58,43 @@ export const STRATEGIC_ADVANTAGE_TROOPS = 2 // +2 advantaged defenders
 export const CITY_ZONE_RADIUS    = 3  // rings around a city (~37 hexes per zone)
 export const ZONE_BONUS_PER_HEX  = 2  // +2g per tick for each owned hex in a zone
 
-export const STRATEGIC_HEXES = new Map(
-  DEFS.map(def => [
-    latLngToCell(def.lat, def.lng, HEX_RES),
-    // `zone` = has a city zone (every non-chokepoint city); drives the map's "+zone" label.
-    // `primary` alone can't distinguish secondary cities (zoned) from chokepoints (not).
-    { name: def.name, primary: def.primary, zone: !def.chokepoint },
-  ])
-)
-
-// Map from primary capital h3_index → country name (derived at runtime)
+// Stable object references, populated by rebuildStrategicData() below rather
+// than at module load - every consumer imports these Map/array bindings
+// directly and calls .has()/.get() etc on them, so rebuilding in place (clear
+// + repopulate the same objects) means a season's resolution change is picked
+// up everywhere automatically, with no need to re-import or re-fetch.
+export const STRATEGIC_HEXES = new Map()
 export const CAPITAL_COUNTRY = new Map()
-for (const [h3, def] of STRATEGIC_HEXES) {
-  if (!def.primary) continue
-  const info = getCountry(h3)
-  if (info) CAPITAL_COUNTRY.set(h3, info.name)
-}
-
-// City zones: every hex within CITY_ZONE_RADIUS rings of a (non-chokepoint) city,
-// assigned to its single nearest city so overlapping rings never double-pay.
-// h3_index → city name.
 export const CITY_ZONES = new Map()
-{
+export const CITY_ZONE_LIST = []
+
+export function rebuildStrategicData(resolution = HEX_RESOLUTION) {
+  STRATEGIC_HEXES.clear()
+  for (const def of DEFS) {
+    STRATEGIC_HEXES.set(
+      latLngToCell(def.lat, def.lng, resolution),
+      // `zone` = has a city zone (every non-chokepoint city); drives the map's "+zone" label.
+      // `primary` alone can't distinguish secondary cities (zoned) from chokepoints (not).
+      { name: def.name, primary: def.primary, zone: !def.chokepoint },
+    )
+  }
+
+  // Map from primary capital h3_index → country name (derived at runtime)
+  CAPITAL_COUNTRY.clear()
+  for (const [h3, def] of STRATEGIC_HEXES) {
+    if (!def.primary) continue
+    const info = getCountry(h3)
+    if (info) CAPITAL_COUNTRY.set(h3, info.name)
+  }
+
+  // City zones: every hex within CITY_ZONE_RADIUS rings of a (non-chokepoint) city,
+  // assigned to its single nearest city so overlapping rings never double-pay.
+  // h3_index → city name.
+  CITY_ZONES.clear()
   const bestDist = new Map()
   for (const def of DEFS) {
     if (def.chokepoint) continue
-    const center = latLngToCell(def.lat, def.lng, HEX_RES)
+    const center = latLngToCell(def.lat, def.lng, resolution)
     for (const h of gridDisk(center, CITY_ZONE_RADIUS)) {
       const d = gridDistance(center, h)
       if (d < 0) continue
@@ -94,7 +104,14 @@ export const CITY_ZONES = new Map()
       }
     }
   }
+
+  // Zone hexes grouped for the client to shade: [{ h3, city }]
+  CITY_ZONE_LIST.length = 0
+  CITY_ZONE_LIST.push(...Array.from(CITY_ZONES, ([h3, city]) => ({ h3, city })))
 }
 
-// Zone hexes grouped for the client to shade: [{ h3, city }]
-export const CITY_ZONE_LIST = Array.from(CITY_ZONES, ([h3, city]) => ({ h3, city }))
+// Populate at module load with the default resolution so anything that reads
+// these before a season has loaded (unlikely, but cheap to guard) still gets
+// sensible data - season.js's ensureSeason() rebuilds again once it knows the
+// active season's actual resolution.
+rebuildStrategicData()

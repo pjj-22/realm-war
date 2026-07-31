@@ -108,7 +108,7 @@ export default function HelpModal({ onClose }) {
           <Row icon={<GoldIcon size={15} />} label="Earned every tick"
             desc={`Gold arrives automatically every ${tickLabel}. You earn 1g per hex you own, +3g per Mine.`} />
           <Row icon="★★" label="Strategic capitals"
-            desc="Gold and glowing-bordered hexes are strategic locations worth +5g per tick. Primary capitals (marked +territory) pay exponentially more based on how much of that country you control - own London and dominate Britain to earn serious income." />
+            desc="Gold and glowing-bordered hexes are strategic locations worth +5g per tick, plus +2g per hex you own inside that city's zone. Every country has one primary capital (★★) - own it to compete for that country's crown (see Country Crowns below)." />
         </div>
 
         <div style={S.section}>
@@ -136,7 +136,7 @@ export default function HelpModal({ onClose }) {
           <Row icon={<FlameIcon size={15} />} label="Attacking enemies"
             desc="March to a hex owned by another player. A battle begins automatically on arrival. Higher troop strength wins." />
           <Row icon={<ShieldIcon size={15} />} label="Entrenchment"
-            desc="Defenders gain +8% strength for each adjacent friendly hex (up to +32%). Compact territory is hard to crack; thin salients are vulnerable." />
+            desc="Defenders gain +1 advantaged defender (2 dice, take the higher) per adjacent friendly hex, up to +4. Compact territory is hard to crack; thin salients are vulnerable." />
           <Row icon={<WaveIcon size={15} />} label="Ocean crossings"
             desc="You can cross ocean hexes, but it takes 10× longer. Plan naval moves carefully." />
           <Row icon="↩" label="Recall"

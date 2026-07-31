@@ -4,9 +4,11 @@ import { pool } from '../db.js'
 import { signToken, requireAuth } from '../auth.js'
 import { rateLimit } from '../ratelimit.js'
 import { IS_DEV } from '../config.js'
-import { STARTING_GOLD, STARTING_MANA, TICK_INTERVAL_MS, BUILDING_TIME_SECONDS, GOLD_CAP_BASE } from '../config.js'
+import { STARTING_GOLD, STARTING_MANA, TICK_INTERVAL_MS, BUILDING_TIME_SECONDS, GOLD_CAP_BASE, WONDER_INCOME_GOLD } from '../config.js'
 import { nextTickAt } from '../tick.js'
 import { getCountry } from '../countries.js'
+import { STRATEGIC_HEXES, STRATEGIC_BONUS_GOLD, CITY_ZONES, ZONE_BONUS_PER_HEX } from '../strategic.js'
+import { WONDERS } from '../wonders.js'
 
 const router = Router()
 
@@ -88,7 +90,6 @@ router.get('/leaderboard', async (req, res) => {
       LEFT JOIN ch ON ch.winner_id = p.id
       WHERE p.username NOT LIKE 'WILD_%'
       ORDER BY hex_count DESC, total_troops DESC
-      LIMIT 10
     `)
     res.json(result.rows)
   } catch (err) {
@@ -126,20 +127,29 @@ router.get('/stats', requireAuth, async (req, res) => {
       GROUP BY h.h3_index
     `, [req.player.id, BUILDING_TIME_SECONDS])
 
+    // Mirrors tick.js's actual payout exactly (base + mines + strategic hexes +
+    // city-zone hexes + wonders) - this used to only count base+mines, so the
+    // displayed total silently omitted strategic/zone/wonder income entirely.
     const byCountry = new Map()
     for (const { h3_index, mines } of hexRows.rows) {
       const info = getCountry(h3_index)
       const key = info ? info.name : 'Ocean / Islands'
       const continent = info ? info.continent : 'Ocean'
-      if (!byCountry.has(key)) byCountry.set(key, { country: key, continent, hexes: 0, mines: 0 })
+      if (!byCountry.has(key)) byCountry.set(key, { country: key, continent, hexes: 0, mines: 0, strategic: 0, zone: 0 })
       const entry = byCountry.get(key)
       entry.hexes += 1
       entry.mines += mines
+      if (STRATEGIC_HEXES.has(h3_index)) entry.strategic += 1
+      if (CITY_ZONES.has(h3_index)) entry.zone += 1
     }
 
     row.income_by_country = Array.from(byCountry.values())
-      .map(e => ({ ...e, income: e.hexes + e.mines * 3 }))
+      .map(e => ({ ...e, income: e.hexes + e.mines * 3 + e.strategic * STRATEGIC_BONUS_GOLD + e.zone * ZONE_BONUS_PER_HEX }))
       .sort((a, b) => b.income - a.income)
+
+    const wonderHexes = new Set(WONDERS.map(w => w.h3))
+    row.wonder_income = hexRows.rows.filter(r => wonderHexes.has(r.h3_index)).length * WONDER_INCOME_GOLD
+    row.income_per_harvest = row.income_by_country.reduce((s, e) => s + e.income, 0) + row.wonder_income
 
     res.json(row)
   } catch (err) {

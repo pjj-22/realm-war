@@ -6,8 +6,10 @@ import { runTick } from '../tick.js'
 import { ensureBots } from '../bots.js'
 import { getCurrentSeason, processSeason } from '../season.js'
 import { getIO } from '../socket.js'
-import { IS_DEV, TICK_INTERVAL_MS } from '../config.js'
+import { IS_DEV, TICK_INTERVAL_MS, BUILDING_TIME_SECONDS, WONDER_INCOME_GOLD } from '../config.js'
 import { GM_EVENTS, triggerEvent } from '../gmEvents.js'
+import { STRATEGIC_HEXES, STRATEGIC_BONUS_GOLD, CITY_ZONES, ZONE_BONUS_PER_HEX } from '../strategic.js'
+import { WONDERS } from '../wonders.js'
 
 const router = Router()
 
@@ -257,7 +259,32 @@ router.get('/players', async (req, res) => {
       LEFT JOIN (SELECT owner_id, SUM(quantity) AS total_troops FROM troops GROUP BY owner_id) t ON t.owner_id = p.id
       ORDER BY hex_count DESC, p.gold DESC
     `)
-    res.json(result.rows)
+
+    // Gold income per harvest, mirroring tick.js's actual payout exactly:
+    // base (1/hex) + mines (3, only once built) + strategic hexes (+5 each) +
+    // city-zone hexes (+2 each) + wonders. One pass over all hexes rather
+    // than a per-player query, since we need every owner's hexes anyway.
+    const hexRows = await pool.query(`
+      SELECT h.owner_id, h.h3_index,
+        COALESCE(SUM(CASE WHEN b.type='mine' AND EXTRACT(EPOCH FROM (NOW() - b.created_at)) >= $1 THEN 1 ELSE 0 END), 0)::integer AS mines
+      FROM hexes h
+      LEFT JOIN buildings b ON b.h3_index = h.h3_index
+      WHERE h.owner_id IS NOT NULL
+      GROUP BY h.owner_id, h.h3_index
+    `, [BUILDING_TIME_SECONDS])
+
+    const wonderHexes = new Set(WONDERS.map(w => w.h3))
+    const incomeByOwner = new Map()
+    for (const { owner_id, h3_index, mines } of hexRows.rows) {
+      let income = (incomeByOwner.get(owner_id) || 0) + 1 + mines * 3
+      if (STRATEGIC_HEXES.has(h3_index)) income += STRATEGIC_BONUS_GOLD
+      if (CITY_ZONES.has(h3_index)) income += ZONE_BONUS_PER_HEX
+      if (wonderHexes.has(h3_index)) income += WONDER_INCOME_GOLD
+      incomeByOwner.set(owner_id, income)
+    }
+
+    const rows = result.rows.map(p => ({ ...p, income_per_harvest: incomeByOwner.get(p.id) || 0 }))
+    res.json(rows)
   } catch (err) {
     console.error('[admin] GET /players failed:', err.message)
     res.status(500).json({ error: 'Server error' })
@@ -324,6 +351,40 @@ router.post('/season/end', async (req, res) => {
     res.json({ ok: true, ended: season.number })
   } catch (err) {
     console.error('[admin] POST /season/end failed:', err.message)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// Queue the H3 resolution the *next* season should begin at. Consumed by
+// ensureSeason() (season.js), which stores it on the new season row, updates
+// worldState's activeResolution (read by bots.js for spawn placement), and
+// rebuilds strategic/city-zone hexes (strategic.js) and wonders (wonders.js)
+// at the new resolution. The client detects the season-number rollover and
+// force-reloads if the resolution changed, since rebuilding its hex grid and
+// MapLibre sources live in place would be far riskier than a fresh reload.
+router.post('/season/next-resolution', async (req, res) => {
+  const { resolution } = req.body
+  if (!Number.isInteger(resolution) || resolution < 0 || resolution > 15) {
+    return res.status(400).json({ error: 'resolution must be an integer 0-15 (H3\'s valid range)' })
+  }
+  try {
+    await pool.query(
+      'INSERT INTO season_config (id, next_hex_resolution) VALUES (1, $1) ON CONFLICT (id) DO UPDATE SET next_hex_resolution=$1',
+      [resolution]
+    )
+    res.json({ ok: true, next_hex_resolution: resolution })
+  } catch (err) {
+    console.error('[admin] POST /season/next-resolution failed:', err.message)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+router.get('/season/next-resolution', async (req, res) => {
+  try {
+    const r = await pool.query('SELECT next_hex_resolution FROM season_config WHERE id=1')
+    res.json({ next_hex_resolution: r.rows[0]?.next_hex_resolution ?? null })
+  } catch (err) {
+    console.error('[admin] GET /season/next-resolution failed:', err.message)
     res.status(500).json({ error: err.message })
   }
 })

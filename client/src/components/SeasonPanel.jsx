@@ -136,6 +136,12 @@ export default function SeasonPanel({ season, history, player, onClose }) {
           <b style={{ color: '#c0a0f0' }}>Win condition:</b> hold the most hexes when the season ends
           (ties broken by total troops). The Champion is immortalized in the Hall of Fame,
           then the map resets for a new age. Accounts, alliances, and history persist.
+          {season.world_hex_count != null && (
+            <div style={{ marginTop: 6, color: '#7a6890' }}>
+              Season {season.number} spans <b style={{ color: '#c0a0f0' }}>{season.world_hex_count.toLocaleString()}</b> hexes
+              {season.hex_resolution != null && season.hex_resolution !== 7 && ` (resolution ${season.hex_resolution})`}.
+            </div>
+          )}
         </div>
 
         <div style={{ fontSize: 12, letterSpacing: 2, textTransform: 'uppercase', color: '#7a6890', marginBottom: 8 }}>
@@ -207,7 +213,14 @@ export default function SeasonPanel({ season, history, player, onClose }) {
                   <>
                     <span style={{ width: 9, height: 9, borderRadius: '50%', background: s.winner_color, flexShrink: 0 }} />
                     <span style={{ color: '#e0c070' }}><CrownIcon size={12} /> {s.winner_username.startsWith('BOT_') ? s.winner_username.slice(4) : s.winner_username}</span>
-                    {s.snapshot?.[0] && <span style={{ fontSize: 12, color: '#7a6890' }}>{s.snapshot[0].hex_count} hexes</span>}
+                    {s.snapshot?.[0] && (
+                      <span
+                        style={{ fontSize: 12, color: '#7a6890' }}
+                        title={s.world_hex_count ? `Map held ${s.world_hex_count.toLocaleString()} hexes this age` : undefined}
+                      >
+                        {s.snapshot[0].hex_count} hexes{s.hex_resolution != null && s.hex_resolution !== 7 && ` (res ${s.hex_resolution})`}
+                      </span>
+                    )}
                     {monumentBySeason.has(s.number) && (
                       <button
                         onClick={() => {

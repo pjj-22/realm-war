@@ -8,7 +8,8 @@ import { test, beforeEach } from 'node:test'
 import assert from 'node:assert/strict'
 import { newDb } from 'pg-mem'
 import { getResolution } from 'h3-js'
-import { processWonders, WONDERS, WONDER_RESOLUTION } from '../wonders.js'
+import { processWonders, WONDERS } from '../wonders.js'
+import { HEX_RESOLUTION } from '../config.js'
 
 const W1 = { id: 'w1', name: 'Test Spire', title: 'Keeper of the Test Spire', h3: '87aaaaaaaffffff' }
 const W2 = { id: 'w2', name: 'Test Gate', title: 'Keeper of the Test Gate', h3: '87bbbbbbbffffff' }
@@ -137,11 +138,11 @@ test('two wonders can change hands in one poll', async () => {
 
 // ── Landmark data sanity ─────────────────────────────────────────────────────
 
-test('WONDERS: h3 indexes are unique and at the game resolution', () => {
+test('WONDERS: h3 indexes are unique and at the default game resolution', () => {
   const seen = new Set(WONDERS.map(w => w.h3))
   assert.equal(seen.size, WONDERS.length, 'two landmarks resolve to the same hex')
   for (const w of WONDERS) {
-    assert.equal(getResolution(w.h3), WONDER_RESOLUTION, `${w.name} is not res-${WONDER_RESOLUTION}`)
+    assert.equal(getResolution(w.h3), HEX_RESOLUTION, `${w.name} is not res-${HEX_RESOLUTION}`)
   }
 })
 

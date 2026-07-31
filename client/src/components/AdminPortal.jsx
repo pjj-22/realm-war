@@ -135,6 +135,66 @@ const TD = { padding: '8px 14px' }
 const ROW = { borderBottom: '1px solid rgba(74,58,122,0.2)' }
 const dot = c => <span style={{ display: 'inline-block', width: 12, height: 12, borderRadius: '50%', background: c, verticalAlign: 'middle' }} />
 
+// Troop-count-per-round line chart for a single battle. The underlying data
+// (atk_troops_after/def_troops_after per round) was already being stored in
+// battle_rounds for the dice-log table below - this just visualizes it as
+// the time series it already is, instead of only reading it off a table.
+function BattleTroopChart({ rounds, width = 640, height = 160 }) {
+  if (!rounds || rounds.length === 0) return null
+
+  const first = rounds[0]
+  const points = [
+    { round: 0, atk: Number(first.atk_frontline_before), def: Number(first.def_frontline_before) },
+    ...rounds.map(r => ({ round: r.round_number, atk: Number(r.atk_troops_after), def: Number(r.def_troops_after) })),
+  ]
+
+  const maxY = Math.max(1, ...points.map(p => Math.max(p.atk, p.def)))
+  const maxRound = points[points.length - 1].round || 1
+  const padL = 32, padB = 20, padT = 10, padR = 10
+  const plotW = width - padL - padR
+  const plotH = height - padT - padB
+
+  const px = r => padL + (r / maxRound) * plotW
+  const py = v => padT + plotH - (v / maxY) * plotH
+
+  const linePath = key => points.map((p, i) => `${i === 0 ? 'M' : 'L'}${px(p.round).toFixed(1)},${py(p[key]).toFixed(1)}`).join(' ')
+
+  const yTicks = 4
+  const gridLines = Array.from({ length: yTicks + 1 }, (_, i) => {
+    const v = Math.round((maxY / yTicks) * i)
+    return { v, y: py(v) }
+  })
+
+  return (
+    <div style={{ ...CARD_STYLE, marginBottom: 14 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+        <div style={{ fontSize: 11, color: '#8a7a9a', letterSpacing: 1, textTransform: 'uppercase' }}>Troop strength by round</div>
+        <div style={{ display: 'flex', gap: 14, fontSize: 12 }}>
+          <span style={{ color: '#ff8a6a' }}>● Attacker</span>
+          <span style={{ color: '#8a9aff' }}>● Defender</span>
+        </div>
+      </div>
+      <svg width={width} height={height} style={{ display: 'block', maxWidth: '100%' }}>
+        {gridLines.map(g => (
+          <g key={g.v}>
+            <line x1={padL} x2={width - padR} y1={g.y} y2={g.y} stroke="rgba(255,255,255,0.06)" strokeWidth="1" />
+            <text x={padL - 6} y={g.y + 3} textAnchor="end" fontSize="10" fill="#6a5878">{g.v}</text>
+          </g>
+        ))}
+        <path d={linePath('atk')} fill="none" stroke="#ff8a6a" strokeWidth="2" strokeLinejoin="round" />
+        <path d={linePath('def')} fill="none" stroke="#8a9aff" strokeWidth="2" strokeLinejoin="round" />
+        {points.map(p => (
+          <g key={`pt-${p.round}`}>
+            <circle cx={px(p.round)} cy={py(p.atk)} r="2.5" fill="#ff8a6a" />
+            <circle cx={px(p.round)} cy={py(p.def)} r="2.5" fill="#8a9aff" />
+            <text x={px(p.round)} y={height - 4} textAnchor="middle" fontSize="10" fill="#6a5878">{p.round}</text>
+          </g>
+        ))}
+      </svg>
+    </div>
+  )
+}
+
 function SectionTitle({ children }) {
   return <div style={{ margin: '0 0 10px', fontSize: 13, color: '#8a7a9a', letterSpacing: 2, textTransform: 'uppercase' }}>{children}</div>
 }
@@ -186,6 +246,9 @@ export default function AdminPortal() {
   const [tickBusy, setTickBusy] = useState(false)
   const [botBusy, setBotBusy] = useState(false)
   const [seasonBusy, setSeasonBusy] = useState(false)
+  const [pendingResolution, setPendingResolution] = useState(null)
+  const [resolutionInput, setResolutionInput] = useState('')
+  const [resolutionBusy, setResolutionBusy] = useState(false)
   const [goldTarget, setGoldTarget] = useState(null)
 
   const [eventTypes, setEventTypes] = useState({})
@@ -203,7 +266,7 @@ export default function AdminPortal() {
   const loadAll = useCallback(async (s = secret) => {
     setLoading(true)
     try {
-      const [ov, rt, pl, ac, ba, ar, sy, et] = await Promise.all([
+      const [ov, rt, pl, ac, ba, ar, sy, et, nr] = await Promise.all([
         adminRequest('GET', '/overview', null, s),
         adminRequest('GET', '/retention', null, s),
         adminRequest('GET', '/players', null, s),
@@ -212,9 +275,11 @@ export default function AdminPortal() {
         adminRequest('GET', '/armies', null, s),
         adminRequest('GET', '/system', null, s),
         adminRequest('GET', '/events/types', null, s),
+        adminRequest('GET', '/season/next-resolution', null, s),
       ])
       setOverview(ov); setRetention(rt); setPlayers(pl); setActivity(ac); setBattles(ba); setArmies(ar); setSystem(sy)
       setEventTypes(et)
+      setPendingResolution(nr.next_hex_resolution)
       setEventParams(prev => {
         const next = { ...prev }
         for (const k of Object.keys(et)) if (next[k] == null) next[k] = et[k].def
@@ -283,6 +348,17 @@ export default function AdminPortal() {
       await loadAll()
     } catch (e) { alert(e.message) }
     setSeasonBusy(false)
+  }
+  async function setNextResolution() {
+    const resolution = parseInt(resolutionInput, 10)
+    if (!Number.isInteger(resolution) || resolution < 0 || resolution > 15) { alert('Enter an integer 0-15'); return }
+    setResolutionBusy(true)
+    try {
+      await adminRequest('POST', '/season/next-resolution', { resolution }, secret)
+      setPendingResolution(resolution)
+      setResolutionInput('')
+    } catch (e) { alert(e.message) }
+    setResolutionBusy(false)
   }
   async function deletePlayer(id, username) {
     if (!confirm(`Delete ${username}? This removes all their hexes, troops, and buildings.`)) return
@@ -355,6 +431,17 @@ export default function AdminPortal() {
           <button onClick={forceTick} style={btnStyle('#2a3a5a')} disabled={tickBusy}>{tickBusy ? 'Ticking…' : 'Force Tick'}</button>
           <button onClick={resetBots} style={btnStyle('#3a2a1a')} disabled={botBusy}>{botBusy ? 'Resetting…' : 'Reset Bots'}</button>
           <button onClick={endSeason} style={btnStyle('#5a2a2a')} disabled={seasonBusy}>{seasonBusy ? 'Ending…' : 'End Season'}</button>
+          <span title="Sets the H3 resolution the *next* season begins at. Takes effect the moment that season starts: strategic/city-zone hexes and bot spawn points are rebuilt at the new resolution, and any player still on the map gets a one-time reload when the transition is detected."
+            style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+            <input
+              type="number" min={0} max={15} placeholder={pendingResolution != null ? `${pendingResolution} (queued)` : '7'}
+              value={resolutionInput} onChange={e => setResolutionInput(e.target.value)}
+              style={{ width: 46, padding: '3px 6px', background: 'rgba(255,255,255,0.05)', border: '1px solid #4a3a6a', borderRadius: 4, color: '#c9b99a', fontSize: 12, fontFamily: 'Georgia, serif' }}
+            />
+            <button onClick={setNextResolution} style={btnStyle('#2a3a5a')} disabled={resolutionBusy || !resolutionInput}>
+              {resolutionBusy ? '…' : 'Next Res'}
+            </button>
+          </span>
           <a href="/" style={{ ...btnStyle(), textDecoration: 'none', fontSize: 12 }}>← Game</a>
         </div>
       </div>
@@ -511,33 +598,56 @@ export default function AdminPortal() {
             </div>}
 
           {selectedBattleId != null && (
-            <>
-              <SectionTitle>Clash-by-clash dice log · Battle #{selectedBattleId} {roundsBusy && '(loading…)'}</SectionTitle>
-              {battleRounds.length === 0 && !roundsBusy
-                ? <Empty>No rounds logged for this battle.</Empty>
-                : <div style={{ ...CARD_STYLE, padding: 0, overflowX: 'auto' }}>
-                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-                    <thead><tr style={{ borderBottom: '1px solid #4a3a6a' }}>
-                      {['Round', 'Atk Frontline', 'Atk Dice', 'Def Frontline', 'Def Dice', 'Atk Lost', 'Def Lost', 'Atk Left', 'Def Left'].map(h => <th key={h} style={TH}>{h}</th>)}
-                    </tr></thead>
-                    <tbody>
-                      {battleRounds.map(r => (
-                        <tr key={r.round_number} style={ROW}>
-                          <td style={TD}>#{r.round_number}</td>
-                          <td style={{ ...TD, color: '#8a7a9a' }}>{r.atk_frontline_before}</td>
-                          <td style={{ ...TD, fontFamily: 'monospace', color: '#ff8a6a' }}>{r.atk_dice.join(', ')}</td>
-                          <td style={{ ...TD, color: '#8a7a9a' }}>{r.def_frontline_before}</td>
-                          <td style={{ ...TD, fontFamily: 'monospace', color: '#8a9aff' }}>{r.def_dice.join(', ')}</td>
-                          <td style={{ ...TD, color: '#ff8a6a' }}>-{r.atk_losses}</td>
-                          <td style={{ ...TD, color: '#8a9aff' }}>-{r.def_losses}</td>
-                          <td style={{ ...TD, color: '#ff8a6a' }}>{Math.round(Number(r.atk_troops_after))}</td>
-                          <td style={{ ...TD, color: '#8a9aff' }}>{Math.round(Number(r.def_troops_after))}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>}
-            </>
+            <div
+              style={{
+                position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                zIndex: 200, padding: 16,
+              }}
+              onClick={() => setSelectedBattleId(null)}
+            >
+              <div
+                style={{
+                  background: '#0f0a1e', border: '1px solid #4a3a6a', borderRadius: 10,
+                  width: '100%', maxWidth: 900, maxHeight: '90vh', overflowY: 'auto',
+                  padding: 20, boxShadow: '0 0 60px rgba(80,40,160,0.4)',
+                }}
+                onClick={e => e.stopPropagation()}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                  <SectionTitle>Clash-by-clash dice log · Battle #{selectedBattleId} {roundsBusy && '(loading…)'}</SectionTitle>
+                  <button onClick={() => setSelectedBattleId(null)} style={{
+                    background: 'none', border: 'none', color: '#8a7a9a',
+                    cursor: 'pointer', fontSize: 22, lineHeight: 1, padding: '0 0 0 12px',
+                  }}>×</button>
+                </div>
+                {battleRounds.length > 0 && <BattleTroopChart rounds={battleRounds} width={840} />}
+                {battleRounds.length === 0 && !roundsBusy
+                  ? <Empty>No rounds logged for this battle.</Empty>
+                  : <div style={{ ...CARD_STYLE, padding: 0, overflowX: 'auto' }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                      <thead><tr style={{ borderBottom: '1px solid #4a3a6a' }}>
+                        {['Round', 'Atk Frontline', 'Atk Dice', 'Def Frontline', 'Def Dice', 'Atk Lost', 'Def Lost', 'Atk Left', 'Def Left'].map(h => <th key={h} style={TH}>{h}</th>)}
+                      </tr></thead>
+                      <tbody>
+                        {battleRounds.map(r => (
+                          <tr key={r.round_number} style={ROW}>
+                            <td style={TD}>#{r.round_number}</td>
+                            <td style={{ ...TD, color: '#8a7a9a' }}>{r.atk_frontline_before}</td>
+                            <td style={{ ...TD, fontFamily: 'monospace', color: '#ff8a6a' }}>{r.atk_dice.join(', ')}</td>
+                            <td style={{ ...TD, color: '#8a7a9a' }}>{r.def_frontline_before}</td>
+                            <td style={{ ...TD, fontFamily: 'monospace', color: '#8a9aff' }}>{r.def_dice.join(', ')}</td>
+                            <td style={{ ...TD, color: '#ff8a6a' }}>-{r.atk_losses}</td>
+                            <td style={{ ...TD, color: '#8a9aff' }}>-{r.def_losses}</td>
+                            <td style={{ ...TD, color: '#ff8a6a' }}>{Math.round(Number(r.atk_troops_after))}</td>
+                            <td style={{ ...TD, color: '#8a9aff' }}>{Math.round(Number(r.def_troops_after))}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>}
+              </div>
+            </div>
           )}
         </>
       )}
@@ -635,7 +745,7 @@ export default function AdminPortal() {
           <div style={{ ...CARD_STYLE, padding: 0, marginBottom: 32, overflowX: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
               <thead><tr style={{ borderBottom: '1px solid #4a3a6a' }}>
-                {['', 'Username', 'Gold', 'Hexes', 'Troops', 'Streak', 'Last Login', 'Joined', 'Actions'].map(h => <th key={h} style={TH}>{h}</th>)}
+                {['', 'Username', 'Gold', 'Income/harvest', 'Hexes', 'Troops', 'Streak', 'Last Login', 'Joined', 'Actions'].map(h => <th key={h} style={TH}>{h}</th>)}
               </tr></thead>
               <tbody>
                 {humans.map(p => (
@@ -645,6 +755,7 @@ export default function AdminPortal() {
                     <td style={TD}>{dot(p.color)}</td>
                     <td style={{ ...TD, fontWeight: 'bold' }}>{p.username}</td>
                     <td style={{ ...TD, color: '#c9a040' }}>{p.gold.toLocaleString()}</td>
+                    <td style={{ ...TD, color: '#d4a843' }}>+{p.income_per_harvest ?? 0}g</td>
                     <td style={TD}>{p.hex_count}</td>
                     <td style={TD}>{p.total_troops}</td>
                     <td style={{ ...TD, color: '#8a9a8a' }}>{p.login_streak ?? 0}d</td>
@@ -668,7 +779,7 @@ export default function AdminPortal() {
           <div style={{ ...CARD_STYLE, padding: 0, overflowX: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
               <thead><tr style={{ borderBottom: '1px solid #4a3a6a' }}>
-                {['', 'Name', 'Gold', 'Hexes', 'Troops'].map(h => <th key={h} style={TH}>{h}</th>)}
+                {['', 'Name', 'Gold', 'Income/harvest', 'Hexes', 'Troops'].map(h => <th key={h} style={TH}>{h}</th>)}
               </tr></thead>
               <tbody>
                 {bots.map(p => (
@@ -676,6 +787,7 @@ export default function AdminPortal() {
                     <td style={TD}>{dot(p.color)}</td>
                     <td style={{ ...TD, color: '#8a9a8a' }}>{p.username.slice(4)}</td>
                     <td style={{ ...TD, color: '#c9a040' }}>{p.gold.toLocaleString()}</td>
+                    <td style={{ ...TD, color: '#d4a843' }}>+{p.income_per_harvest ?? 0}g</td>
                     <td style={TD}>{p.hex_count}</td>
                     <td style={TD}>{p.total_troops}</td>
                   </tr>

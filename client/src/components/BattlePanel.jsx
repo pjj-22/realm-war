@@ -279,9 +279,19 @@ export default function BattlePanel({ hex, player, onMarchStart, onClose }) {
             border: `1px solid ${attackerWon ? 'rgba(70,180,100,0.4)' : 'rgba(180,70,70,0.4)'}`,
             fontSize: 14, color: attackerWon ? '#a0e0b0' : '#e0a0a0',
           }}>
-            {attackerWon
-              ? `${battle.attacker_username} took the hex with ${Math.round(Number(battle.attacker_troops))} troops surviving.`
-              : `${battle.defender_username} held the hex with ${Math.round(Number(battle.defender_troops))} troops surviving.`}
+            <div style={{ marginBottom: 10 }}>
+              {attackerWon
+                ? `${battle.attacker_username} took the hex with ${Math.round(Number(battle.attacker_troops))} troops surviving.`
+                : `${battle.defender_username} held the hex with ${Math.round(Number(battle.defender_troops))} troops surviving.`}
+            </div>
+            <button onClick={onClose} style={{
+              padding: '6px 16px',
+              background: 'rgba(255,255,255,0.06)', border: `1px solid ${attackerWon ? 'rgba(70,180,100,0.5)' : 'rgba(180,70,70,0.5)'}`,
+              borderRadius: 5, color: attackerWon ? '#a0e0b0' : '#e0a0a0', cursor: 'pointer',
+              fontSize: 13, letterSpacing: 1, fontFamily: 'Georgia, serif',
+            }}>
+              Continue →
+            </button>
           </div>
         )}
 

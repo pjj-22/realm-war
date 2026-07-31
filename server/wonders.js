@@ -6,10 +6,9 @@
 // Dependencies are injected (announce, wonders) so this is testable against
 // pg-mem without pulling in socket.io - same pattern as founding.js.
 import { latLngToCell } from 'h3-js'
+import { HEX_RESOLUTION } from './config.js'
 
-export const WONDER_RESOLUTION = 7
-
-export const WONDERS = [
+const WONDER_DEFS = [
   { id: 'eiffel',      name: 'Eiffel Tower',           lat: 48.8584,  lng: 2.2945 },
   { id: 'giza',        name: 'Great Pyramids of Giza', lat: 29.9792,  lng: 31.1342 },
   { id: 'colosseum',   name: 'Colosseum',              lat: 41.8902,  lng: 12.4922 },
@@ -23,7 +22,20 @@ export const WONDERS = [
   { id: 'opera',       name: 'Sydney Opera House',     lat: -33.8568, lng: 151.2153 },
   { id: 'liberty',     name: 'Statue of Liberty',      lat: 40.6892,  lng: -74.0445 },
   { id: 'goldengate',  name: 'Golden Gate Bridge',     lat: 37.8199,  lng: -122.4783 },
-].map(w => ({ ...w, h3: latLngToCell(w.lat, w.lng, WONDER_RESOLUTION), title: `Keeper of the ${w.name}` }))
+]
+
+// Stable array reference (like strategic.js's Maps) - rebuildWonders()
+// mutates each item's .h3 in place so a season's resolution change is picked
+// up by every consumer automatically, no re-import needed.
+export const WONDERS = WONDER_DEFS.map(w => ({ ...w, h3: null, title: `Keeper of the ${w.name}` }))
+
+export function rebuildWonders(resolution = HEX_RESOLUTION) {
+  for (const w of WONDERS) {
+    w.h3 = latLngToCell(w.lat, w.lng, resolution)
+  }
+}
+
+rebuildWonders()
 
 // Poll current hex ownership against wonder_holders and announce transitions.
 // Seizures get a world event; a wonder going unheld (season wipe, decay) is

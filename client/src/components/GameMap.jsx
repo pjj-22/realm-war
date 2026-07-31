@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
-import { useSocket } from '../hooks/useSocket'
+import { createPortal } from 'react-dom'
+import { useSocket, identifySocket } from '../hooks/useSocket'
 import { toast } from '../toastBus'
 import maplibregl from 'maplibre-gl'
-import { polygonToCells, cellToBoundary, cellToLatLng, cellToParent, gridDisk, gridPathCells } from 'h3-js'
+import { polygonToCells, cellToBoundary, cellToLatLng, gridDisk, gridPathCells } from 'h3-js'
 import 'maplibre-gl/dist/maplibre-gl.css'
 import BottomDrawer from './BottomDrawer'
 import ArmiesHUD from './ArmiesHUD'
@@ -18,36 +19,47 @@ import { useIsMobile } from '../hooks/useIsMobile'
 import { api } from '../api/client'
 import { GoldIcon, SearchIcon, AllianceIcon, SwordsIcon, WarningIcon, KeepIcon } from './Icons'
 import { resolveFlag, flagImageId, flagToImageData } from '../flags'
-import { shortHex } from '../text'
+import { playSound } from '../sound.js'
 
 
 const HEX_RESOLUTION = 7
 // Chat ships behind a flag until there's moderation (see server config.js)
 const CHAT_ON = import.meta.env.VITE_CHAT_ENABLED === 'true'
 
+// Map marker sprites are rasterized once (via Image() + addImage) and reused
+// as WebGL textures - unlike the DOM <Svg> icons in Icons.jsx, which stay
+// vector and rescale losslessly, these bake to a fixed pixel size. Generating
+// them at only their logical CSS size makes them soft/blurry on any
+// high-DPI (retina) display, since MapLibre would otherwise assume 1x source
+// density and upscale. DPR renders each sprite's own width/height attributes
+// (not just the viewBox) at device pixel density, and pixelRatio on
+// addImage tells MapLibre how to map that back to logical size - so every
+// existing icon-size value elsewhere keeps working unchanged.
+const DPR = typeof window !== 'undefined' ? Math.min(window.devicePixelRatio || 1, 3) : 1
+
 function addSvgImage(map, id, svg) {
   if (map.hasImage?.(id)) return
   const img = new Image()
-  img.onload = () => { if (map && !map.hasImage?.(id)) map.addImage(id, img) }
+  img.onload = () => { if (map && !map.hasImage?.(id)) map.addImage(id, img, { pixelRatio: DPR }) }
   img.src = 'data:image/svg+xml;base64,' + btoa(svg)
 }
 
 // Mini building badges - white glyph on the building's pip color
 const PIP_SPRITES = {
-  'pip-mine': `<svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 16 16">
+  'pip-mine': `<svg xmlns="http://www.w3.org/2000/svg" width="${28 * DPR}" height="${28 * DPR}" viewBox="0 0 16 16">
     <circle cx="8" cy="8" r="7" fill="#c9902a" stroke="rgba(0,0,0,0.55)" stroke-width="1.4"/>
     <g transform="translate(2.9,2.9) scale(0.64)">
       <line x1="5" y1="13.5" x2="10.8" y2="4.4" stroke="#fff" stroke-width="2" stroke-linecap="round"/>
       <path d="M4 5.8C6.5 2.2 11 2 13.3 4.4c-1.8-.5-4.3-.3-6 .8Z" fill="#fff"/>
     </g>
   </svg>`,
-  'pip-barracks': `<svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 16 16">
+  'pip-barracks': `<svg xmlns="http://www.w3.org/2000/svg" width="${28 * DPR}" height="${28 * DPR}" viewBox="0 0 16 16">
     <circle cx="8" cy="8" r="7" fill="#a84040" stroke="rgba(0,0,0,0.55)" stroke-width="1.4"/>
     <g transform="translate(3.1,2.9) scale(0.62)">
       <path d="M3.5 14V5.5h1.6V3.8h1.8v1.7h2.2V3.8h1.8v1.7h1.6V14Z" fill="#fff"/>
     </g>
   </svg>`,
-  'pip-fort': `<svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 16 16">
+  'pip-fort': `<svg xmlns="http://www.w3.org/2000/svg" width="${28 * DPR}" height="${28 * DPR}" viewBox="0 0 16 16">
     <circle cx="8" cy="8" r="7" fill="#5a9840" stroke="rgba(0,0,0,0.55)" stroke-width="1.4"/>
     <g transform="translate(3.1,2.9) scale(0.62)">
       <path d="M8 1.8l5 1.9v4.1c0 3.3-3.4 5.6-5 6.4-1.6-.8-5-3.1-5-6.4V3.7Z" fill="#fff"/>
@@ -55,7 +67,7 @@ const PIP_SPRITES = {
   </svg>`,
 }
 
-const GARRISON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 16 16">
+const GARRISON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="${32 * DPR}" height="${32 * DPR}" viewBox="0 0 16 16">
   <g stroke="rgba(0,0,0,0.7)" stroke-width="3" stroke-linecap="round" fill="none">
     <path d="M3 2.5l9 9M13 2.5l-9 9"/><path d="M10.6 11.4l-1.4 1.4M5.4 11.4l1.4 1.4"/>
   </g>
@@ -66,7 +78,7 @@ const GARRISON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="32" height=
 
 // World Wonders: each landmark gets its own gold silhouette on the shared
 // dark disc, so the set reads as one family but every wonder is recognizable
-const wonderSprite = (glyph) => `<svg xmlns="http://www.w3.org/2000/svg" width="44" height="44" viewBox="0 0 22 22">
+const wonderSprite = (glyph) => `<svg xmlns="http://www.w3.org/2000/svg" width="${44 * DPR}" height="${44 * DPR}" viewBox="0 0 22 22">
   <circle cx="11" cy="11" r="10" fill="rgba(18,12,30,0.92)" stroke="#e0b84a" stroke-width="1.4"/>
   <g fill="#e8c55a">${glyph}</g>
 </svg>`
@@ -143,7 +155,7 @@ const WONDER_SPRITES = {
 }
 
 // Champion's Monument: gold obelisk on a dark disc - permanent across seasons
-const MONUMENT_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="44" height="44" viewBox="0 0 22 22">
+const MONUMENT_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="${44 * DPR}" height="${44 * DPR}" viewBox="0 0 22 22">
   <circle cx="11" cy="11" r="10" fill="rgba(18,12,30,0.92)" stroke="#b89ae0" stroke-width="1.4"/>
   <g fill="#e8c55a">
     <path d="M11 3.4 L12.7 6 L12.1 13.6 H9.9 L9.3 6 Z"/>
@@ -165,40 +177,38 @@ function getViewportPolygon(map) {
   ]]
 }
 
-function getViewportHexes(map) {
+function getViewportHexes(map, resolution = HEX_RESOLUTION) {
   if (map.getZoom() < 8) return []
-  return polygonToCells(getViewportPolygon(map), HEX_RESOLUTION)
+  return polygonToCells(getViewportPolygon(map), resolution)
 }
 
-function getOverviewHexes(map) {
+function getOverviewHexes(map, baseResolution = HEX_RESOLUTION) {
   const zoom = map.getZoom()
-  if (zoom >= 8 || zoom < 3) return { cells: [], res: 4 }
-  const res = zoom < 5 ? 2 : zoom < 6 ? 3 : zoom < 7 ? 4 : 5
+  if (zoom >= 8 || zoom < 3) return { cells: [], res: Math.max(0, baseResolution - 3) }
+  // Coarser tiers as you zoom out, relative to the base resolution (at the
+  // default res 7 this reproduces the original fixed ladder 2/3/4/5) instead
+  // of hardcoded absolute resolutions that only made sense at res 7.
+  const offset = zoom < 5 ? 5 : zoom < 6 ? 4 : zoom < 7 ? 3 : 2
+  const res = Math.max(0, baseResolution - offset)
   return { cells: polygonToCells(getViewportPolygon(map), res), res }
 }
 
-function buildOverviewGeoJSON(cells, res, claimedHexes) {
-  // Bottom-up: walk claimed hexes once, find their parent at overview res - O(claimed) not O(cells × children)
-  const ownerByParent = {}
-  for (const [cell, claimed] of Object.entries(claimedHexes)) {
-    if (!claimed.owner_id) continue
-    const parent = cellToParent(cell, res)
-    if (!ownerByParent[parent]) ownerByParent[parent] = {}
-    const entry = ownerByParent[parent][claimed.owner_id] ||= { count: 0, color: claimed.color }
-    entry.count++
-  }
-
+// overviewSummary is a pre-aggregated { [parentCell]: { color } } map from
+// GET /hexes/overview - the dominant-owner-per-region tally now happens
+// server-side (scanning every claimed hex to summarize a huge low-zoom area
+// isn't something the client has the data to do anymore now that its own
+// hex cache is scoped to "mine + current viewport", and doing it server-side
+// keeps the response tiny regardless of total hex count or zoom level).
+function buildOverviewGeoJSON(cells, overviewSummary) {
   return {
     type: 'FeatureCollection',
     features: cells.map(cell => {
       const boundary = cellToBoundary(cell)
       const coords = boundary.map(([lat, lng]) => [lng, lat])
       coords.push(coords[0])
-      const tally = ownerByParent[cell] || {}
-      const dominant = Object.values(tally).sort((a, b) => b.count - a.count)[0]
       return {
         type: 'Feature',
-        properties: { color: dominant?.color || null },
+        properties: { color: overviewSummary[cell]?.color || null },
         geometry: { type: 'Polygon', coordinates: [coords] },
       }
     }),
@@ -386,43 +396,66 @@ function HarvestCountdown({ nextTickAt, onExpire, compact }) {
   )
 }
 
-function GoldIncomeTooltip({ hexCount, mines, incomeByCountry }) {
+function GoldIncomeTooltip({ hexCount, mines, incomeByCountry, wonderIncome, total }) {
   const [hover, setHover] = useState(false)
-  const total = hexCount + mines * 3
+  const [pos, setPos] = useState(null)
+  const anchorRef = useRef(null)
+  // Server total (income_per_harvest) is authoritative - it's the only place
+  // that includes strategic-hex and city-zone bonuses. This naive fallback is
+  // only for the rare case stats hasn't loaded that field yet.
+  const displayTotal = total ?? (hexCount + mines * 3)
+
+  function show() {
+    const r = anchorRef.current?.getBoundingClientRect()
+    if (r) setPos({ top: r.bottom + 6, left: r.left + r.width / 2 })
+    setHover(true)
+  }
+
   return (
     <span
+      ref={anchorRef}
       style={{ fontSize: 11, color: '#6a5848', marginLeft: 2, cursor: 'default', position: 'relative' }}
-      onMouseEnter={() => setHover(true)}
+      onMouseEnter={show}
       onMouseLeave={() => setHover(false)}
     >
-      +{total}g
-      {hover && (
+      +{displayTotal}g
+      {hover && pos && createPortal(
         <div style={{
-          position: 'absolute', top: '100%', left: '50%', transform: 'translateX(-50%)',
-          marginTop: 6,
+          position: 'fixed', top: pos.top, left: pos.left, transform: 'translateX(-50%)',
           background: 'rgba(10,7,2,0.97)', border: '1px solid rgba(160,110,30,0.45)',
           borderRadius: 6, padding: '10px 14px',
           fontSize: 12, color: '#c4b498', fontFamily: 'Georgia, serif',
           boxShadow: '0 4px 20px rgba(0,0,0,0.6)',
-          zIndex: 100, minWidth: 200, maxWidth: 280,
+          zIndex: 1000, minWidth: 200, maxWidth: 280,
         }}>
           <div style={{ color: '#9a8060', fontSize: 10, letterSpacing: 2, textTransform: 'uppercase', marginBottom: 8 }}>Income per harvest</div>
 
           {incomeByCountry?.length > 0 ? (
             <>
-              {incomeByCountry.map(e => (
-                <div key={e.country} style={{ display: 'flex', justifyContent: 'space-between', gap: 16, marginBottom: 4, lineHeight: 1.6 }}>
-                  <span style={{ color: '#a09070' }}>
-                    {e.country}
-                    {e.mines > 0 && <span style={{ color: '#6a5838', fontSize: 10 }}> ({e.hexes}h+{e.mines}m)</span>}
-                    {e.mines === 0 && <span style={{ color: '#6a5838', fontSize: 10 }}> ({e.hexes}h)</span>}
-                  </span>
-                  <span style={{ color: '#d4b870', flexShrink: 0 }}>+{e.income}g</span>
+              {incomeByCountry.map(e => {
+                const parts = [`${e.hexes}h`]
+                if (e.mines > 0) parts.push(`+${e.mines}m`)
+                if (e.strategic > 0) parts.push(`+${e.strategic}★`)
+                if (e.zone > 0) parts.push(`+${e.zone}◇`)
+                return (
+                  <div key={e.country} style={{ display: 'flex', justifyContent: 'space-between', gap: 16, marginBottom: 4, lineHeight: 1.6 }}>
+                    <span style={{ color: '#a09070' }}>
+                      {e.country}
+                      <span style={{ color: '#6a5838', fontSize: 10 }}> ({parts.join('')})</span>
+                    </span>
+                    <span style={{ color: '#d4b870', flexShrink: 0 }}>+{e.income}g</span>
+                  </div>
+                )
+              })}
+              {wonderIncome > 0 && (
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 16, marginBottom: 4, lineHeight: 1.6 }}>
+                  <span style={{ color: '#a09070' }}>World Wonders</span>
+                  <span style={{ color: '#d4b870', flexShrink: 0 }}>+{wonderIncome}g</span>
                 </div>
-              ))}
+              )}
               <div style={{ borderTop: '1px solid rgba(160,110,30,0.2)', marginTop: 6, paddingTop: 6, display: 'flex', justifyContent: 'space-between', color: '#e0c070' }}>
                 <span>Total</span>
-                <span>+{total}g</span>
+                <span>+{displayTotal}g</span>
               </div>
             </>
           ) : (
@@ -438,11 +471,12 @@ function GoldIncomeTooltip({ hexCount, mines, incomeByCountry }) {
                 </div>
               )}
               <div style={{ borderTop: '1px solid rgba(160,110,30,0.2)', marginTop: 4, paddingTop: 4, display: 'flex', justifyContent: 'space-between', color: '#e0c070' }}>
-                <span>Total</span><span>+{total}g</span>
+                <span>Total</span><span>+{displayTotal}g</span>
               </div>
             </>
           )}
-        </div>
+        </div>,
+        document.body
       )}
     </span>
   )
@@ -451,7 +485,17 @@ function GoldIncomeTooltip({ hexCount, mines, incomeByCountry }) {
 export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onShowHelp }) {
   const mapContainer = useRef(null)
   const map = useRef(null)
+  // claimedRef is the merge of two sources, kept separate so each can be
+  // refreshed independently: myHexesRef (own + allied territory - small,
+  // always fully loaded regardless of viewport, needed for fog-of-war/stats/
+  // auto-train) and viewportHexesRef (whatever's currently on screen -
+  // refetched on pan/zoom). Previously claimedRef was populated from one
+  // GET /hexes call that returned every claimed hex on the entire map -
+  // multi-megabyte and growing all season, refetched on every hexes:update.
   const claimedRef = useRef({})
+  const myHexesRef = useRef({})
+  const viewportHexesRef = useRef({})
+  const overviewSummaryRef = useRef({}) // parent-cell -> {color}, for the low-zoom overview layer
   const [selectedHex, setSelectedHex] = useState(null)
   const [zoom, setZoom] = useState(3)
   const [marchMode, setMarchMode] = useState(null) // { fromHex, type, quantity }
@@ -461,6 +505,11 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
   const [activeBattles, setActiveBattles] = useState([])
   const [stats, setStats] = useState(null)
   const [activeBattle, setActiveBattle] = useState(null)
+  const dismissedBattleRef = useRef(null) // battle id the player already closed - don't reopen it from the background poll
+
+  // Joins this connection's personal-events room so insertEvent() (server)
+  // can target just us instead of broadcasting to every connected client.
+  useEffect(() => { identifySocket(player?.id) }, [player?.id])
   const [alliance, setAlliance] = useState(null)
   const [showAlliance, setShowAlliance] = useState(false)
   const allyIdsRef = useRef(null)
@@ -489,18 +538,24 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
   // min_troops_to_claim for the pending-claim "3/5" indicator.
   const decayConfigRef = useRef({ decay_hex_threshold: 30, decay_scale_hexes_per_step: 10, min_troops_to_claim: 5 })
 
+  // The active season's H3 resolution - a ref (not state) because it only
+  // ever changes at a season boundary, which already forces a full page
+  // reload (see loadSeason below) rather than trying to live-rebuild the
+  // map's hex grid and MapLibre sources for a new resolution mid-session.
+  const hexResolutionRef = useRef(HEX_RESOLUTION)
+
   // These read only refs (map, claimedRef, playerRef, etc.) so they're stable
   // across renders - safe to depend on elsewhere without causing re-runs.
   const updateHexes = useCallback(() => {
     if (!map.current?.getSource('hexes')) return
-    const cells = getViewportHexes(map.current)
+    const cells = getViewportHexes(map.current, hexResolutionRef.current)
     map.current.getSource('hexes').setData(buildGeoJSON(cells, claimedRef.current, visibleSetRef.current))
   }, [])
 
   const updateOverview = useCallback(() => {
     if (!map.current?.getSource('overview-hexes')) return
-    const { cells, res } = getOverviewHexes(map.current)
-    map.current.getSource('overview-hexes').setData(buildOverviewGeoJSON(cells, res, claimedRef.current))
+    const { cells } = getOverviewHexes(map.current, hexResolutionRef.current)
+    map.current.getSource('overview-hexes').setData(buildOverviewGeoJSON(cells, overviewSummaryRef.current))
   }, [])
 
   const updateClaimed = useCallback(() => {
@@ -544,16 +599,54 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
   const { display: resources } = useResourceTicker(player)
   const isMobile = useIsMobile()
 
-  const loadClaimed = useCallback(async () => {
+  const mergeClaimed = useCallback(() => {
+    // myHexesRef last so it wins on overlap - it's the more authoritative of
+    // the two for any hex that happens to be both mine and on screen.
+    claimedRef.current = { ...viewportHexesRef.current, ...myHexesRef.current }
+    updateHexes()
+    updateClaimed()
+  }, [updateHexes, updateClaimed])
+
+  const loadMyHexes = useCallback(async () => {
     try {
-      const hexes = await api.getHexes()
+      const hexes = await api.getMyHexes()
       const byIndex = {}
       hexes.forEach(h => { byIndex[h.h3_index] = h })
-      claimedRef.current = byIndex
-      updateHexes()
-      updateClaimed()
+      myHexesRef.current = byIndex
+      mergeClaimed()
     } catch { /* map not ready yet, or a transient fetch failure - next tick retries */ }
-  }, [updateHexes, updateClaimed])
+  }, [mergeClaimed])
+
+  const loadViewportHexes = useCallback(async () => {
+    if (!map.current) return
+    const cells = getViewportHexes(map.current, hexResolutionRef.current)
+    if (cells.length === 0) return // zoomed out past individual-hex range - overview layer handles this instead
+    try {
+      const hexes = await api.getHexesViewport(cells)
+      const byIndex = {}
+      hexes.forEach(h => { byIndex[h.h3_index] = h })
+      viewportHexesRef.current = byIndex
+      mergeClaimed()
+    } catch { /* transient fetch failure - next pan/zoom or hexes:update retries */ }
+  }, [mergeClaimed])
+
+  const loadOverviewSummary = useCallback(async () => {
+    if (!map.current) return
+    const { cells, res } = getOverviewHexes(map.current, hexResolutionRef.current)
+    if (cells.length === 0) return // zoomed in past overview range - viewport layer handles this instead
+    try {
+      overviewSummaryRef.current = await api.getHexOverview(res)
+      updateOverview()
+    } catch { /* transient fetch failure - next pan/zoom or hexes:update retries */ }
+  }, [updateOverview])
+
+  // Kept as one combined call so every existing call site (claim, build,
+  // rally, battle resolution, etc.) that used to mean "the hex I just
+  // touched changed, refresh" still does the right thing unchanged - it's
+  // always either my own hex or one I'm currently looking at.
+  const loadClaimed = useCallback(async () => {
+    await Promise.all([loadMyHexes(), loadViewportHexes()])
+  }, [loadMyHexes, loadViewportHexes])
 
   const strategicRef = useRef({})
   const zonesRef = useRef(new Map()) // h3 → city name, for click enrichment
@@ -565,6 +658,7 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
         decay_hex_threshold: cfg.decay_hex_threshold ?? 30,
         decay_scale_hexes_per_step: cfg.decay_scale_hexes_per_step ?? 10,
         min_troops_to_claim: cfg.min_troops_to_claim ?? 5,
+        troop_gold_cost: cfg.troop_gold_cost ?? 10,
       }
     }).catch(() => {})
   }, [])
@@ -776,17 +870,28 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
       // Rolled over since we last looked? Show the final-standings moment.
       const lastSeen = parseInt(localStorage.getItem('rw_season') || '0', 10)
       if (lastSeen > 0 && s.number > lastSeen) {
+        // A resolution change only ever takes effect on a brand-new season
+        // (which already wipes all hex data server-side). Rebuilding this
+        // client's hex grid, viewport caches, and MapLibre sources in place
+        // for a new resolution mid-session is a lot riskier than just
+        // reloading fresh - so do that instead of trying to patch it live.
+        if (s.hex_resolution != null && s.hex_resolution !== hexResolutionRef.current) {
+          localStorage.setItem('rw_season', String(s.number))
+          window.location.reload()
+          return
+        }
         const hist = await api.getSeasonHistory()
         setSeasonHistory(hist)
         const prev = hist.find(h => h.number === s.number - 1) || hist[0]
         if (prev) setEndedSeason(prev)
         if (playerRef.current) api.me().then(p => onPlayerUpdate?.(p)).catch(() => {})
       }
+      hexResolutionRef.current = s.hex_resolution ?? HEX_RESOLUTION
       localStorage.setItem('rw_season', String(s.number))
     } catch { /* no active season */ }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  useEffect(() => { loadClaimed() }, [loadClaimed])
+  useEffect(() => { loadClaimed(); loadOverviewSummary() }, [loadClaimed, loadOverviewSummary])
   useEffect(() => { loadArmies() }, [loadArmies])
   useEffect(() => { loadPendingClaims() }, [loadPendingClaims])
 
@@ -823,10 +928,25 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
 
   useEffect(() => { loadSeason() }, [loadSeason])
 
+  // hexes:update/armies:update fire very often during active bot combat -
+  // loadClaimed() alone pulls every claimed hex on the map (2MB+ and
+  // growing as the season goes on), so refetching on every single event
+  // with bots numerous meant repeatedly downloading/parsing that on every
+  // client, constantly. Debounce so a burst of activity collapses into one
+  // fetch, same pattern already used in LeaderboardPanel for the same reason.
+  const hexesDebounceRef = useRef(null)
+  const armiesDebounceRef = useRef(null)
+
   // Socket-driven updates - replace polling intervals
   useSocket({
-    'hexes:update': () => { loadClaimed(); loadStrategic(); loadPendingClaims() },
-    'armies:update': () => { loadArmies(); loadPendingClaims() },
+    'hexes:update': () => {
+      clearTimeout(hexesDebounceRef.current)
+      hexesDebounceRef.current = setTimeout(() => { loadClaimed(); loadOverviewSummary(); loadStrategic(); loadPendingClaims() }, 800)
+    },
+    'armies:update': () => {
+      clearTimeout(armiesDebounceRef.current)
+      armiesDebounceRef.current = setTimeout(() => { loadArmies(); loadPendingClaims() }, 800)
+    },
     'battle:update': () => { loadActiveBattles(); api.me().then(p => onPlayerUpdate?.(p)).catch(() => {}) },
     'tick': () => { loadStats(); api.me().then(p => onPlayerUpdate?.(p)).catch(() => {}) },
     'season:update': () => { loadSeason(); loadLandmarks() },
@@ -834,6 +954,7 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
   })
 
   useEffect(() => {
+    dismissedBattleRef.current = null
     if (!selectedHex?.h3) { setActiveBattle(null); return }
     async function checkBattle() {
       try {
@@ -841,6 +962,10 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
         const newBattle = result.battle || null
         setActiveBattle(prev => {
           if (prev && !newBattle) loadClaimed() // battle just resolved - refresh map immediately
+          // The server keeps a concluded battle visible for a 20s results
+          // window - without this check, the next poll would silently pop
+          // the panel back open right after the player closed it.
+          if (newBattle && newBattle.id === dismissedBattleRef.current) return null
           return newBattle
         })
       } catch { setActiveBattle(null) }
@@ -1197,7 +1322,7 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
       })
 
       // Crossed-swords sprite for marching armies (matches Icons.jsx)
-      const armySvg = `<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 16 16">
+      const armySvg = `<svg xmlns="http://www.w3.org/2000/svg" width="${40 * DPR}" height="${40 * DPR}" viewBox="0 0 16 16">
         <g stroke="rgba(0,0,0,0.65)" stroke-width="3" stroke-linecap="round" fill="none">
           <path d="M3 2.5l9 9M13 2.5l-9 9"/><path d="M10.6 11.4l-1.4 1.4M5.4 11.4l1.4 1.4"/>
         </g>
@@ -1205,10 +1330,10 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
           <path d="M3 2.5l9 9M13 2.5l-9 9"/><path d="M10.6 11.4l-1.4 1.4M5.4 11.4l1.4 1.4"/>
         </g>
       </svg>`
-      const armyImg = new Image(40, 40)
+      const armyImg = new Image()
       armyImg.onload = () => {
         if (!map.current || map.current.hasImage?.('army-icon')) return
-        map.current.addImage('army-icon', armyImg)
+        map.current.addImage('army-icon', armyImg, { pixelRatio: DPR })
         map.current.setLayoutProperty('army-label', 'icon-image', 'army-icon')
         map.current.setLayoutProperty('army-label', 'icon-size', 0.42)
         map.current.setLayoutProperty('army-label', 'icon-allow-overlap', true)
@@ -1303,8 +1428,13 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
       }
     })
 
-    map.current.on('moveend', () => { updateHexes(); updateOverview(); checkViewport() })
-    map.current.on('zoomend', () => { updateHexes(); updateOverview(); checkViewport() })
+    // Re-render immediately from whatever's already cached (instant, even if
+    // stale/incomplete for a newly-panned-to area), then fetch fresh data for
+    // the new viewport - panning to a claimed hex we've never loaded a value
+    // for should be blank rather than wrong, not silently show nothing until
+    // the next hexes:update happens to come along.
+    map.current.on('moveend', () => { updateHexes(); updateOverview(); checkViewport(); loadViewportHexes(); loadOverviewSummary() })
+    map.current.on('zoomend', () => { updateHexes(); updateOverview(); checkViewport(); loadViewportHexes(); loadOverviewSummary() })
     map.current.on('zoom', () => {
       const z = map.current.getZoom()
       setZoom(z)
@@ -1403,7 +1533,7 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
     }
     // All of these are useCallback-memoized on refs/[] only, so they're stable
     // across renders - listing them here doesn't cause the map to reinitialize.
-  }, [checkViewport, enrichHex, loadClaimed, loadLandmarks, loadStrategic, loadZones, updateClaimed, updateHexes, updateOverview])
+  }, [checkViewport, enrichHex, loadClaimed, loadLandmarks, loadOverviewSummary, loadStrategic, loadViewportHexes, loadZones, updateClaimed, updateHexes, updateOverview])
 
   useEffect(() => {
     if (!map.current) return
@@ -1620,6 +1750,7 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
     if (!player) return
     try {
       const result = await api.claimHex(h3Index)
+      playSound('capture')
       if (result.isCapital) {
         onPlayerUpdate?.({ capital_hex: h3Index })
         toast('Capital founded! A free Mine has been built.', 'success')
@@ -1631,6 +1762,63 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
       setSelectedHex(prev => ({ ...prev, color: player.color, username: player.username, owner: player.id }))
     } catch (err) {
       toast(err.message)
+    }
+  }
+
+  async function handleSetCapital(h3Index) {
+    if (!player) return
+    try {
+      await api.setCapital(h3Index)
+      playSound('capture')
+      onPlayerUpdate?.({ capital_hex: h3Index })
+      toast('Capital founded here!', 'success')
+      await loadClaimed()
+      updateClaimed()
+    } catch (err) {
+      toast(err.message)
+    }
+  }
+
+  // Spends available gold on a random handful of owned hexes instead of
+  // requiring a manual per-hex trip to the Military tab - a QoL shortcut,
+  // not a new training rule, so it just calls the same /military/train
+  // endpoint the Military tab uses, repeatedly.
+  async function handleAutoTrain() {
+    if (!player) return
+    const owned = Object.values(claimedRef.current).filter(h => h.owner_id === player.id)
+    if (owned.length === 0) { toast('Claim a hex first.'); return }
+
+    const goldPerTroop = decayConfigRef.current.troop_gold_cost || 10
+    let budget = player.gold
+    if (budget < goldPerTroop) { toast(`Need at least ${goldPerTroop}g to train.`); return }
+
+    const shuffled = [...owned].sort(() => Math.random() - 0.5)
+    const maxHexes = Math.max(1, Math.ceil(owned.length / 2))
+    const targets = shuffled.slice(0, 1 + Math.floor(Math.random() * maxHexes))
+
+    let trainedTotal = 0
+    let hexesUsed = 0
+    for (let i = 0; i < targets.length; i++) {
+      const maxAffordable = Math.floor(budget / goldPerTroop)
+      if (maxAffordable < 1) break
+      const isLast = i === targets.length - 1
+      const qty = isLast ? maxAffordable : Math.max(1, Math.floor(maxAffordable * (0.2 + Math.random() * 0.5)))
+      try {
+        const r = await api.trainTroops(targets[i].h3_index, 'troop', qty)
+        budget = r.player.gold
+        trainedTotal += qty
+        hexesUsed++
+      } catch (err) {
+        toast(err.message)
+        break
+      }
+    }
+
+    if (trainedTotal > 0) {
+      onPlayerUpdate?.({ gold: budget })
+      toast(`Queued ${trainedTotal} troop${trainedTotal !== 1 ? 's' : ''} across ${hexesUsed} hex${hexesUsed !== 1 ? 'es' : ''}.`, 'success')
+    } else {
+      toast('Not enough gold to train anywhere.')
     }
   }
 
@@ -1653,19 +1841,22 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
       return
     }
     // Short hex tag (the #XXXXXX shown when you click a claimed hex) - only
-    // ever shown for claimed hexes, so only search among those. Falls through
-    // to geocoding below if nothing matches, rather than erroring outright,
-    // since a short hex-looking string could coincidentally also be a place.
+    // ever shown for claimed hexes. Looked up server-side (not just among
+    // locally-loaded hexes) since the client no longer has the whole world's
+    // claim data cached - see /hexes/search. Falls through to geocoding
+    // below if nothing matches, rather than erroring outright, since a short
+    // hex-looking string could coincidentally also be a place.
     if (/^[0-9a-f]{3,9}$/i.test(q)) {
-      const needle = q.toUpperCase()
-      const match = Object.keys(claimedRef.current).find(h3 => shortHex(h3) === needle)
-      if (match) {
-        const [lat, lng] = cellToLatLng(match)
-        map.current?.flyTo({ center: [lng, lat], zoom: 12 })
-        setSearchOpen(false)
-        setSearchQuery('')
-        return
-      }
+      try {
+        const result = await api.searchHexCode(q)
+        if (result?.h3Index) {
+          const [lat, lng] = cellToLatLng(result.h3Index)
+          map.current?.flyTo({ center: [lng, lat], zoom: 12 })
+          setSearchOpen(false)
+          setSearchQuery('')
+          return
+        }
+      } catch { /* fall through to geocoding below */ }
     }
     // Geocode with Nominatim - a place name, not a specific hex, so a wider
     // zoom stays appropriate (zooming to hex-level on "France" would be wrong).
@@ -1755,7 +1946,7 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
                   {goldOverCap ? <WarningIcon size={11} color="#e8a020" /> : `/ ${goldCap}`}
                 </span>
               )}
-              {stats && !isMobile && <GoldIncomeTooltip hexCount={stats.hex_count || 0} mines={stats.mines || 0} incomeByCountry={stats.income_by_country} />}
+              {stats && !isMobile && <GoldIncomeTooltip hexCount={stats.hex_count || 0} mines={stats.mines || 0} incomeByCountry={stats.income_by_country} wonderIncome={stats.wonder_income || 0} total={stats.income_per_harvest} />}
             </div>
             {stats?.next_tick_at && <HarvestCountdown nextTickAt={stats.next_tick_at} onExpire={loadStats} compact={isMobile} />}
             {!isMobile && <span style={{ fontSize: 13, color: '#7a6890' }}>⬢ {stats?.hex_count ?? ownedHexCount}</span>}
@@ -1822,6 +2013,7 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
           player={player}
           claimedRef={claimedRef}
           onRefresh={() => api.getArmies().then(setArmies).catch(() => {})}
+          onAutoTrain={handleAutoTrain}
           onFlyTo={(h3) => {
             try {
               const [lat, lng] = cellToLatLng(h3)
@@ -1873,9 +2065,11 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
         </button>
       )}
 
-      {/* ── Home - floating, shown when your capital is off screen (hidden
-          while the drawer/battle panel is up, which sits over the same spot) ── */}
-      {player?.capital_hex && !capitalInView && !selectedHex && !activeBattle && (
+      {/* ── Home - floating, shown whenever your capital is off screen. Floats
+          above the drawer/battle panel instead of hiding behind it, since
+          most play happens with a hex selected - hiding it there meant it
+          almost never showed when it was actually needed. ── */}
+      {player?.capital_hex && !capitalInView && (
         <button
           title="Return to your capital"
           onClick={() => {
@@ -1883,12 +2077,15 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
             window.dispatchEvent(new CustomEvent('rw:flyto', { detail: { lat, lng, zoom: 8.8 } }))
           }}
           style={{
-            position: 'absolute', bottom: 24, right: 16, zIndex: 5,
+            position: 'absolute',
+            bottom: (selectedHex || activeBattle) ? (isMobile ? 'calc(48dvh + 76px)' : 'calc(36vh + 76px)') : 24,
+            right: 16, zIndex: 5,
             display: 'flex', alignItems: 'center', gap: 7, padding: '10px 16px',
             background: 'rgba(20,15,40,0.92)', border: '1px solid rgba(224,184,74,0.55)',
             borderRadius: 22, color: '#e0c070', cursor: 'pointer',
             fontFamily: 'Georgia, serif', fontSize: 13, letterSpacing: 2,
             boxShadow: '0 2px 14px rgba(0,0,0,0.5)',
+            transition: 'bottom 0.2s ease',
           }}>
           <KeepIcon size={15} color="#e0c070" /> HOME
         </button>
@@ -2034,7 +2231,7 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
           hex={selectedHex}
           player={player}
           onMarchStart={(targetHex, side) => setMarchMode({ fromHex: null, targetHex, side, battleMode: true })}
-          onClose={() => setActiveBattle(null)}
+          onClose={() => { dismissedBattleRef.current = activeBattle?.id ?? null; setActiveBattle(null) }}
         />
       )}
 
@@ -2048,6 +2245,7 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
           getFriendlyNeighborCount={getFriendlyNeighborCount}
           onStatsRefresh={loadStats}
           onClaim={handleClaim}
+          onSetCapital={handleSetCapital}
           onLoginRequired={onLoginRequired}
           onBuild={(updatedPlayer, h3Index, buildingType) => {
             onPlayerUpdate(updatedPlayer)

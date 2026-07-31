@@ -52,7 +52,11 @@ export async function insertEvent(playerId, type, message, hexIndex = null) {
       'INSERT INTO events (player_id, type, message, hex_index) VALUES ($1,$2,$3,$4)',
       [playerId, type, message, hexIndex]
     )
-    getIO()?.emit('events:new')
+    // Targeted at just this player's room (see socket.js) - a global emit here
+    // meant every connected client got pinged for every single battle's
+    // events, bot-vs-bot included, which is by far the most frequent socket
+    // traffic in the game once bots are numerous.
+    getIO()?.to(`player-${playerId}`).emit('events:new')
   } catch (err) {
     console.error('[event] Failed to insert event:', err.message)
   }
@@ -645,7 +649,14 @@ export async function processBattleRounds() {
                 sendPush(battle.defender_id, 'Your capital has fallen!', 'All is not lost - claim any free hex to found a new capital and rebuild.', { hex: battle.h3_index })
                 log(`[battle] ${battle.defender_id} lost their capital at ${battle.h3_index}`)
               })
-            } else if (!isWild(defName)) {
+            } else if (!isWild(defName) && !(isNPC(atkName) && isNPC(defName))) {
+              // Routine bot-vs-bot skirmishes are the overwhelming majority of
+              // battles once bots are numerous - broadcasting every single one
+              // as a world event (each triggering a socket push to every
+              // connected client) flooded the Herald and hammered clients with
+              // constant re-renders. Only announce when a real player is
+              // involved on at least one side; capital falls/crowns/wonders
+              // still always announce regardless, below/elsewhere.
               afterCommit.push(() => insertWorldEvent('battle', `${atkName} seized ${countryName} territory from ${defName}`, battle.h3_index, battle.attacker_id))
             }
             afterCommit.push(() => {
@@ -654,7 +665,7 @@ export async function processBattleRounds() {
               insertEvent(battle.defender_id, 'hex_lost', `Your hex ${battle.h3_index} was captured in battle`, battle.h3_index)
             })
           } else {
-            if (!isWild(defName) && !isWild(atkName)) {
+            if (!isWild(defName) && !isWild(atkName) && !(isNPC(atkName) && isNPC(defName))) {
               afterCommit.push(() => insertWorldEvent('battle', `${defName} repelled ${atkName}'s assault in ${countryName}`, battle.h3_index, battle.defender_id))
             }
             afterCommit.push(() => {

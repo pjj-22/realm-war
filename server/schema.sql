@@ -164,14 +164,24 @@ CREATE TABLE IF NOT EXISTS chat_messages (
 
 -- Seasons: timed ages of the world; ending crowns a Champion and resets the map
 CREATE TABLE IF NOT EXISTS seasons (
-  id         SERIAL      PRIMARY KEY,
-  number     INTEGER     NOT NULL UNIQUE,
-  started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  ends_at    TIMESTAMPTZ NOT NULL,
-  ended_at   TIMESTAMPTZ,
-  status     TEXT        NOT NULL DEFAULT 'active',
-  winner_id  INTEGER     REFERENCES players(id) ON DELETE SET NULL,
-  snapshot   JSONB
+  id             SERIAL      PRIMARY KEY,
+  number         INTEGER     NOT NULL UNIQUE,
+  started_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  ends_at        TIMESTAMPTZ NOT NULL,
+  ended_at       TIMESTAMPTZ,
+  status         TEXT        NOT NULL DEFAULT 'active',
+  winner_id      INTEGER     REFERENCES players(id) ON DELETE SET NULL,
+  snapshot       JSONB,
+  hex_resolution INTEGER     NOT NULL DEFAULT 7
+);
+
+-- Single-row table: an admin-set H3 resolution the *next* season should use.
+-- Consumed (reset to NULL) the moment a new season is created, so it never
+-- silently carries over past the one season it was set for.
+CREATE TABLE IF NOT EXISTS season_config (
+  id                   INTEGER PRIMARY KEY DEFAULT 1,
+  next_hex_resolution  INTEGER,
+  CONSTRAINT season_config_singleton CHECK (id = 1)
 );
 
 -- World Wonders: last-known holder of each landmark hex (ownership itself

@@ -217,7 +217,7 @@ function UpgradeBar({ completes_at, onExpire }) {
 
 // ── main component ────────────────────────────────────────────────────────────
 
-export default function BottomDrawer({ hex, player, stats, onClaim, onLoginRequired, onBuild, onPlayerUpdate, onMarchStart, onSetRallyMode, onStatsRefresh, getFriendlyNeighborCount, ownedHexCount }) {
+export default function BottomDrawer({ hex, player, stats, onClaim, onSetCapital, onLoginRequired, onBuild, onPlayerUpdate, onMarchStart, onSetRallyMode, onStatsRefresh, getFriendlyNeighborCount, ownedHexCount }) {
   const isMobile = useIsMobile()
   const isOwn    = !!(player && hex?.username === player.username)
   const isClaimed = !!hex?.owner
@@ -251,7 +251,10 @@ export default function BottomDrawer({ hex, player, stats, onClaim, onLoginRequi
     }).catch(() => {})
   }, [])
 
-  useEffect(() => { setTab('territory') }, [hex?.h3])
+  // Only force back to Territory when the new hex doesn't have the other
+  // tabs at all (an enemy/unclaimed hex) - switching between your own hexes
+  // keeps whichever tab you were on instead of always bouncing to Territory.
+  useEffect(() => { if (!isOwn) setTab('territory') }, [hex?.h3, isOwn])
 
   const loadBuildings = useCallback(() => {
     if (!isClaimed || !hex?.h3 || isFogged) return
@@ -313,8 +316,10 @@ export default function BottomDrawer({ hex, player, stats, onClaim, onLoginRequi
   const income = (() => {
     if (!buildingData?.buildings) return { gold: 1 }
     let gold = 1
+    // Mirrors tick.js's actual payout query: a mine only counts once its build
+    // time has elapsed, so a pending mine shouldn't inflate the shown rate.
     for (const b of buildingData.buildings) {
-      if (b.type === 'mine') gold += 3
+      if (b.type === 'mine' && b.is_complete) gold += 3
     }
     return { gold }
   })()
@@ -395,6 +400,15 @@ export default function BottomDrawer({ hex, player, stats, onClaim, onLoginRequi
     const isHiddenGarrison = !isOwn && enemyTroopCount === -1
     const totalTroops = isOwn ? troops.reduce((s, [, n]) => s + n, 0) : Math.max(0, enemyTroopCount)
     const totalIncome = income.gold + (hex.strategic_bonus || 0) + (inZone ? ZONE_BONUS : 0)
+    const completedMines = buildingData?.buildings?.filter(b => b.type === 'mine' && b.is_complete).length || 0
+    const pendingMines = buildingData?.buildings?.filter(b => b.type === 'mine' && !b.is_complete).length || 0
+    const incomeTooltip = [
+      'Base: +1',
+      completedMines > 0 && `Mine${completedMines > 1 ? ` ×${completedMines}` : ''}: +${completedMines * 3}`,
+      hex.strategic_bonus > 0 && `Strategic hex: +${hex.strategic_bonus}`,
+      inZone && `${hex.zone_city} zone: +${ZONE_BONUS}`,
+      pendingMines > 0 && `${pendingMines} mine${pendingMines > 1 ? 's' : ''} still under construction - not counted yet`,
+    ].filter(Boolean).join('\n')
 
     // Defense breakdown, computed entirely from data already loaded (building
     // list, strategic flag, and a neighbor lookup against the map's own hex
@@ -550,21 +564,23 @@ export default function BottomDrawer({ hex, player, stats, onClaim, onLoginRequi
           )}
 
           <div style={{ display: 'flex', gap: 10 }}>
-            <div style={{
-              flex: 1, padding: '14px 16px',
-              background: 'rgba(160,100,20,0.12)',
-              border: '1px solid rgba(200,140,30,0.25)',
-              borderRadius: 6,
-            }}>
-              <div style={{ fontSize: 11, color: '#9a7040', letterSpacing: 2, textTransform: 'uppercase', marginBottom: 6 }}>Income</div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                <span style={{ animation: 'goldPulse 2.5s ease-in-out infinite' }}>
-                  <GoldIcon size={18} />
-                </span>
-                <span style={{ fontSize: 26, color: '#d4a030', fontVariantNumeric: 'tabular-nums' }}>+{totalIncome}</span>
+            <Tooltip text={incomeTooltip} style={{ flex: 1 }}>
+              <div style={{
+                padding: '14px 16px', cursor: 'help',
+                background: 'rgba(160,100,20,0.12)',
+                border: '1px solid rgba(200,140,30,0.25)',
+                borderRadius: 6,
+              }}>
+                <div style={{ fontSize: 11, color: '#9a7040', letterSpacing: 2, textTransform: 'uppercase', marginBottom: 6 }}>Income</div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{ animation: 'goldPulse 2.5s ease-in-out infinite' }}>
+                    <GoldIcon size={18} />
+                  </span>
+                  <span style={{ fontSize: 26, color: '#d4a030', fontVariantNumeric: 'tabular-nums' }}>+{totalIncome}</span>
+                </div>
+                <div style={{ fontSize: 12, color: '#7a6040', marginTop: 2 }}>per tick</div>
               </div>
-              <div style={{ fontSize: 12, color: '#7a6040', marginTop: 2 }}>per tick</div>
-            </div>
+            </Tooltip>
 
             {/* Garrison card - flips to a decay warning when this border hex's
                 garrison is below what your current empire size requires */}
@@ -671,6 +687,19 @@ export default function BottomDrawer({ hex, player, stats, onClaim, onLoginRequi
                 )
               })}
             </div>
+          )}
+
+          {isOwn && !player.capital_hex && (
+            totalTroops >= gameConfig.min_troops_to_claim ? (
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                <Btn onClick={() => onSetCapital?.(hex.h3)}>Found Capital Here</Btn>
+                <span style={{ fontSize: 12, color: '#7a6040' }}>Your capital fell - make this hex your new seat of power.</span>
+              </div>
+            ) : (
+              <div style={{ fontSize: 12, color: '#5a4828' }}>
+                Your capital fell. Garrison at least {gameConfig.min_troops_to_claim} troops here to found a new one ({totalTroops}/{gameConfig.min_troops_to_claim}).
+              </div>
+            )
           )}
 
           {isOwn && (
@@ -1072,7 +1101,7 @@ export default function BottomDrawer({ hex, player, stats, onClaim, onLoginRequi
             ))}
           </div>
 
-          <div style={{ padding: isMobile ? '16px 16px 20px' : '24px 32px 28px', overflowY: 'auto', height: isMobile ? '48dvh' : '36vh' }}>
+          <div className="rw-drawer-scroll" style={{ padding: isMobile ? '16px 16px 20px' : '24px 32px 28px', overflowY: 'auto', height: isMobile ? '48dvh' : '36vh' }}>
             {tab === 'territory' && TerritoryPanel()}
             {tab === 'buildings' && BuildingsPanel()}
             {tab === 'military'  && MilitaryPanel()}

@@ -1,4 +1,5 @@
 import { Router } from 'express'
+import { getNumCells } from 'h3-js'
 import { pool } from '../db.js'
 import { getCurrentSeason, computeStandings } from '../season.js'
 
@@ -18,6 +19,8 @@ router.get('/current', async (req, res) => {
       number: season.number,
       started_at: season.started_at,
       ends_at: season.ends_at,
+      hex_resolution: season.hex_resolution,
+      world_hex_count: getNumCells(season.hex_resolution),
       standings,
     })
   } catch (err) {
@@ -29,7 +32,7 @@ router.get('/current', async (req, res) => {
 router.get('/history', async (req, res) => {
   try {
     const r = await pool.query(`
-      SELECT s.id, s.number, s.started_at, s.ended_at, s.snapshot,
+      SELECT s.id, s.number, s.started_at, s.ended_at, s.snapshot, s.hex_resolution,
         p.username AS winner_username, p.color AS winner_color
       FROM seasons s
       LEFT JOIN players p ON p.id = s.winner_id
@@ -37,7 +40,7 @@ router.get('/history', async (req, res) => {
       ORDER BY s.number DESC
       LIMIT 20
     `)
-    res.json(r.rows)
+    res.json(r.rows.map(row => ({ ...row, world_hex_count: getNumCells(row.hex_resolution) })))
   } catch (err) {
     console.error('[season] GET /history failed:', err.message)
     res.status(500).json({ error: 'Server error' })

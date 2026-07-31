@@ -17,7 +17,7 @@ import chatRoutes from './routes/chat.js'
 import seasonRoutes from './routes/season.js'
 import { initPush } from './push.js'
 import { startTick } from './tick.js'
-import { MODE, IS_DEV, STARTING_GOLD, STARTING_MANA, TICK_INTERVAL_MS, BUILDING_TIME_SECONDS, CHAT_ENABLED, TROOP_STATS, BATTLE_INTERVAL_MS, BUILDING_COSTS, FORT_ADVANTAGE_TROOPS, ENTRENCH_ADVANTAGE_PER_NEIGHBOR, ENTRENCH_MAX_NEIGHBORS, MIN_TROOPS_TO_CLAIM, DECAY_HEX_THRESHOLD, DECAY_SCALE_HEXES_PER_STEP } from './config.js'
+import { MODE, IS_DEV, STARTING_GOLD, STARTING_MANA, TICK_INTERVAL_MS, BUILDING_TIME_SECONDS, CHAT_ENABLED, TROOP_STATS, BATTLE_INTERVAL_MS, BUILDING_COSTS, FORT_ADVANTAGE_TROOPS, ENTRENCH_ADVANTAGE_PER_NEIGHBOR, ENTRENCH_MAX_NEIGHBORS, MIN_TROOPS_TO_CLAIM, DECAY_HEX_THRESHOLD, DECAY_SCALE_HEXES_PER_STEP, HEX_RESOLUTION, WORLD_HEX_COUNT } from './config.js'
 import { STRATEGIC_ADVANTAGE_TROOPS } from './strategic.js'
 import { FRONTLINE_CAP, MAX_ADVANTAGED_DEFENDERS } from './combat.js'
 import { pool } from './db.js'
@@ -92,6 +92,8 @@ app.get('/api/health', (_, res) => res.json({
   strategic_advantage_troops: STRATEGIC_ADVANTAGE_TROOPS,
   max_advantaged_defenders: MAX_ADVANTAGED_DEFENDERS,
   min_troops_to_claim: MIN_TROOPS_TO_CLAIM,
+  hex_resolution: HEX_RESOLUTION,
+  world_hex_count: WORLD_HEX_COUNT,
   decay_hex_threshold: DECAY_HEX_THRESHOLD,
   decay_scale_hexes_per_step: DECAY_SCALE_HEXES_PER_STEP,
   building_costs: {
@@ -220,6 +222,17 @@ async function runMigrations() {
       winner_id ${PID} REFERENCES players(id) ON DELETE SET NULL,
       snapshot JSONB
     )`)
+  await pool.query('ALTER TABLE seasons ADD COLUMN IF NOT EXISTS hex_resolution INTEGER NOT NULL DEFAULT 7')
+  // Single-row table: an admin-set H3 resolution for the *next* season -
+  // consumed (reset to NULL) the moment that season is actually created, so
+  // it never silently carries over past the one season it was meant for.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS season_config (
+      id INTEGER PRIMARY KEY DEFAULT 1,
+      next_hex_resolution INTEGER,
+      CONSTRAINT season_config_singleton CHECK (id = 1)
+    )`)
+  await pool.query('INSERT INTO season_config (id) VALUES (1) ON CONFLICT (id) DO NOTHING')
   await pool.query(`
     CREATE TABLE IF NOT EXISTS wonder_holders (
       h3_index VARCHAR(20) PRIMARY KEY,

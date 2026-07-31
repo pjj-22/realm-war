@@ -111,20 +111,19 @@ function MarchRow({ army, isOwn, canRecall, onRecall, showDistance }) {
 }
 
 // ── Main component ────────────────────────────────────────────────────────────
-export default function ArmiesHUD({ armies, activeBattles = [], player, claimedRef, onRefresh, onFlyTo }) {
+export default function ArmiesHUD({ armies, activeBattles = [], player, claimedRef, onRefresh, onFlyTo, onAutoTrain }) {
   const isMobile = useIsMobile()
   const [open, setOpen] = useState(false)
+  const [training, setTraining] = useState(false)
 
   // claimedRef is intentionally kept outside React state (GameMap mutates it on
   // every hex update without re-rendering, since claimed-hex data changes far
   // too often for that to be cheap) - reading it here during render is safe in
   // practice because this component is re-rendered by the same events that
   // refresh `armies`, which land on the same tick as claimedRef mutations.
-  // eslint-disable-next-line react-hooks/refs
   const claimed = claimedRef.current
 
   const myArmies = armies.filter(a => a.owner_id === player?.id)
-  // eslint-disable-next-line react-hooks/refs
   const threats  = armies.filter(a =>
     player && a.owner_id !== player.id && claimed[a.to_hex]?.owner_id === player.id
   )
@@ -139,6 +138,16 @@ export default function ArmiesHUD({ armies, activeBattles = [], player, claimedR
       onRefresh?.()
     } catch (err) {
       toast(err.message)
+    }
+  }
+
+  async function handleAutoTrain() {
+    if (training) return
+    setTraining(true)
+    try {
+      await onAutoTrain?.()
+    } finally {
+      setTraining(false)
     }
   }
 
@@ -195,7 +204,22 @@ export default function ArmiesHUD({ armies, activeBattles = [], player, claimedR
 
           {ownedHexes.length > 0 ? (
             <>
-              <SectionLabel color="#6a5a8a">Territory ({ownedHexes.length})</SectionLabel>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 5 }}>
+                <SectionLabel color="#6a5a8a">Territory ({ownedHexes.length})</SectionLabel>
+                {onAutoTrain && (
+                  <button
+                    onClick={handleAutoTrain}
+                    disabled={training}
+                    title="Spend gold training troops across a few random hexes"
+                    style={{
+                      background: 'none', border: '1px solid rgba(200,170,60,0.3)', borderRadius: 3,
+                      color: training ? '#5a4a30' : '#c9a040', cursor: training ? 'default' : 'pointer',
+                      fontSize: 11, padding: '2px 6px', fontFamily: 'Georgia, serif',
+                    }}>
+                    {training ? '…' : <><SwordsIcon size={10} color="#c9a040" /> Auto-Train</>}
+                  </button>
+                )}
+              </div>
               {ownedHexes.map(h => (
                 <HexRow
                   key={h.h3_index}

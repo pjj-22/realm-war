@@ -8,15 +8,15 @@ const log = IS_DEV ? console.log : () => {}
 import { isOcean } from './terrain.js'
 import { notifyIncomingAttack } from './notify.js'
 import { WILD_USERNAME } from './wild.js'
-
-const HEX_RES = 7
+import { activeResolution } from './worldState.js'
 
 // Six personalities, cycled across the roster below so no two adjacent bots
 // share one - see ARCHETYPES for what each actually does differently.
 const ARCHETYPE_CYCLE = ['turtle', 'warmonger', 'raider', 'snowballer', 'opportunist', 'grudgeholder']
 
-// One bot per entry - created once, reused across restarts
-const BOT_DEFS = [
+// Hand-placed "flagship" bots - one per entry, created once, reused across
+// restarts. The roster below tops these up to BOT_COUNT procedurally.
+const FLAGSHIP_BOT_DEFS = [
   { username: 'BOT_Iron',     color: '#8B4513', lat:  40.7,  lng:  -74.0 }, // New York
   { username: 'BOT_Storm',    color: '#4169E1', lat:  51.5,  lng:   -0.1 }, // London
   { username: 'BOT_Jade',     color: '#228B22', lat:  35.7,  lng:  139.7 }, // Tokyo
@@ -41,7 +41,160 @@ const BOT_DEFS = [
   { username: 'BOT_Basalt',   color: '#A0522D', lat:  -1.3,  lng:   36.8 }, // Nairobi
   { username: 'BOT_Quartz',   color: '#1E90FF', lat:  34.05, lng: -118.24 }, // Los Angeles
   { username: 'BOT_Gold',     color: '#FFD700', lat:  25.2,  lng:   55.3 }, // Dubai
-].map((def, i) => ({ ...def, archetype: ARCHETYPE_CYCLE[i % ARCHETYPE_CYCLE.length] }))
+]
+
+// More real cities, spread across every populated continent, to seed the
+// generated roster below - just coordinates, no names/colors needed since
+// those get generated per bot.
+const EXTRA_CITY_SEEDS = [
+  { lat: 41.9,   lng: -87.6 },   // Chicago
+  { lat: 49.28,  lng: -123.12 }, // Vancouver
+  { lat: 4.71,   lng: -74.07 },  // Bogota
+  { lat: -12.05, lng: -77.04 },  // Lima
+  { lat: -33.45, lng: -70.65 },  // Santiago
+  { lat: 29.76,  lng: -95.37 },  // Houston
+  { lat: 25.76,  lng: -80.19 },  // Miami
+  { lat: 45.5,   lng: -73.57 },  // Montreal
+  { lat: 23.13,  lng: -82.38 },  // Havana
+  { lat: 10.5,   lng: -66.92 },  // Caracas
+  { lat: -0.23,  lng: -78.52 },  // Quito
+  { lat: 8.98,   lng: -79.52 },  // Panama City
+  { lat: 37.77,  lng: -122.42 }, // San Francisco
+  { lat: 47.61,  lng: -122.33 }, // Seattle
+  { lat: 39.74,  lng: -104.99 }, // Denver
+  { lat: 33.75,  lng: -84.39 },  // Atlanta
+  { lat: 42.36,  lng: -71.06 },  // Boston
+  { lat: 33.45,  lng: -112.07 }, // Phoenix
+  { lat: 20.67,  lng: -103.35 }, // Guadalajara
+  { lat: 25.69,  lng: -100.32 }, // Monterrey
+  { lat: 40.42,  lng: -3.7 },    // Madrid
+  { lat: 41.9,   lng: 12.5 },    // Rome
+  { lat: 52.37,  lng: 4.9 },     // Amsterdam
+  { lat: 48.21,  lng: 16.37 },   // Vienna
+  { lat: 52.23,  lng: 21.01 },   // Warsaw
+  { lat: 37.98,  lng: 23.73 },   // Athens
+  { lat: 59.33,  lng: 18.06 },   // Stockholm
+  { lat: 38.72,  lng: -9.14 },   // Lisbon
+  { lat: 53.35,  lng: -6.26 },   // Dublin
+  { lat: 47.5,   lng: 19.04 },   // Budapest
+  { lat: 50.08,  lng: 14.44 },   // Prague
+  { lat: 55.68,  lng: 12.57 },   // Copenhagen
+  { lat: 60.17,  lng: 24.94 },   // Helsinki
+  { lat: 50.45,  lng: 30.52 },   // Kyiv
+  { lat: 47.38,  lng: 8.54 },    // Zurich
+  { lat: 50.85,  lng: 4.35 },    // Brussels
+  { lat: 45.46,  lng: 9.19 },    // Milan
+  { lat: 41.39,  lng: 2.17 },    // Barcelona
+  { lat: 48.14,  lng: 11.58 },   // Munich
+  { lat: 59.91,  lng: 10.75 },   // Oslo
+  { lat: 31.23,  lng: 121.47 },  // Shanghai
+  { lat: 22.32,  lng: 114.17 },  // Hong Kong
+  { lat: 1.35,   lng: 103.82 },  // Singapore
+  { lat: 14.6,   lng: 120.98 },  // Manila
+  { lat: 3.15,   lng: 101.71 },  // Kuala Lumpur
+  { lat: 25.03,  lng: 121.56 },  // Taipei
+  { lat: 34.69,  lng: 135.5 },   // Osaka
+  { lat: 24.86,  lng: 67.0 },    // Karachi
+  { lat: 35.69,  lng: 51.39 },   // Tehran
+  { lat: 24.71,  lng: 46.68 },   // Riyadh
+  { lat: 33.32,  lng: 44.36 },   // Baghdad
+  { lat: 31.77,  lng: 35.21 },   // Jerusalem
+  { lat: 21.03,  lng: 105.85 },  // Hanoi
+  { lat: 6.93,   lng: 79.85 },   // Colombo
+  { lat: 23.81,  lng: 90.41 },   // Dhaka
+  { lat: 47.89,  lng: 106.91 },  // Ulaanbaatar
+  { lat: 16.87,  lng: 96.2 },    // Yangon
+  { lat: 26.91,  lng: 75.79 },   // Jaipur
+  { lat: 30.57,  lng: 104.07 },  // Chengdu
+  { lat: 43.24,  lng: 76.94 },   // Almaty
+  { lat: -26.2,  lng: 28.05 },   // Johannesburg
+  { lat: 33.57,  lng: -7.59 },   // Casablanca
+  { lat: 5.6,    lng: -0.19 },   // Accra
+  { lat: 9.03,   lng: 38.74 },   // Addis Ababa
+  { lat: -4.32,  lng: 15.3 },    // Kinshasa
+  { lat: 14.72,  lng: -17.47 },  // Dakar
+  { lat: 36.81,  lng: 10.18 },   // Tunis
+  { lat: 36.75,  lng: 3.06 },    // Algiers
+  { lat: -36.85, lng: 174.76 },  // Auckland
+  { lat: -37.81, lng: 144.96 },  // Melbourne
+  { lat: -31.95, lng: 115.86 },  // Perth
+  { lat: -41.29, lng: 174.78 },  // Wellington
+]
+
+// Simple seeded PRNG (mulberry32) so the generated roster's names/colors/
+// locations are stable across restarts instead of reshuffling every boot.
+function mulberry32(seed) {
+  return function () {
+    seed |= 0; seed = (seed + 0x6D2B79F5) | 0
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed)
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+  }
+}
+
+const NAME_PREFIXES = [
+  'Shadow', 'Storm', 'Iron', 'Silent', 'Wild', 'Golden', 'Dark', 'Swift', 'Grim', 'Bright',
+  'Frost', 'Ember', 'Stone', 'Wind', 'Blood', 'Night', 'Sun', 'Moon', 'Star', 'River',
+  'Ash', 'Thorn', 'Raven', 'Wolf', 'Hawk', 'Silver', 'Crimson', 'Ivory', 'Amber', 'Obsidian',
+]
+const NAME_SUFFIXES = [
+  'Fang', 'Reach', 'Hold', 'Watch', 'Crest', 'Vale', 'Marsh', 'Ridge', 'Fell', 'Keep',
+  'Spire', 'Grove', 'Hollow', 'Barrow', 'Ford', 'Gate', 'Wraith', 'Talon', 'Warden', 'Blade',
+]
+
+function generateUsername(taken, rng) {
+  for (let attempt = 0; attempt < 50; attempt++) {
+    const name = `BOT_${NAME_PREFIXES[Math.floor(rng() * NAME_PREFIXES.length)]}${NAME_SUFFIXES[Math.floor(rng() * NAME_SUFFIXES.length)]}`
+    if (!taken.has(name)) { taken.add(name); return name }
+  }
+  // 30x20 = 600 combos, so this shouldn't trigger before BOT_COUNT is reached -
+  // numbered fallback just in case the word bank ever runs dry.
+  let i = 1
+  while (taken.has(`BOT_Wanderer${i}`)) i++
+  const name = `BOT_Wanderer${i}`
+  taken.add(name)
+  return name
+}
+
+function hslToHex(h, s, l) {
+  s /= 100; l /= 100
+  const k = n => (n + h / 30) % 12
+  const a = s * Math.min(l, 1 - l)
+  const f = n => l - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1)))
+  const toHex = x => Math.round(x * 255).toString(16).padStart(2, '0')
+  return `#${toHex(f(0))}${toHex(f(8))}${toHex(f(4))}`
+}
+
+// Golden-angle hue stepping spreads colors evenly around the wheel without
+// picking each one by hand - consecutive indexes land far apart in hue.
+function generateColor(index) {
+  const hue = (index * 137.508) % 360
+  const sat = 55 + (index % 3) * 10
+  const light = 45 + (index % 4) * 6
+  return hslToHex(hue, sat, light)
+}
+
+const BOT_COUNT = 200
+
+const SEED_POINTS = [...FLAGSHIP_BOT_DEFS.map(d => ({ lat: d.lat, lng: d.lng })), ...EXTRA_CITY_SEEDS]
+const takenBotNames = new Set(FLAGSHIP_BOT_DEFS.map(d => d.username))
+const botRng = mulberry32(20260730) // fixed seed - stable roster across restarts
+
+const GENERATED_BOT_DEFS = Array.from({ length: Math.max(0, BOT_COUNT - FLAGSHIP_BOT_DEFS.length) }, (_, i) => {
+  const seed = SEED_POINTS[i % SEED_POINTS.length]
+  // Small jitter (~±15km) so bots sharing a seed city don't all spawn on the
+  // same hex, while staying well within findFreeHex's ~35km search radius.
+  const lat = seed.lat + (botRng() - 0.5) * 0.3
+  const lng = seed.lng + (botRng() - 0.5) * 0.3
+  return {
+    username: generateUsername(takenBotNames, botRng),
+    color: generateColor(FLAGSHIP_BOT_DEFS.length + i),
+    lat, lng,
+  }
+})
+
+const BOT_DEFS = [...FLAGSHIP_BOT_DEFS, ...GENERATED_BOT_DEFS]
+  .map((def, i) => ({ ...def, archetype: ARCHETYPE_CYCLE[i % ARCHETYPE_CYCLE.length] }))
 
 const BOT_DEF_BY_USERNAME = new Map(BOT_DEFS.map(d => [d.username, d]))
 
@@ -55,41 +208,51 @@ const ARCHETYPES = {
   // walking into empty land, not by picking fights.
   turtle: {
     attackMargin: 1.6, marchSendPct: 0.35, trainBoost: 0.7,
-    buildBias: ['fort', 'mine'], targetPref: 'weakest',
+    buildBias: ['fort', 'mine', 'barracks'], targetPref: 'weakest',
   },
   // Low bar for a fight, commits most of its force, keeps armies moving.
   // Goes after rival players over Marauder camps - it wants the map, not gold.
   warmonger: {
     attackMargin: 1.05, marchSendPct: 0.8, trainBoost: 1.3,
-    buildBias: ['mine', 'fort'], targetPref: 'players',
+    buildBias: ['barracks', 'mine', 'fort'], targetPref: 'players',
   },
   // Farms weak Marauder camps for gold, small frequent hits rather than
   // committing everything to one push.
   raider: {
     attackMargin: 1.25, marchSendPct: 0.5, trainBoost: 1.0,
-    buildBias: ['mine', 'fort'], targetPref: 'camps',
+    buildBias: ['mine', 'barracks', 'fort'], targetPref: 'camps',
   },
   // Turtle early - once its army crosses SNOWBALL_AT troops it flips into
   // warmonger behavior for the rest of the game.
   snowballer: {
     attackMargin: 1.6, marchSendPct: 0.35, trainBoost: 0.8,
-    buildBias: ['fort', 'mine'], targetPref: 'weakest', snowballAt: 150,
+    buildBias: ['fort', 'mine', 'barracks'], targetPref: 'weakest', snowballAt: 150,
   },
   // Always picks off whoever nearby is currently weakest, player or camp -
   // a scavenger, not a strategist.
   opportunist: {
     attackMargin: 1.2, marchSendPct: 0.55, trainBoost: 1.0,
-    buildBias: ['mine', 'fort'], targetPref: 'weakest',
+    buildBias: ['mine', 'fort', 'barracks'], targetPref: 'weakest',
   },
   // Behaves like a generalist until attacked, then biases hard toward
   // retaliating against whoever hit it most recently.
   grudgeholder: {
     attackMargin: 1.2, marchSendPct: 0.6, trainBoost: 1.0,
-    buildBias: ['mine', 'fort'], targetPref: 'grudge',
+    buildBias: ['mine', 'fort', 'barracks'], targetPref: 'grudge',
   },
 }
 
 function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)) }
+
+// Weighted random order: earlier entries keep a higher chance of sorting
+// first, but it's not guaranteed - classic weighted-sample-without-replacement
+// via random()^(1/weight) as the sort key.
+function weightedShuffle(list) {
+  return list
+    .map((item, i) => ({ item, key: Math.random() ** (1 / (list.length - i)) }))
+    .sort((a, b) => b.key - a.key)
+    .map(w => w.item)
+}
 
 // Deterministic per-bot variance so two bots of the same archetype don't
 // play identically - derived from the username, so it's stable across restarts
@@ -221,7 +384,7 @@ export async function ensureBots() {
           [def.username, 'BOT_NO_LOGIN', def.color, STARTING_GOLD, STARTING_MANA]
         )
         const botId = result.rows[0].id
-        const preferredHex = latLngToCell(def.lat, def.lng, HEX_RES)
+        const preferredHex = latLngToCell(def.lat, def.lng, activeResolution)
         const startHex = await findFreeHex(preferredHex)
 
         if (startHex) {
@@ -247,7 +410,7 @@ export async function respawnBots() {
       const r = await pool.query('SELECT id, capital_hex FROM players WHERE username=$1', [def.username])
       const bot = r.rows[0]
       if (!bot || bot.capital_hex) continue
-      const startHex = await findFreeHex(latLngToCell(def.lat, def.lng, HEX_RES))
+      const startHex = await findFreeHex(latLngToCell(def.lat, def.lng, activeResolution))
       if (!startHex) continue
       await pool.query(
         'INSERT INTO hexes (h3_index, owner_id, claimed_at) VALUES ($1,$2,NOW()) ON CONFLICT DO NOTHING',
@@ -301,7 +464,13 @@ async function botBuild(bot, profile) {
     if (builtHexes.has(h3_index)) continue
 
     const isCapital = h3_index === bot.capital_hex
-    const buildOrder = isCapital ? ['barracks', ...profile.buildBias] : profile.buildBias
+    // profile.buildBias is a fixed preference order per archetype - applying
+    // it unweighted to every hex meant a bot's whole empire ended up as one
+    // repeated building type (whichever came first and was affordable).
+    // Weighted-shuffling it per hex keeps the archetype's lean (fort-first
+    // for a turtle, etc.) as a tendency instead of an absolute rule, so a
+    // bot's territory ends up with a real mix.
+    const buildOrder = isCapital ? ['barracks', ...profile.buildBias] : weightedShuffle(profile.buildBias)
 
     for (const type of buildOrder) {
       const cost = BUILDING_COSTS[type]

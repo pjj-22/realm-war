@@ -111,3 +111,133 @@ export function playForEventType(type) {
   const name = TYPE_SOUND[type]
   if (name) playSound(name)
 }
+
+// ── Ambient background music ─────────────────────────────────────────────
+// File-first like everything else here: drop /sounds/ambient.mp3 (looping,
+// pre-mixed) and it'll play that. Otherwise a small procedural generator
+// stands in - a sustained low drone (bordun, the medieval trick of droning
+// a bass note under a modal tune) plus a sparse plucked melody in D dorian,
+// the mode most Gregorian-chant/early-music "medieval" cues actually use.
+
+export function musicEnabled() {
+  return localStorage.getItem('rw_music') === '1'
+}
+
+let activeMusic = null // { stop() } | null
+
+export function setMusicEnabled(on) {
+  localStorage.setItem('rw_music', on ? '1' : '0')
+  if (on) startMusic()
+  else stopMusic()
+}
+
+async function startMusic() {
+  if (activeMusic) return
+  try {
+    if ((await modeFor('ambient')) === 'file') {
+      const audio = new Audio('/sounds/ambient.mp3')
+      audio.loop = true
+      audio.volume = 0.28
+      await audio.play()
+      activeMusic = { stop: () => audio.pause() }
+      return
+    }
+    activeMusic = startSynthMusic()
+  } catch { /* no user gesture yet - toggle button click supplies one on retry */ }
+}
+
+function stopMusic() {
+  activeMusic?.stop()
+  activeMusic = null
+}
+
+// D dorian, root through the octave above - the scale under most
+// "medieval" modal melodies (E is the classic reference: white keys D-D).
+const DORIAN = [146.83, 164.81, 174.61, 196.00, 220.00, 246.94, 261.63, 293.66]
+const DRONE_ROOT = 73.42 // D2, an octave under the scale
+
+// A short stepwise folk-tune motif (scale degrees into DORIAN, null = rest),
+// not randomly-picked notes - random note choice is what read as "beeps"
+// rather than music. Two related halves so the loop doesn't feel too static.
+const MOTIF = [
+  0, null, 2, 3, null, 2, 1, 0, null, null,
+  4, null, 3, 2, null, 3, 4, 2, 0, null, null, null,
+]
+const BEAT_SEC = 0.42
+
+function startSynthMusic() {
+  const a = ac()
+
+  // Everything routes through one master gain so stop() can silence
+  // instantly, regardless of how many notes are already scheduled ahead.
+  const master = a.createGain()
+  master.gain.value = 1
+  master.connect(a.destination)
+
+  const liveNodes = [] // every oscillator we start, so stop() can kill pending ones too
+
+  const droneGain = a.createGain()
+  droneGain.gain.value = 0
+  droneGain.connect(master)
+  droneGain.gain.linearRampToValueAtTime(0.03, a.currentTime + 2.5)
+  for (const freq of [DRONE_ROOT, DRONE_ROOT * 1.5]) { // root + fifth, bagpipe-style
+    const osc = a.createOscillator()
+    osc.type = 'triangle'
+    osc.frequency.value = freq
+    osc.connect(droneGain)
+    osc.start()
+    liveNodes.push(osc)
+  }
+
+  function pluck(freq, time) {
+    const filter = a.createBiquadFilter()
+    filter.type = 'lowpass'
+    filter.frequency.value = 1600 // rounds off the raw triangle wave's edge - less "beepy", more plucked-string
+    const gain = a.createGain()
+    const osc = a.createOscillator()
+    osc.type = 'triangle'
+    osc.frequency.value = freq
+    gain.gain.setValueAtTime(0.0001, time)
+    gain.gain.exponentialRampToValueAtTime(0.05, time + 0.02)
+    gain.gain.exponentialRampToValueAtTime(0.0001, time + 1.1)
+    osc.connect(filter).connect(gain).connect(master)
+    osc.start(time)
+    osc.stop(time + 1.2)
+    liveNodes.push(osc)
+  }
+
+  // Standard lookahead scheduler: a cheap setInterval tick keeps queuing
+  // audio-clock-timed notes a little ahead of playback, instead of chaining
+  // setTimeout calls whose drift compounds against the audio clock.
+  let motifStep = 0
+  let nextNoteTime = a.currentTime + 0.3
+  const LOOKAHEAD = 0.3
+  const intervalId = setInterval(() => {
+    while (nextNoteTime < a.currentTime + LOOKAHEAD) {
+      const degree = MOTIF[motifStep % MOTIF.length]
+      if (degree != null) pluck(DORIAN[degree], nextNoteTime)
+      nextNoteTime += BEAT_SEC
+      motifStep++
+    }
+  }, 100)
+
+  return {
+    stop() {
+      clearInterval(intervalId)
+      // Fast fade kills anything audible right now; explicit stop() on every
+      // node (including ones scheduled but not yet started) clears anything
+      // still queued so it doesn't play out after the fade completes.
+      master.gain.cancelScheduledValues(a.currentTime)
+      master.gain.linearRampToValueAtTime(0, a.currentTime + 0.12)
+      liveNodes.forEach(o => { try { o.stop(a.currentTime) } catch { /* already stopped */ } })
+    },
+  }
+}
+
+// Music preference persists across sessions, but AudioContext starts
+// suspended until a real user gesture - if music was left on last visit,
+// arm a one-time click listener to resume it instead of failing silently.
+if (typeof document !== 'undefined' && musicEnabled()) {
+  const resume = () => { startMusic(); document.removeEventListener('click', resume) }
+  document.addEventListener('click', resume, { once: true })
+}

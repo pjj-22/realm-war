@@ -264,6 +264,27 @@ export function SpeakerOffIcon({ size = 14, color = '#7a6890' }) {
   )
 }
 
+export function MusicIcon({ size = 14, color = '#c9b99a' }) {
+  return (
+    <Svg size={size}>
+      <path d="M6 11.2V3.4L13 2v7.8" fill="none" stroke={color} strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+      <circle cx="4.3" cy="11.4" r="2" fill="none" stroke={color} strokeWidth="1.2" />
+      <circle cx="11.3" cy="10" r="2" fill="none" stroke={color} strokeWidth="1.2" />
+    </Svg>
+  )
+}
+
+export function MusicOffIcon({ size = 14, color = '#7a6890' }) {
+  return (
+    <Svg size={size}>
+      <path d="M6 11.2V3.4L13 2v7.8" fill="none" stroke={color} strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" opacity="0.55" />
+      <circle cx="4.3" cy="11.4" r="2" fill="none" stroke={color} strokeWidth="1.2" opacity="0.55" />
+      <circle cx="11.3" cy="10" r="2" fill="none" stroke={color} strokeWidth="1.2" opacity="0.55" />
+      <line x1="2.5" y1="3" x2="13.5" y2="13" stroke={color} strokeWidth="1.4" strokeLinecap="round" />
+    </Svg>
+  )
+}
+
 export function GlobeIcon({ size = 14, color = '#c9b99a' }) {
   return (
     <Svg size={size}>

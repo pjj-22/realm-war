@@ -25,8 +25,11 @@ function resetParticle(p, cx, cy) {
   p.y = cy + Math.sin(angle) * r
   p.vx = (Math.random() - 0.5) * 2.2
   p.vy = -1.2 - Math.random() * 2.4
-  p.life = p.maxLife
+  // maxLife must be assigned before life is derived from it - the reverse
+  // order let life inherit the *old* maxLife while a smaller new maxLife
+  // rolled in right after, pushing t = life/maxLife above 1 (see resetSmoke).
   p.maxLife = 0.5 + Math.random() * 0.9
+  p.life = p.maxLife
   p.size = 1.2 + Math.random() * 2.8
   p.color = COLORS[Math.floor(Math.random() * COLORS.length)]
 }
@@ -48,8 +51,13 @@ function resetSmoke(p, cx, cy) {
   p.y = cy + Math.sin(angle) * r
   p.vx = (Math.random() - 0.5) * 0.9
   p.vy = -0.6 - Math.random() * 0.8
-  p.life = p.maxLife
+  // maxLife must be assigned before life is derived from it. The reverse
+  // order (still true for the very first frame after every reset) let life
+  // inherit the *old* maxLife just before a smaller new one rolled in,
+  // pushing t = life/maxLife past ~1.86 - where 0.6 + 0.7*(1-t) goes
+  // negative, so size went negative and arc() threw.
   p.maxLife = 1.8 + Math.random() * 1.6
+  p.life = p.maxLife
   p.size = 6 + Math.random() * 10
   p.color = SMOKE_COLORS[Math.floor(Math.random() * SMOKE_COLORS.length)]
 }
@@ -90,7 +98,10 @@ export default function BattleParticles({ battles, mapRef }) {
     let lastTime = performance.now()
 
     function frame(now) {
-      const dt = Math.min((now - lastTime) / 1000, 0.05) // seconds, capped
+      // rAF timestamps aren't guaranteed monotonic across displays/compositor
+      // hiccups - a negative dt here would push particle life past maxLife and
+      // flip the smoke/ember size formulas negative, which arc() throws on.
+      const dt = Math.max(0, Math.min((now - lastTime) / 1000, 0.05))
       lastTime = now
 
       ctx.clearRect(0, 0, canvas.width, canvas.height)
@@ -111,6 +122,19 @@ export default function BattleParticles({ battles, mapRef }) {
         } catch {
           continue
         }
+
+        // Skip the whole particle simulation + draw for battles that aren't
+        // even on screen. `activeBattles` is every battle on the entire map
+        // (server doesn't filter by viewport - see routes/battles.js), and
+        // with bots numerous there can be dozens fighting simultaneously
+        // worldwide - animating full particle pools (38+ particles each,
+        // gradients, canvas draws) for every one of them 60x/second regardless
+        // of visibility was real, continuous, unbounded CPU/GPU work. A pool
+        // already made for a battle that's since panned off-screen is just
+        // left idle (cheap) rather than deleted, so it resumes instantly
+        // without a pop-in if the player pans back.
+        const margin = 80
+        if (cx < -margin || cx > canvas.width + margin || cy < -margin || cy > canvas.height + margin) continue
 
         if (!pools[h3]) {
           pools[h3] = {

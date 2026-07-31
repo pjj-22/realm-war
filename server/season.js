@@ -1,10 +1,13 @@
 import { pool } from './db.js'
 import { getIO } from './socket.js'
-import { SEASON_DURATION_MS, STARTING_GOLD, SEASON_PODIUM_BONUS } from './config.js'
+import { SEASON_DURATION_MS, STARTING_GOLD, SEASON_PODIUM_BONUS, HEX_RESOLUTION } from './config.js'
 import { respawnBots } from './bots.js'
 import { sendPush } from './push.js'
 import { recordMonument } from './monuments.js'
 import { seedCapitalGarrisons } from './wild.js'
+import { setActiveResolution } from './worldState.js'
+import { rebuildStrategicData } from './strategic.js'
+import { rebuildWonders } from './wonders.js'
 
 let current = null // cached active season row
 
@@ -13,16 +16,34 @@ export async function ensureSeason() {
     const r = await pool.query("SELECT * FROM seasons WHERE status='active' ORDER BY number DESC LIMIT 1")
     if (r.rows[0]) {
       current = r.rows[0]
+      setActiveResolution(current.hex_resolution)
+      rebuildStrategicData(current.hex_resolution)
+      rebuildWonders(current.hex_resolution)
       return current
     }
     const next = await pool.query('SELECT COALESCE(MAX(number), 0) + 1 AS n FROM seasons')
     const ends = new Date(Date.now() + SEASON_DURATION_MS)
+
+    // An admin can queue a resolution for the *next* season only (routes/admin.js) -
+    // consume it here so it applies to exactly the one season it was set for,
+    // then falls back to the default afterward instead of sticking forever.
+    const pending = await pool.query('SELECT next_hex_resolution FROM season_config WHERE id=1')
+    const resolution = pending.rows[0]?.next_hex_resolution ?? HEX_RESOLUTION
+    await pool.query('UPDATE season_config SET next_hex_resolution=NULL WHERE id=1')
+
     const ins = await pool.query(
-      "INSERT INTO seasons (number, ends_at, status) VALUES ($1, $2, 'active') RETURNING *",
-      [next.rows[0].n, ends]
+      "INSERT INTO seasons (number, ends_at, status, hex_resolution) VALUES ($1, $2, 'active', $3) RETURNING *",
+      [next.rows[0].n, ends, resolution]
     )
     current = ins.rows[0]
-    console.log(`[season] Season ${current.number} begins - ends ${ends.toISOString()}`)
+    // Every downstream consumer of "what resolution is live right now" (bot
+    // spawn placement, strategic/city-zone hexes) reads through worldState -
+    // set it before anything that places a hex runs (seedCapitalGarrisons,
+    // then ensureBots/respawnBots at the call sites in tick.js).
+    setActiveResolution(resolution)
+    rebuildStrategicData(resolution)
+    rebuildWonders(resolution)
+    console.log(`[season] Season ${current.number} begins at resolution ${resolution} - ends ${ends.toISOString()}`)
     await seedCapitalGarrisons()
     getIO()?.emit('season:update')
     return current

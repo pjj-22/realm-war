@@ -1,4 +1,4 @@
-import { cellToLatLng, cellToBoundary } from 'h3-js'
+import { cellToLatLng, cellToBoundary, latLngToCell, getResolution } from 'h3-js'
 import { createRequire } from 'module'
 
 const require = createRequire(import.meta.url)
@@ -8,12 +8,22 @@ const landFC = feature(topo, topo.objects.land)
 // feature() returns a FeatureCollection; the land file has one MultiPolygon feature
 const landGeometry = landFC.features[0].geometry
 
-// Hexes that are real, playable land but fall through the polygon test - tiny
-// islands below the 1:10m dataset's cutoff. Center + all six vertices read as
-// water, yet a player standing there is standing on ground.
-const LAND_OVERRIDES = new Set([
-  '872a1072bffffff', // Liberty Island, NY (Statue of Liberty)
-])
+// Real, playable land that falls through the polygon test - tiny islands
+// below the 1:10m dataset's cutoff. Center + all vertices read as water, yet
+// a player standing there is standing on ground. Stored as lat/lng (not a
+// fixed h3 index) since the world can now run at different resolutions
+// across seasons - isLandOverride() re-derives the matching cell at whatever
+// resolution is actually being tested.
+const LAND_OVERRIDES = [
+  // Exact centroid of the original hardcoded res-7 override hex (872a1072bffffff),
+  // so this still resolves to that same hex at resolution 7.
+  { lat: 40.68528397523235, lng: -74.03021832346398, name: 'Liberty Island, NY (Statue of Liberty)' },
+]
+
+function isLandOverride(h3Index) {
+  const res = getResolution(h3Index)
+  return LAND_OVERRIDES.some(o => latLngToCell(o.lat, o.lng, res) === h3Index)
+}
 
 // ─── Ray-casting point-in-polygon ─────────────────────────────────────────────
 
@@ -80,7 +90,7 @@ export function isOcean(h3Index) {
   if (cache.has(h3Index)) return cache.get(h3Index)
 
   let ocean
-  if (LAND_OVERRIDES.has(h3Index)) {
+  if (isLandOverride(h3Index)) {
     ocean = false
   } else {
     const [clat, clng] = cellToLatLng(h3Index)
