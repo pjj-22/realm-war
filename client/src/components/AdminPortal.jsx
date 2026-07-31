@@ -1,7 +1,36 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
+import { cellToBoundary } from 'h3-js'
 import { PlagueIcon, MeteorIcon, FamineIcon, RevoltIcon, GoldIcon, SwordsIcon, BotIcon, BoltIcon } from './Icons'
 
+// Standard Web Mercator, hand-rolled rather than pulling in MapLibre - this
+// is a one-shot render of every claimed hex at once, not a live tile-backed
+// map like GameMap.jsx, so plain SVG is simpler and has no WebGL/tile
+// dependency. Pan/zoom below is just viewBox math, no library needed either.
+const MERC_W = 960
+const MERC_LAT_TOP = 83   // crops near the pole - little to nothing claimable up there
+const MERC_LAT_BOTTOM = -60 // crops deep Antarctica the same way
+function mercY(lat) {
+  const latRad = lat * Math.PI / 180
+  const mercN = Math.log(Math.tan(Math.PI / 4 + latRad / 2))
+  return MERC_W / 2 - MERC_W * mercN / (2 * Math.PI)
+}
+function mercXY(lng, lat) {
+  return [(lng + 180) / 360 * MERC_W, mercY(lat)]
+}
+const MERC_FULL = {
+  x: 0, y: mercY(MERC_LAT_TOP), w: MERC_W, h: mercY(MERC_LAT_BOTTOM) - mercY(MERC_LAT_TOP),
+}
+const viewBoxStr = v => `${v.x.toFixed(1)} ${v.y.toFixed(1)} ${v.w.toFixed(1)} ${v.h.toFixed(1)}`
+
+function hexPolygonPoints(h3Index) {
+  const boundary = cellToBoundary(h3Index, true) // [lng, lat] pairs
+  const lngs = boundary.map(p => p[0])
+  const wraps = Math.max(...lngs) - Math.min(...lngs) > 180 // antimeridian-crossing hex
+  return boundary.map(([lng, lat]) => mercXY(wraps && lng < 0 ? lng + 360 : lng, lat).join(',')).join(' ')
+}
+
 const BASE = (import.meta.env.VITE_API_URL || 'http://localhost:3001') + '/api/admin'
+const PUBLIC_BASE = (import.meta.env.VITE_API_URL || 'http://localhost:3001') + '/api'
 
 function adminRequest(method, path, body, secret) {
   return fetch(`${BASE}${path}`, {
@@ -216,7 +245,7 @@ function RetentionRow({ label, cohort, retained, pct }) {
   )
 }
 
-const TABS = ['Overview', 'Retention', 'Activity', 'Battles', 'Battle Log', 'Armies', 'Events', 'Players', 'System']
+const TABS = ['Overview', 'Retention', 'Activity', 'Battles', 'Battle Log', 'Armies', 'Events', 'Players', 'Season', 'World Map', 'System']
 
 export default function AdminPortal() {
   const [secret, setSecret] = useState(() => sessionStorage.getItem('rw_admin_secret') || '')
@@ -249,6 +278,17 @@ export default function AdminPortal() {
   const [pendingResolution, setPendingResolution] = useState(null)
   const [resolutionInput, setResolutionInput] = useState('')
   const [resolutionBusy, setResolutionBusy] = useState(false)
+  const [pendingDays, setPendingDays] = useState(null)
+  const [daysInput, setDaysInput] = useState('')
+  const [daysBusy, setDaysBusy] = useState(false)
+  const [seasonHistory, setSeasonHistory] = useState([])
+  const [historyBusy, setHistoryBusy] = useState(false)
+  const [landOutline, setLandOutline] = useState(null)
+  const [allHexes, setAllHexes] = useState([])
+  const [worldMapBusy, setWorldMapBusy] = useState(false)
+  const [mapView, setMapView] = useState(MERC_FULL)
+  const mapSvgRef = useRef(null)
+  const mapDragRef = useRef(null)
   const [goldTarget, setGoldTarget] = useState(null)
 
   const [eventTypes, setEventTypes] = useState({})
@@ -266,7 +306,7 @@ export default function AdminPortal() {
   const loadAll = useCallback(async (s = secret) => {
     setLoading(true)
     try {
-      const [ov, rt, pl, ac, ba, ar, sy, et, nr] = await Promise.all([
+      const [ov, rt, pl, ac, ba, ar, sy, et, nr, nd] = await Promise.all([
         adminRequest('GET', '/overview', null, s),
         adminRequest('GET', '/retention', null, s),
         adminRequest('GET', '/players', null, s),
@@ -276,10 +316,12 @@ export default function AdminPortal() {
         adminRequest('GET', '/system', null, s),
         adminRequest('GET', '/events/types', null, s),
         adminRequest('GET', '/season/next-resolution', null, s),
+        adminRequest('GET', '/season/next-duration', null, s),
       ])
       setOverview(ov); setRetention(rt); setPlayers(pl); setActivity(ac); setBattles(ba); setArmies(ar); setSystem(sy)
       setEventTypes(et)
       setPendingResolution(nr.next_hex_resolution)
+      setPendingDays(nd.next_season_days)
       setEventParams(prev => {
         const next = { ...prev }
         for (const k of Object.keys(et)) if (next[k] == null) next[k] = et[k].def
@@ -313,6 +355,61 @@ export default function AdminPortal() {
   // no pure-render substitute for "go fetch this and show it when it arrives".
   // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { if (authed && tab === 'Battle Log') loadRecentBattles() }, [authed, tab, loadRecentBattles])
+
+  const loadSeasonHistory = useCallback(async () => {
+    setHistoryBusy(true)
+    try {
+      const r = await fetch(`${PUBLIC_BASE}/seasons/history?limit=5`)
+      setSeasonHistory(await r.json())
+    } catch { /* keep showing last-known history */ }
+    setHistoryBusy(false)
+  }, [])
+
+  // eslint-disable-next-line react-hooks/set-state-in-effect
+  useEffect(() => { if (authed && tab === 'Season') loadSeasonHistory() }, [authed, tab, loadSeasonHistory])
+
+  const loadWorldMap = useCallback(async () => {
+    setWorldMapBusy(true)
+    try {
+      const [outline, hexes] = await Promise.all([
+        landOutline ? Promise.resolve(landOutline) : adminRequest('GET', '/world/land-outline', null, secret),
+        adminRequest('GET', '/hexes/all', null, secret),
+      ])
+      setLandOutline(outline)
+      setAllHexes(hexes)
+    } catch (e) { alert(e.message) }
+    setWorldMapBusy(false)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [secret, landOutline])
+
+  // eslint-disable-next-line react-hooks/set-state-in-effect
+  useEffect(() => { if (authed && tab === 'World Map' && !allHexes.length) loadWorldMap() }, [authed, tab]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Scroll to zoom, centered on the cursor - clamped so you can't zoom out
+  // past the full world or in past ~1/60th of it.
+  function handleMapWheel(e) {
+    e.preventDefault()
+    const rect = mapSvgRef.current.getBoundingClientRect()
+    const v = mapView
+    const mx = v.x + (e.clientX - rect.left) / rect.width * v.w
+    const my = v.y + (e.clientY - rect.top) / rect.height * v.h
+    const scale = e.deltaY > 0 ? 1.15 : 1 / 1.15
+    const w = Math.min(MERC_FULL.w, Math.max(MERC_FULL.w / 60, v.w * scale))
+    const h = w * (MERC_FULL.h / MERC_FULL.w)
+    setMapView({ x: mx - (mx - v.x) * (w / v.w), y: my - (my - v.y) * (h / v.h), w, h })
+  }
+  function handleMapMouseDown(e) {
+    mapDragRef.current = { startX: e.clientX, startY: e.clientY, view: mapView }
+  }
+  function handleMapMouseMove(e) {
+    if (!mapDragRef.current) return
+    const rect = mapSvgRef.current.getBoundingClientRect()
+    const { startX, startY, view } = mapDragRef.current
+    const dx = (e.clientX - startX) / rect.width * view.w
+    const dy = (e.clientY - startY) / rect.height * view.h
+    setMapView({ ...view, x: view.x - dx, y: view.y - dy })
+  }
+  function stopMapDrag() { mapDragRef.current = null }
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -359,6 +456,17 @@ export default function AdminPortal() {
       setResolutionInput('')
     } catch (e) { alert(e.message) }
     setResolutionBusy(false)
+  }
+  async function setNextDuration() {
+    const days = parseInt(daysInput, 10)
+    if (!Number.isInteger(days) || days < 1 || days > 365) { alert('Enter an integer 1-365'); return }
+    setDaysBusy(true)
+    try {
+      await adminRequest('POST', '/season/next-duration', { days }, secret)
+      setPendingDays(days)
+      setDaysInput('')
+    } catch (e) { alert(e.message) }
+    setDaysBusy(false)
   }
   async function deletePlayer(id, username) {
     if (!confirm(`Delete ${username}? This removes all their hexes, troops, and buildings.`)) return
@@ -431,17 +539,6 @@ export default function AdminPortal() {
           <button onClick={forceTick} style={btnStyle('#2a3a5a')} disabled={tickBusy}>{tickBusy ? 'Ticking…' : 'Force Tick'}</button>
           <button onClick={resetBots} style={btnStyle('#3a2a1a')} disabled={botBusy}>{botBusy ? 'Resetting…' : 'Reset Bots'}</button>
           <button onClick={endSeason} style={btnStyle('#5a2a2a')} disabled={seasonBusy}>{seasonBusy ? 'Ending…' : 'End Season'}</button>
-          <span title="Sets the H3 resolution the *next* season begins at. Takes effect the moment that season starts: strategic/city-zone hexes and bot spawn points are rebuilt at the new resolution, and any player still on the map gets a one-time reload when the transition is detected."
-            style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-            <input
-              type="number" min={0} max={15} placeholder={pendingResolution != null ? `${pendingResolution} (queued)` : '7'}
-              value={resolutionInput} onChange={e => setResolutionInput(e.target.value)}
-              style={{ width: 46, padding: '3px 6px', background: 'rgba(255,255,255,0.05)', border: '1px solid #4a3a6a', borderRadius: 4, color: '#c9b99a', fontSize: 12, fontFamily: 'Georgia, serif' }}
-            />
-            <button onClick={setNextResolution} style={btnStyle('#2a3a5a')} disabled={resolutionBusy || !resolutionInput}>
-              {resolutionBusy ? '…' : 'Next Res'}
-            </button>
-          </span>
           <a href="/" style={{ ...btnStyle(), textDecoration: 'none', fontSize: 12 }}>← Game</a>
         </div>
       </div>
@@ -795,6 +892,151 @@ export default function AdminPortal() {
               </tbody>
             </table>
           </div>
+        </>
+      )}
+
+      {/* ─── Season ─── */}
+      {tab === 'Season' && (
+        <>
+          <SectionTitle>Current Season</SectionTitle>
+          <div style={{ display: 'flex', gap: 16, marginBottom: 24, flexWrap: 'wrap' }}>
+            <StatCard label="Season" value={system?.season ? `#${system.season.number}` : '-'} color="#d4a843" />
+            <StatCard label="Resolution" value={system?.season?.hex_resolution ?? '-'} color="#8a9aff" />
+            <StatCard label="Land Hexes (world)" value={system?.season ? Math.round(system.season.world_hex_count * 0.29).toLocaleString() : '-'} color="#6a9a6a" />
+            <StatCard label="Claimed Hexes" value={overview?.total_hexes?.toLocaleString() ?? '-'} color="#c9a040" />
+            <StatCard label="Started" value={system?.season ? new Date(system.season.started_at).toLocaleDateString() : '-'} color="#c9b99a" />
+            <StatCard label="Ends In" value={system?.season ? until(system.season.ends_at) : '-'} color="#c9a040" />
+          </div>
+
+          <SectionTitle>Configure Next Season</SectionTitle>
+          <div style={{ ...CARD_STYLE, marginBottom: 24, display: 'flex', gap: 32, flexWrap: 'wrap' }}>
+            <div>
+              <div style={{ fontSize: 12, color: '#8a7a9a', marginBottom: 8 }}>
+                Duration (days) - the next season runs this long once it begins, then the default resumes.
+              </div>
+              <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                <input
+                  type="number" min={1} max={365} placeholder={pendingDays != null ? `${pendingDays} (queued)` : 'default'}
+                  value={daysInput} onChange={e => setDaysInput(e.target.value)}
+                  style={{ width: 90, padding: '5px 8px', background: 'rgba(255,255,255,0.05)', border: '1px solid #4a3a6a', borderRadius: 4, color: '#c9b99a', fontSize: 13, fontFamily: 'Georgia, serif' }}
+                />
+                <button onClick={setNextDuration} style={btnStyle('#2a3a5a')} disabled={daysBusy || !daysInput}>
+                  {daysBusy ? '…' : 'Queue Duration'}
+                </button>
+                {pendingDays != null && <span style={{ fontSize: 11, color: '#6a9a6a' }}>{pendingDays}d queued</span>}
+              </div>
+            </div>
+            <div>
+              <div style={{ fontSize: 12, color: '#8a7a9a', marginBottom: 8 }}>
+                H3 Resolution (0-15) - lower = fewer, bigger hexes. Strategic hexes, city zones, and bot spawns rebuild at the new resolution; players get a one-time reload when it takes effect.
+              </div>
+              <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                <input
+                  type="number" min={0} max={15} placeholder={pendingResolution != null ? `${pendingResolution} (queued)` : '7'}
+                  value={resolutionInput} onChange={e => setResolutionInput(e.target.value)}
+                  style={{ width: 90, padding: '5px 8px', background: 'rgba(255,255,255,0.05)', border: '1px solid #4a3a6a', borderRadius: 4, color: '#c9b99a', fontSize: 13, fontFamily: 'Georgia, serif' }}
+                />
+                <button onClick={setNextResolution} style={btnStyle('#2a3a5a')} disabled={resolutionBusy || !resolutionInput}>
+                  {resolutionBusy ? '…' : 'Queue Resolution'}
+                </button>
+                {pendingResolution != null && <span style={{ fontSize: 11, color: '#6a9a6a' }}>{pendingResolution} queued</span>}
+              </div>
+            </div>
+          </div>
+
+          <SectionTitle>Last 5 Seasons</SectionTitle>
+          {historyBusy && !seasonHistory.length ? (
+            <Empty>Loading…</Empty>
+          ) : !seasonHistory.length ? (
+            <Empty>No seasons have ended yet.</Empty>
+          ) : (
+            <div style={{ ...CARD_STYLE, padding: 0, overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <thead>
+                  <tr style={ROW}>
+                    <th style={TH}>Season</th>
+                    <th style={TH}>Resolution</th>
+                    <th style={TH}>Duration</th>
+                    <th style={TH}>Ended</th>
+                    <th style={TH}>Champion</th>
+                    <th style={TH}>Champion Hexes</th>
+                    <th style={TH}>Final Territory</th>
+                    <th style={TH}>Battles</th>
+                    <th style={TH}>Troops Lost</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {seasonHistory.map(s => {
+                    const winner = Array.isArray(s.snapshot) ? s.snapshot[0] : null
+                    const seconds = s.ended_at ? Math.floor((new Date(s.ended_at) - new Date(s.started_at)) / 1000) : null
+                    return (
+                      <tr key={s.id} style={ROW}>
+                        <td style={TD}>#{s.number}</td>
+                        <td style={TD}>{s.hex_resolution}</td>
+                        <td style={TD}>{dur(seconds)}</td>
+                        <td style={TD}>{s.ended_at ? new Date(s.ended_at).toLocaleDateString() : '-'}</td>
+                        <td style={TD}>{s.winner_username ? <>{dot(s.winner_color)} {s.winner_username}</> : '-'}</td>
+                        <td style={TD}>{winner?.hex_count ?? '-'}</td>
+                        <td style={TD}>{s.stats?.final_hex_count?.toLocaleString() ?? '-'}</td>
+                        <td style={TD}>{s.stats?.battles?.toLocaleString() ?? '-'}</td>
+                        <td style={TD}>{s.stats?.troop_losses?.toLocaleString() ?? '-'}</td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </>
+      )}
+
+      {/* ─── World Map ─── */}
+      {tab === 'World Map' && (
+        <>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14 }}>
+            <SectionTitle>All Claimed Hexes ({allHexes.length.toLocaleString()})</SectionTitle>
+            <button onClick={loadWorldMap} style={btnStyle('#2a3a5a')} disabled={worldMapBusy}>
+              {worldMapBusy ? 'Loading…' : '↻ Refresh'}
+            </button>
+            <button onClick={() => setMapView(MERC_FULL)} style={btnStyle('#2a3a5a')}>Reset View</button>
+            <span style={{ fontSize: 11, color: '#8a7a9a' }}>
+              Static snapshot at load time (hit Refresh to reload) - scroll to zoom, drag to pan.
+            </span>
+          </div>
+          {!landOutline || worldMapBusy && !allHexes.length ? (
+            <Empty>Loading…</Empty>
+          ) : (
+            <div style={{ ...CARD_STYLE, padding: 8 }}>
+              <svg
+                ref={mapSvgRef}
+                viewBox={viewBoxStr(mapView)}
+                onWheel={handleMapWheel}
+                onMouseDown={handleMapMouseDown}
+                onMouseMove={handleMapMouseMove}
+                onMouseUp={stopMapDrag}
+                onMouseLeave={stopMapDrag}
+                style={{ width: '100%', height: 'auto', display: 'block', background: '#050310', cursor: 'grab', touchAction: 'none' }}
+              >
+                {landOutline.map((ring, i) => (
+                  <polygon
+                    key={i}
+                    points={ring.map(([lng, lat]) => mercXY(lng, lat).join(',')).join(' ')}
+                    fill="#1a1730" stroke="#2a2550" strokeWidth={0.5}
+                  />
+                ))}
+                {allHexes.map(h => (
+                  <polygon
+                    key={h.h3_index}
+                    points={hexPolygonPoints(h.h3_index)}
+                    fill={h.color}
+                    fillOpacity={h.is_capital ? 1 : 0.75}
+                    stroke={h.is_capital ? '#fff' : 'none'}
+                    strokeWidth={h.is_capital ? 0.6 : 0}
+                  />
+                ))}
+              </svg>
+            </div>
+          )}
         </>
       )}
 

@@ -1,6 +1,6 @@
 import { pool } from './db.js'
 import { getIO } from './socket.js'
-import { SEASON_DURATION_MS, STARTING_GOLD, SEASON_PODIUM_BONUS, HEX_RESOLUTION } from './config.js'
+import { SEASON_DURATION_MS, STARTING_GOLD, SEASON_PODIUM_BONUS, HEX_RESOLUTION, SPEED_DIV } from './config.js'
 import { respawnBots } from './bots.js'
 import { sendPush } from './push.js'
 import { recordMonument } from './monuments.js'
@@ -22,14 +22,17 @@ export async function ensureSeason() {
       return current
     }
     const next = await pool.query('SELECT COALESCE(MAX(number), 0) + 1 AS n FROM seasons')
-    const ends = new Date(Date.now() + SEASON_DURATION_MS)
 
-    // An admin can queue a resolution for the *next* season only (routes/admin.js) -
-    // consume it here so it applies to exactly the one season it was set for,
-    // then falls back to the default afterward instead of sticking forever.
-    const pending = await pool.query('SELECT next_hex_resolution FROM season_config WHERE id=1')
+    // An admin can queue a resolution and/or duration for the *next* season
+    // only (routes/admin.js) - consume both here so they apply to exactly the
+    // one season they were set for, then fall back to defaults afterward
+    // instead of sticking forever.
+    const pending = await pool.query('SELECT next_hex_resolution, next_season_days FROM season_config WHERE id=1')
     const resolution = pending.rows[0]?.next_hex_resolution ?? HEX_RESOLUTION
-    await pool.query('UPDATE season_config SET next_hex_resolution=NULL WHERE id=1')
+    const queuedDays = pending.rows[0]?.next_season_days
+    const durationMs = queuedDays != null ? (queuedDays * 24 * 60 * 60 * 1000) / SPEED_DIV : SEASON_DURATION_MS
+    const ends = new Date(Date.now() + durationMs)
+    await pool.query('UPDATE season_config SET next_hex_resolution=NULL, next_season_days=NULL WHERE id=1')
 
     const ins = await pool.query(
       "INSERT INTO seasons (number, ends_at, status, hex_resolution) VALUES ($1, $2, 'active', $3) RETURNING *",
@@ -94,9 +97,26 @@ export async function processSeason() {
     const standings = await computeStandings(10)
     const winner = standings[0] || null
 
+    // Free stats: battles/hexes are about to be wiped below anyway, so a
+    // couple of aggregate queries against data that already exists costs
+    // nothing extra beyond the reset that was already happening - no new
+    // per-tick tracking. attacker_losses/defender_losses accumulate on each
+    // battles row as rounds resolve (see processBattleRounds in tick.js), so
+    // summing them here gives the season's true total troop losses, not
+    // just a final-state snapshot.
+    const battleAgg = await pool.query(
+      "SELECT COUNT(*)::int AS battles, COALESCE(SUM(attacker_losses + defender_losses), 0)::float8 AS troop_losses FROM battles"
+    )
+    const hexAgg = await pool.query('SELECT COUNT(*)::int AS n FROM hexes')
+    const stats = {
+      battles: battleAgg.rows[0].battles,
+      troop_losses: Math.round(battleAgg.rows[0].troop_losses),
+      final_hex_count: hexAgg.rows[0].n,
+    }
+
     await pool.query(
-      "UPDATE seasons SET status='ended', ended_at=NOW(), winner_id=$1, snapshot=$2 WHERE id=$3",
-      [winner?.id || null, JSON.stringify(standings), season.id]
+      "UPDATE seasons SET status='ended', ended_at=NOW(), winner_id=$1, snapshot=$2, stats=$3 WHERE id=$4",
+      [winner?.id || null, JSON.stringify(standings), JSON.stringify(stats), season.id]
     )
     console.log(`[season] Season ${season.number} ENDED - Champion: ${winner?.username || 'nobody'}`)
 
@@ -149,8 +169,8 @@ export async function processSeason() {
     }
 
     current = null
-    await ensureSeason()
-    await respawnBots()
+    const next = await ensureSeason()
+    await respawnBots(next?.number)
 
     const io = getIO()
     if (io) {

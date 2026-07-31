@@ -9,6 +9,7 @@ import { nextTickAt } from '../tick.js'
 import { getCountry } from '../countries.js'
 import { STRATEGIC_HEXES, STRATEGIC_BONUS_GOLD, CITY_ZONES, ZONE_BONUS_PER_HEX } from '../strategic.js'
 import { WONDERS } from '../wonders.js'
+import { containsBadWords } from '../moderation.js'
 
 const router = Router()
 
@@ -17,6 +18,7 @@ router.post('/register', rateLimit({ windowMs: 60 * 60 * 1000, max: IS_DEV ? 100
   if (!username || !password) return res.status(400).json({ error: 'Username and password required' })
   if (username.length < 3 || username.length > 32) return res.status(400).json({ error: 'Username must be 3-32 characters' })
   if (password.length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters' })
+  if (containsBadWords(username)) return res.status(400).json({ error: 'Username not allowed' })
 
   try {
     const hash = await bcrypt.hash(password, 10)
@@ -186,6 +188,9 @@ router.post('/flag', requireAuth, async (req, res) => {
   }
   // Strip control characters (still allow ordinary spaces/punctuation)
   const cleanMotto = motto ? motto.replace(/[\x00-\x1f\x7f]/g, '').trim().slice(0, MOTTO_MAX) : null
+  if (cleanMotto && containsBadWords(cleanMotto)) {
+    return res.status(400).json({ error: 'Motto not allowed' })
+  }
   try {
     await pool.query('UPDATE players SET flag_pixels = $1, motto = $2 WHERE id = $3', [flagPixels, cleanMotto || null, req.player.id])
     res.json({ ok: true })

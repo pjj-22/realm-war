@@ -26,8 +26,7 @@ server once and check for `[db] Migrations complete` before pointing traffic at 
 `/opt/realmwar/server/.env`:
 
 ```bash
-NODE_ENV=production
-DEV_MODE=false                  # required - boot refuses prod with dev balance
+MODE=prod                       # required - boot refuses prod with dev/test balance
 DATABASE_URL=postgresql://realmwar:<password>@localhost:5432/realmwar
 JWT_SECRET=<openssl rand -base64 32>
 ADMIN_SECRET=<openssl rand -base64 32>
@@ -40,9 +39,11 @@ VAPID_PRIVATE_KEY=...
 VAPID_SUBJECT=mailto:you@yourdomain.com
 ```
 
-The server **refuses to start** under `NODE_ENV=production` if `DEV_MODE` isn't
-`false`, if `JWT_SECRET`/`ADMIN_SECRET` are placeholders, or if `CLIENT_ORIGIN`
-is unset. That's intentional: fix the env, don't bypass the check.
+The server **refuses to start** under `MODE=prod` if `JWT_SECRET`/`ADMIN_SECRET`
+are placeholders, or if `CLIENT_ORIGIN` is unset. That's intentional: fix the
+env, don't bypass the check. `MODE` also controls pacing directly - `dev` (fast,
+generous economy), `test` (half dev speed, for rapid manual testing without the economy running away between sessions), or `prod`
+(real pacing); defaults to `dev` if unset or unrecognized.
 
 ## 4. systemd unit
 
@@ -60,7 +61,7 @@ WorkingDirectory=/opt/realmwar/server
 ExecStart=/usr/bin/node index.js
 Restart=always
 RestartSec=5
-Environment=NODE_ENV=production
+Environment=MODE=prod
 
 [Install]
 WantedBy=multi-user.target

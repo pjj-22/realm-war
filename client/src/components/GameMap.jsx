@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom'
 import { useSocket, identifySocket } from '../hooks/useSocket'
 import { toast } from '../toastBus'
 import maplibregl from 'maplibre-gl'
-import { polygonToCells, cellToBoundary, cellToLatLng, gridDisk, gridPathCells } from 'h3-js'
+import { polygonToCells, cellToBoundary, cellToLatLng, gridDisk, gridPathCells, getHexagonEdgeLengthAvg } from 'h3-js'
 import 'maplibre-gl/dist/maplibre-gl.css'
 import BottomDrawer from './BottomDrawer'
 import ArmiesHUD from './ArmiesHUD'
@@ -164,21 +164,81 @@ const MONUMENT_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="${44 * DPR}
   </g>
 </svg>`
 
-function getViewportPolygon(map) {
+// padFraction extends the bounds outward by that fraction of the viewport's
+// own width/height on every side before computing which cells fall inside -
+// 0 (the default) is the exact visible rectangle, as before.
+function getViewportPolygon(map, padFraction = 0) {
   const bounds = map.getBounds()
   const ne = bounds.getNorthEast()
   const sw = bounds.getSouthWest()
+  const latPad = (ne.lat - sw.lat) * padFraction
+  const lngPad = (ne.lng - sw.lng) * padFraction
+  const n = ne.lat + latPad, s = sw.lat - latPad, e = ne.lng + lngPad, w = sw.lng - lngPad
   return [[
-    [ne.lat, sw.lng],
-    [ne.lat, ne.lng],
-    [sw.lat, ne.lng],
-    [sw.lat, sw.lng],
-    [ne.lat, sw.lng],
+    [n, w],
+    [n, e],
+    [s, e],
+    [s, w],
+    [n, w],
   ]]
 }
 
+// The capital-flag icon-size curve and its minzoom cutoff are both tuned for
+// a res-7 hex (edge length 1.406475763km per getHexagonEdgeLengthAvg), which
+// reaches "zoomed in enough to see it" at zoom 12. Resolution is now
+// configurable per season - a hex `ratio` times bigger on-screen reaches that
+// same visual size log2(ratio) zoom levels earlier, so the whole curve
+// (its zoom stops, not its icon-size values) needs to shift left by that
+// amount. Shifting only minzoom while leaving the interpolate's zoom stops
+// fixed at 12/16 was tried first and was wrong: MapLibre's interpolate
+// clamps outside its stop domain rather than extrapolating, so the icon-size
+// values themselves would need scaling too - but scaling icon-size AND
+// leaving the domain at 12/16 double-counts the effect (both float where the
+// curve sits AND how big it gets), which is what produced the oversized
+// flags. Shifting the zoom stops instead keeps the values at their original
+// 0.5/8 - the on-screen pixel size a flag caps out at shouldn't depend on
+// resolution, only *when* (in zoom terms) it gets there.
+const FLAG_BASE_EDGE_KM = getHexagonEdgeLengthAvg(HEX_RESOLUTION, 'km')
+
+function flagZoomShift(resolution) {
+  const ratio = getHexagonEdgeLengthAvg(resolution, 'km') / FLAG_BASE_EDGE_KM
+  return Math.log2(ratio)
+}
+
+function flagIconSizeStops(resolution) {
+  const shift = flagZoomShift(resolution)
+  return ['interpolate', ['exponential', 2], ['zoom'], 12 - shift, 0.5, 16 - shift, 8]
+}
+
+function flagMinZoom(resolution) {
+  return Math.max(0, 12 - flagZoomShift(resolution))
+}
+
+// Overscans by a third of the viewport's width/height on every side so
+// hexes just outside the visible frame are already fetched and rendered
+// before you pan or zoom to them, instead of popping in only after
+// moveend/zoomend fires and the fetch completes. getOverviewHexes below
+// deliberately doesn't do this - it's a coarse region-dominance tally, not
+// per-hex geometry, so there's nothing to prefetch smoothness for and
+// padding would just inflate the aggregation query for no visible benefit.
+//
+// Safety valve: cell count at zoom 8 (the lowest zoom this fires at) scales
+// hard with resolution - at the historical default (res 7) it's already
+// ~36k cells *unpadded*, way past POST /hexes/viewport's 4000-cell cap, even
+// though that's never bitten anyone because nobody actually looks at
+// individual hexes at zoom 8 with resolution that fine (they're slivers -
+// real usage is much more zoomed in, where the bbox and cell count are
+// tiny). Still, resolution is admin-configurable now, so rather than lean on
+// that in-practice assumption, padding backs off to the unpadded set
+// whenever it would exceed the cap - prefetch is a nice-to-have, not worth
+// risking a multi-MB request body over.
+const VIEWPORT_PREFETCH_PAD = 0.33
+const VIEWPORT_PREFETCH_MAX_CELLS = 3500
+
 function getViewportHexes(map, resolution = HEX_RESOLUTION) {
   if (map.getZoom() < 8) return []
+  const padded = polygonToCells(getViewportPolygon(map, VIEWPORT_PREFETCH_PAD), resolution)
+  if (padded.length <= VIEWPORT_PREFETCH_MAX_CELLS) return padded
   return polygonToCells(getViewportPolygon(map), resolution)
 }
 
@@ -893,6 +953,14 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
       }
       hexResolutionRef.current = s.hex_resolution ?? HEX_RESOLUTION
       localStorage.setItem('rw_season', String(s.number))
+      // loadSeason and the map-init effect race on mount - if the
+      // capital-flags layer was already created with the default resolution
+      // before this resolved, re-apply the icon-size curve now that the
+      // real one is known.
+      if (map.current?.getLayer('capital-flags')) {
+        map.current.setLayoutProperty('capital-flags', 'icon-size', flagIconSizeStops(hexResolutionRef.current))
+        map.current.setLayerZoomRange('capital-flags', flagMinZoom(hexResolutionRef.current), 24)
+      }
     } catch { /* no active season */ }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -1254,17 +1322,20 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
         id: 'capital-flags',
         type: 'symbol',
         source: 'capitals',
-        minzoom: 12,
+        minzoom: flagMinZoom(hexResolutionRef.current),
         layout: {
           'icon-image': ['image', ['get', 'iconId']],
-          // A res-7 hex is ~2.4km across; a real-world Mercator pixel scale
-          // doubles every zoom level, so an exponential-base-2 stop pair (not
-          // linear) is what actually keeps the flag pinned to ~half the
-          // hex's on-screen width at every zoom, not just at two endpoints -
-          // the old linear curve held its top value constant past zoom 10,
-          // so flags stopped growing while the hex kept getting bigger *and*
-          // stayed a flat pixel size well below zoom 10, dwarfing tiny hexes.
-          'icon-size': ['interpolate', ['exponential', 2], ['zoom'], 12, 0.5, 16, 8],
+          // A real-world Mercator pixel scale doubles every zoom level, so an
+          // exponential-base-2 stop pair (not linear) is what actually keeps
+          // the flag pinned to ~half the hex's on-screen width at every zoom,
+          // not just at two endpoints - the old linear curve held its top
+          // value constant past zoom 10, so flags stopped growing while the
+          // hex kept getting bigger *and* stayed a flat pixel size well below
+          // zoom 10, dwarfing tiny hexes. Stops are scaled by flagIconSizeStops
+          // for the active season's resolution (see hexResolutionRef.current
+          // updates in loadSeason, which also re-applies this if the layer
+          // was already created with the default before season data arrived).
+          'icon-size': flagIconSizeStops(hexResolutionRef.current),
           'icon-allow-overlap': true,
           'icon-ignore-placement': true,
         },

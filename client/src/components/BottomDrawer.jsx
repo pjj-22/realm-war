@@ -1063,7 +1063,7 @@ export default function BottomDrawer({ hex, player, stats, onClaim, onSetCapital
               </div>
             )}
             {isClaimed && hex.capital_hex === hex.h3 && hex.motto && (
-              <div style={{ fontSize: 13, color: '#a08850', fontStyle: 'italic', marginTop: 2 }}>
+              <div style={{ fontSize: 14, color: '#d8b868', fontStyle: 'italic', marginTop: 3, lineHeight: 1.3 }}>
                 "{hex.motto}"
               </div>
             )}

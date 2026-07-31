@@ -119,6 +119,32 @@ const EXTRA_CITY_SEEDS = [
   { lat: -37.81, lng: 144.96 },  // Melbourne
   { lat: -31.95, lng: 115.86 },  // Perth
   { lat: -41.29, lng: 174.78 },  // Wellington
+
+  // The list above only had 12 African points, all coastal/edge cities
+  // (Cairo, Lagos, Nairobi, Cape Town, Johannesburg, Casablanca, Accra,
+  // Addis Ababa, Kinshasa, Dakar, Tunis, Algiers) - bots only expand by
+  // marching to adjacent hexes, so a continent this size with that few seed
+  // points left enormous interior stretches with no bot anywhere near them
+  // to ever colonize outward from. Adding more capitals fixes the coverage
+  // gap without going overboard - kept to cities a general audience would
+  // actually recognize, and deliberately still fewer than Europe's list
+  // below (Africa should read as less densely settled, not equally so).
+  { lat: 32.89,  lng: 13.19 },   // Tripoli
+  { lat: 15.5,   lng: 32.56 },   // Khartoum
+  { lat: -8.84,  lng: 13.23 },   // Luanda
+  { lat: -6.79,  lng: 39.21 },   // Dar es Salaam
+  { lat: 0.35,   lng: 32.58 },   // Kampala
+  { lat: 2.05,   lng: 45.32 },   // Mogadishu
+  { lat: -15.39, lng: 28.32 },   // Lusaka
+  { lat: -17.83, lng: 31.05 },   // Harare
+
+  // Same problem, smaller scale, elsewhere: a few other large interior
+  // regions with no recognizable nearby seed at all.
+  { lat: -15.79, lng: -47.88 },  // Brasilia (central Brazil)
+  { lat: -16.5,  lng: -68.15 },  // La Paz
+  { lat: 41.3,   lng: 69.24 },   // Tashkent
+  { lat: 55.03,  lng: 82.92 },   // Novosibirsk (Siberia)
+  { lat: 49.9,   lng: -97.14 },  // Winnipeg
 ]
 
 // Simple seeded PRNG (mulberry32) so the generated roster's names/colors/
@@ -176,27 +202,44 @@ function generateColor(index) {
 
 const BOT_COUNT = 200
 
+// The pool of valid starting locations - every named city across both lists
+// above, flagship and generated alike. Used for identity (name/color/
+// archetype) is permanent per bot, generated once below with a fixed seed.
+// Where each bot actually *starts* is a separate, per-season draw (see
+// seasonBotRng/pickBotLocation) - reshuffled every season like a new game of
+// Risk, rather than the same bot always opening in the same city.
 const SEED_POINTS = [...FLAGSHIP_BOT_DEFS.map(d => ({ lat: d.lat, lng: d.lng })), ...EXTRA_CITY_SEEDS]
 const takenBotNames = new Set(FLAGSHIP_BOT_DEFS.map(d => d.username))
-const botRng = mulberry32(20260730) // fixed seed - stable roster across restarts
+const botRng = mulberry32(20260730) // fixed seed - stable identity across restarts/seasons
 
-const GENERATED_BOT_DEFS = Array.from({ length: Math.max(0, BOT_COUNT - FLAGSHIP_BOT_DEFS.length) }, (_, i) => {
-  const seed = SEED_POINTS[i % SEED_POINTS.length]
-  // Small jitter (~±15km) so bots sharing a seed city don't all spawn on the
-  // same hex, while staying well within findFreeHex's ~35km search radius.
-  const lat = seed.lat + (botRng() - 0.5) * 0.3
-  const lng = seed.lng + (botRng() - 0.5) * 0.3
-  return {
-    username: generateUsername(takenBotNames, botRng),
-    color: generateColor(FLAGSHIP_BOT_DEFS.length + i),
-    lat, lng,
-  }
-})
+const GENERATED_BOT_DEFS = Array.from({ length: Math.max(0, BOT_COUNT - FLAGSHIP_BOT_DEFS.length) }, (_, i) => ({
+  username: generateUsername(takenBotNames, botRng),
+  color: generateColor(FLAGSHIP_BOT_DEFS.length + i),
+}))
 
 const BOT_DEFS = [...FLAGSHIP_BOT_DEFS, ...GENERATED_BOT_DEFS]
   .map((def, i) => ({ ...def, archetype: ARCHETYPE_CYCLE[i % ARCHETYPE_CYCLE.length] }))
 
 const BOT_DEF_BY_USERNAME = new Map(BOT_DEFS.map(d => [d.username, d]))
+
+// Seeded per-season (not per-bot, not fixed) so the whole roster's starting
+// spots reshuffle at every season boundary but stay put for anyone who
+// reconnects mid-season or if the server restarts mid-season. Large odd
+// multiplier so consecutive season numbers don't produce correlated draws.
+function seasonBotRng(seasonNumber) {
+  return mulberry32(20260730 + (seasonNumber ?? 0) * 104729)
+}
+
+// Fully random pick from the whole pool (not round-robin) plus the same
+// ~15km jitter as before, so two bots can land near the same city without
+// stacking on the same hex.
+function pickBotLocation(rng) {
+  const seed = SEED_POINTS[Math.floor(rng() * SEED_POINTS.length)]
+  return {
+    lat: seed.lat + (rng() - 0.5) * 0.3,
+    lng: seed.lng + (rng() - 0.5) * 0.3,
+  }
+}
 
 // ─── Personalities ──────────────────────────────────────────────────────────
 // Each archetype tunes the same knobs (how much force to commit, how big an
@@ -240,6 +283,24 @@ const ARCHETYPES = {
     attackMargin: 1.2, marchSendPct: 0.6, trainBoost: 1.0,
     buildBias: ['mine', 'fort', 'barracks'], targetPref: 'grudge',
   },
+}
+
+// A few options per archetype so bots sharing a personality don't all say
+// the same line - picked once per bot with botRng, so it's stable across
+// restarts like everything else in BOT_DEFS. Kept well under MOTTO_MAX (50,
+// see routes/players.js) since these are hardcoded, not user input.
+const MOTTOS_BY_ARCHETYPE = {
+  turtle: ["Patience wins wars.", "Walls before swords.", "Strength first, war later."],
+  warmonger: ["The map will be mine.", "Every border is a target.", "No quarter, no retreat."],
+  raider: ["Strike, take, vanish.", "Gold over glory.", "Never linger, never lose."],
+  snowballer: ["Grow quiet. Strike loud.", "Wait for the tide to turn.", "Patience, then the flood."],
+  opportunist: ["Weakness is an invitation.", "I don't start fights. I finish them.", "The fallen make good neighbors."],
+  grudgeholder: ["I remember every hit.", "Cross me once.", "Vengeance keeps the ledger."],
+}
+
+function pickMotto(archetype, rng) {
+  const options = MOTTOS_BY_ARCHETYPE[archetype] || MOTTOS_BY_ARCHETYPE.opportunist
+  return options[Math.floor(rng() * options.length)]
 }
 
 function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)) }
@@ -363,7 +424,7 @@ async function findFreeHex(centerHex) {
   return null
 }
 
-export async function ensureBots() {
+export async function ensureBots(seasonNumber) {
   // Remove any duplicate buildings (keep only the oldest per hex)
   await pool.query(`
     DELETE FROM buildings WHERE id IN (
@@ -374,17 +435,25 @@ export async function ensureBots() {
     )
   `)
 
+  const rng = seasonBotRng(seasonNumber)
   for (const def of BOT_DEFS) {
     try {
-      const existing = await pool.query('SELECT id, capital_hex FROM players WHERE username=$1', [def.username])
+      const existing = await pool.query('SELECT id, capital_hex, motto FROM players WHERE username=$1', [def.username])
+
+      if (existing.rows.length > 0 && existing.rows[0].motto == null) {
+        // Backfill bots created before mottos existed - same pickMotto call
+        // ensureBots would've made at creation, just applied retroactively.
+        await pool.query('UPDATE players SET motto=$1 WHERE id=$2', [pickMotto(def.archetype, botRng), existing.rows[0].id])
+      }
 
       if (existing.rows.length === 0) {
         const result = await pool.query(
-          'INSERT INTO players (username, password_hash, color, gold, mana) VALUES ($1,$2,$3,$4,$5) RETURNING id',
-          [def.username, 'BOT_NO_LOGIN', def.color, STARTING_GOLD, STARTING_MANA]
+          'INSERT INTO players (username, password_hash, color, gold, mana, motto) VALUES ($1,$2,$3,$4,$5,$6) RETURNING id',
+          [def.username, 'BOT_NO_LOGIN', def.color, STARTING_GOLD, STARTING_MANA, pickMotto(def.archetype, botRng)]
         )
         const botId = result.rows[0].id
-        const preferredHex = latLngToCell(def.lat, def.lng, activeResolution)
+        const { lat, lng } = pickBotLocation(rng)
+        const preferredHex = latLngToCell(lat, lng, activeResolution)
         const startHex = await findFreeHex(preferredHex)
 
         if (startHex) {
@@ -403,14 +472,18 @@ export async function ensureBots() {
   }
 }
 
-// Re-seed bots that lost (or never had) a capital - used after a season reset
-export async function respawnBots() {
+// Re-seed bots that lost (or never had) a capital - used after a season
+// reset. Locations are drawn fresh from seasonBotRng(seasonNumber), so this
+// is also where the whole roster's starting spots actually reshuffle.
+export async function respawnBots(seasonNumber) {
+  const rng = seasonBotRng(seasonNumber)
   for (const def of BOT_DEFS) {
     try {
       const r = await pool.query('SELECT id, capital_hex FROM players WHERE username=$1', [def.username])
       const bot = r.rows[0]
       if (!bot || bot.capital_hex) continue
-      const startHex = await findFreeHex(latLngToCell(def.lat, def.lng, activeResolution))
+      const { lat, lng } = pickBotLocation(rng)
+      const startHex = await findFreeHex(latLngToCell(lat, lng, activeResolution))
       if (!startHex) continue
       await pool.query(
         'INSERT INTO hexes (h3_index, owner_id, claimed_at) VALUES ($1,$2,NOW()) ON CONFLICT DO NOTHING',

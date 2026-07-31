@@ -805,9 +805,9 @@ export async function startTick() {
     nextTickAt = Date.now() + TICK_INTERVAL_MS
   }
 
-  await ensureSeason()
+  const season = await ensureSeason()
   await ensureWildlands()
-  await ensureBots()
+  await ensureBots(season?.number)
   wrappedTick()
   setInterval(wrappedTick, TICK_INTERVAL_MS)
   setInterval(processTraining, TRAINING_INTERVAL_MS)

@@ -30,16 +30,17 @@ router.get('/current', async (req, res) => {
 })
 
 router.get('/history', async (req, res) => {
+  const limit = Math.min(50, Math.max(1, parseInt(req.query.limit, 10) || 20))
   try {
     const r = await pool.query(`
-      SELECT s.id, s.number, s.started_at, s.ended_at, s.snapshot, s.hex_resolution,
+      SELECT s.id, s.number, s.started_at, s.ended_at, s.snapshot, s.hex_resolution, s.stats,
         p.username AS winner_username, p.color AS winner_color
       FROM seasons s
       LEFT JOIN players p ON p.id = s.winner_id
       WHERE s.status = 'ended'
       ORDER BY s.number DESC
-      LIMIT 20
-    `)
+      LIMIT $1
+    `, [limit])
     res.json(r.rows.map(row => ({ ...row, world_hex_count: getNumCells(row.hex_resolution) })))
   } catch (err) {
     console.error('[season] GET /history failed:', err.message)

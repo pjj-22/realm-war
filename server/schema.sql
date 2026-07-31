@@ -172,15 +172,24 @@ CREATE TABLE IF NOT EXISTS seasons (
   status         TEXT        NOT NULL DEFAULT 'active',
   winner_id      INTEGER     REFERENCES players(id) ON DELETE SET NULL,
   snapshot       JSONB,
-  hex_resolution INTEGER     NOT NULL DEFAULT 7
+  hex_resolution INTEGER     NOT NULL DEFAULT 7,
+  -- Season-total activity stats (battles fought, troops lost, final
+  -- territory) - kept separate from `snapshot` (the standings array, which
+  -- player-facing UI already reads as a bare array) rather than folded in,
+  -- so adding this never risks changing snapshot's shape for existing
+  -- consumers. Cheap: aggregated from battles/hexes right before the
+  -- season-end wipe deletes those rows, not tracked incrementally.
+  stats          JSONB
 );
 
--- Single-row table: an admin-set H3 resolution the *next* season should use.
--- Consumed (reset to NULL) the moment a new season is created, so it never
--- silently carries over past the one season it was set for.
+-- Single-row table: admin-set overrides for the *next* season only (H3
+-- resolution, duration in days). Each is consumed (reset to NULL) the moment
+-- a new season is created, so it never silently carries over past the one
+-- season it was set for.
 CREATE TABLE IF NOT EXISTS season_config (
   id                   INTEGER PRIMARY KEY DEFAULT 1,
   next_hex_resolution  INTEGER,
+  next_season_days     INTEGER,
   CONSTRAINT season_config_singleton CHECK (id = 1)
 );
 

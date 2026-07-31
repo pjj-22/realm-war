@@ -1,5 +1,7 @@
 import { Router } from 'express'
 import { timingSafeEqual } from 'crypto'
+import { createRequire } from 'module'
+import { getNumCells } from 'h3-js'
 import { pool } from '../db.js'
 import { rateLimit } from '../ratelimit.js'
 import { runTick } from '../tick.js'
@@ -30,6 +32,39 @@ function requireAdmin(req, res, next) {
 
 router.use(rateLimit({ windowMs: 60 * 1000, max: IS_DEV ? 1000 : 300, message: 'Too many admin requests' }))
 router.use(requireAdmin)
+
+// Static world outline for the admin world-map view - land-110m (56KB) is
+// plenty for a background silhouette at that scale, versus terrain.js's
+// land-10m (3MB) which exists for actual per-hex land/ocean testing. Built
+// once at module load since the topojson is static; every request reuses it.
+const LAND_OUTLINE = (() => {
+  const require = createRequire(import.meta.url)
+  const { feature } = require('topojson-client')
+  const topo = require('world-atlas/land-110m.json')
+  const geom = feature(topo, topo.objects.land).features[0].geometry
+  return geom.type === 'MultiPolygon' ? geom.coordinates.map(p => p[0]) : [geom.coordinates[0]]
+})()
+
+router.get('/world/land-outline', (req, res) => {
+  res.json(LAND_OUTLINE)
+})
+
+// Every claimed hex on the map, for the static admin world-map view - small
+// (low thousands of rows even at full game scale), so a single unpaginated
+// fetch is fine, unlike the player-facing /hexes route which scopes to
+// viewport/ownership for exactly that reason.
+router.get('/hexes/all', async (req, res) => {
+  try {
+    const r = await pool.query(`
+      SELECT h.h3_index, h.owner_id, p.username, p.color, (h.h3_index = p.capital_hex) AS is_capital
+      FROM hexes h JOIN players p ON p.id = h.owner_id
+    `)
+    res.json(r.rows)
+  } catch (err) {
+    console.error('[admin] GET /hexes/all failed:', err.message)
+    res.status(500).json({ error: 'Server error' })
+  }
+})
 
 router.get('/overview', async (req, res) => {
   try {
@@ -185,6 +220,8 @@ router.get('/system', async (req, res) => {
         number: season.number,
         started_at: season.started_at,
         ends_at: season.ends_at,
+        hex_resolution: season.hex_resolution,
+        world_hex_count: getNumCells(season.hex_resolution),
       } : null,
       training_queued: training.rows[0].n,
       upgrade_queued: upgrades.rows[0].n,
@@ -389,6 +426,36 @@ router.get('/season/next-resolution', async (req, res) => {
   }
 })
 
+// Same pattern as next-resolution above: queues how many days the *next*
+// season should run (SEASON_DURATION_MS's default otherwise), consumed once
+// that season is actually created (see ensureSeason in season.js).
+router.post('/season/next-duration', async (req, res) => {
+  const { days } = req.body
+  if (!Number.isInteger(days) || days < 1 || days > 365) {
+    return res.status(400).json({ error: 'days must be an integer 1-365' })
+  }
+  try {
+    await pool.query(
+      'INSERT INTO season_config (id, next_season_days) VALUES (1, $1) ON CONFLICT (id) DO UPDATE SET next_season_days=$1',
+      [days]
+    )
+    res.json({ ok: true, next_season_days: days })
+  } catch (err) {
+    console.error('[admin] POST /season/next-duration failed:', err.message)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+router.get('/season/next-duration', async (req, res) => {
+  try {
+    const r = await pool.query('SELECT next_season_days FROM season_config WHERE id=1')
+    res.json({ next_season_days: r.rows[0]?.next_season_days ?? null })
+  } catch (err) {
+    console.error('[admin] GET /season/next-duration failed:', err.message)
+    res.status(500).json({ error: err.message })
+  }
+})
+
 router.post('/bots/reset', async (req, res) => {
   try {
     const bots = await pool.query('SELECT id FROM players WHERE username LIKE \'BOT_%\'')
@@ -408,7 +475,7 @@ router.post('/bots/reset', async (req, res) => {
       }
       await pool.query('DELETE FROM players WHERE id=$1', [id])
     }
-    await ensureBots()
+    await ensureBots(getCurrentSeason()?.number)
     getIO()?.emit('hexes:update')
     res.json({ ok: true, reset: bots.rows.length })
   } catch (err) {

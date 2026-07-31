@@ -223,6 +223,7 @@ async function runMigrations() {
       snapshot JSONB
     )`)
   await pool.query('ALTER TABLE seasons ADD COLUMN IF NOT EXISTS hex_resolution INTEGER NOT NULL DEFAULT 7')
+  await pool.query('ALTER TABLE seasons ADD COLUMN IF NOT EXISTS stats JSONB')
   // Single-row table: an admin-set H3 resolution for the *next* season -
   // consumed (reset to NULL) the moment that season is actually created, so
   // it never silently carries over past the one season it was meant for.
@@ -233,6 +234,7 @@ async function runMigrations() {
       CONSTRAINT season_config_singleton CHECK (id = 1)
     )`)
   await pool.query('INSERT INTO season_config (id) VALUES (1) ON CONFLICT (id) DO NOTHING')
+  await pool.query('ALTER TABLE season_config ADD COLUMN IF NOT EXISTS next_season_days INTEGER')
   await pool.query(`
     CREATE TABLE IF NOT EXISTS wonder_holders (
       h3_index VARCHAR(20) PRIMARY KEY,
