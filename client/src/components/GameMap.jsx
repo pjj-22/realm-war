@@ -591,9 +591,7 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
   // render is safe in practice: these values are re-derived on every render,
   // and the socket/tick handlers that mutate claimedRef also trigger a
   // re-render of this component via other state (armies, stats, etc.).
-  // eslint-disable-next-line react-hooks/refs
   const ownedHexCount = Object.values(claimedRef.current).filter(h => h.owner_id === player?.id).length
-  // eslint-disable-next-line react-hooks/refs
   const totalTroops = Object.values(claimedRef.current).filter(h => h.owner_id === player?.id).reduce((s, h) => s + (h.troop_count || 0), 0)
 
   const { display: resources } = useResourceTicker(player)
@@ -843,9 +841,16 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
     try { setArmies(await api.getArmies()) } catch { /* keep showing last-known armies on a transient failure */ }
   }, [])
 
+  // player?.id (not the whole player object) - the body only checks
+  // truthiness, so this only needs to be stable across login/logout, not
+  // re-identify on every refreshed player snapshot (api.me() always returns
+  // a fresh object even when nothing actually changed, which was making this
+  // - and the mount effect below that depends on it - refire on every single
+  // player-data refresh instead of only when it actually mattered).
   const loadPendingClaims = useCallback(async () => {
     try { setPendingClaims(player ? await api.getPendingClaims() : []) } catch { /* keep showing last-known pending claims */ }
-  }, [player])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [player?.id])
 
   const loadActiveBattles = useCallback(async () => {
     try { setActiveBattles(await api.getActiveBattles()) } catch { /* keep showing last-known battles */ }
@@ -947,7 +952,17 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
       clearTimeout(armiesDebounceRef.current)
       armiesDebounceRef.current = setTimeout(() => { loadArmies(); loadPendingClaims() }, 800)
     },
-    'battle:update': () => { loadActiveBattles(); api.me().then(p => onPlayerUpdate?.(p)).catch(() => {}) },
+    // battle:update is global - it fires for every battle anywhere, not just
+    // yours (BattlePanel needs that for whatever hex is currently selected).
+    // It used to also refetch this player's own data on every single one of
+    // those, which with bots numerous meant constant api.me() calls and a
+    // fresh player object on nearly every battle in the game - and since
+    // that object is a dependency of other effects (loadPendingClaims, etc.),
+    // each one cascaded into its own refetch too. events:new is now scoped to
+    // just this player's own events (see server/socket.js), so that's the
+    // correct trigger for "something changed for me, refresh my data".
+    'battle:update': () => { loadActiveBattles() },
+    'events:new': () => { api.me().then(p => onPlayerUpdate?.(p)).catch(() => {}) },
     'tick': () => { loadStats(); api.me().then(p => onPlayerUpdate?.(p)).catch(() => {}) },
     'season:update': () => { loadSeason(); loadLandmarks() },
     'wonder:update': loadLandmarks,
