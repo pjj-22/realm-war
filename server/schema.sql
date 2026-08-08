@@ -47,7 +47,13 @@ CREATE TABLE IF NOT EXISTS armies (
   quantity    INTEGER     NOT NULL,
   arrives_at  TIMESTAMPTZ NOT NULL,
   departed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  status      TEXT        NOT NULL DEFAULT 'marching'
+  status      TEXT        NOT NULL DEFAULT 'marching',
+  -- The actual weighted-shortest-path route (marchPath.js), computed once at
+  -- march creation and stored rather than re-derived per query - both so
+  -- position/beam rendering always matches exactly what arrives_at was
+  -- computed from, and so re-running A* isn't needed every time an army's
+  -- current position is queried.
+  path        TEXT[]
 );
 
 CREATE TABLE IF NOT EXISTS battles (

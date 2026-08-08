@@ -272,6 +272,8 @@ export default function AdminPortal() {
   const [battleRounds, setBattleRounds] = useState([])
   const [roundsBusy, setRoundsBusy] = useState(false)
 
+  const [playerSearch, setPlayerSearch] = useState('')
+
   const [tickBusy, setTickBusy] = useState(false)
   const [botBusy, setBotBusy] = useState(false)
   const [seasonBusy, setSeasonBusy] = useState(false)
@@ -514,8 +516,9 @@ export default function AdminPortal() {
     )
   }
 
-  const humans = players.filter(p => !p.username.startsWith('BOT_'))
-  const bots = players.filter(p => p.username.startsWith('BOT_'))
+  const searchLower = playerSearch.trim().toLowerCase()
+  const humans = players.filter(p => !p.username.startsWith('BOT_') && (!searchLower || p.username.toLowerCase().includes(searchLower)))
+  const bots = players.filter(p => p.username.startsWith('BOT_') && (!searchLower || p.username.toLowerCase().includes(searchLower)))
 
   return (
     <div style={{ height: '100vh', overflowY: 'auto', background: '#0a0818', color: '#c9b99a', fontFamily: 'Georgia, serif', padding: '24px 32px' }}>
@@ -838,6 +841,18 @@ export default function AdminPortal() {
       {/* ─── Players ─── */}
       {tab === 'Players' && (
         <>
+          <input
+            type="text"
+            value={playerSearch}
+            onChange={e => setPlayerSearch(e.target.value)}
+            placeholder="Search username…"
+            style={{
+              width: 280, maxWidth: '100%', padding: '7px 12px', marginBottom: 16,
+              background: 'rgba(255,255,255,0.05)', border: '1px solid #4a3a6a', borderRadius: 4,
+              color: '#c9b99a', fontSize: 13, fontFamily: 'Georgia, serif', boxSizing: 'border-box',
+            }}
+          />
+
           <SectionTitle>Players ({humans.length})</SectionTitle>
           <div style={{ ...CARD_STYLE, padding: 0, marginBottom: 32, overflowX: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>

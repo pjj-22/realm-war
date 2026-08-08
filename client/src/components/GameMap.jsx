@@ -23,6 +23,10 @@ import { playSound } from '../sound.js'
 
 
 const HEX_RESOLUTION = 7
+// Mirrors server/config.js's OCEAN_MARCH_MULTIPLIER - display-only, so keep
+// in sync by hand if that value ever changes (same as HelpModal.jsx's
+// existing "10x longer" copy, which has the same duplication).
+const OCEAN_MARCH_MULTIPLIER = 10
 // Chat ships behind a flag until there's moderation (see server config.js)
 const CHAT_ON = import.meta.env.VITE_CHAT_ENABLED === 'true'
 
@@ -762,6 +766,15 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
   const wondersRef = useRef([])      // latest /world/wonders payload, for the chronicle card
   const [wonderCard, setWonderCard] = useState(null) // wonder object, or null
 
+  // Covers every way march/rally mode can end (completed click, Escape, the
+  // cancel button) in one place instead of clearing the preview at each of
+  // those call sites individually.
+  useEffect(() => {
+    if (!marchMode && !rallyMode) {
+      map.current?.getSource('march-preview')?.setData({ type: 'FeatureCollection', features: [] })
+    }
+  }, [marchMode, rallyMode])
+
   // Escape backs out of transient modes: march/rally targeting, wonder card
   useEffect(() => {
     const onKey = (e) => {
@@ -798,7 +811,14 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
     const cap = playerRef.current?.capital_hex
     if (cap) {
       const [lat, lng] = cellToLatLng(cap)
-      setCapitalInView(bounds.contains([lng, lat]))
+      // At close zoom the viewport only spans a handful of hexes, so a strict
+      // on-screen check makes the button pop up the moment the capital drifts
+      // a couple hexes past the edge. Pad the check by half a viewport in
+      // each direction so it only shows once the capital is genuinely far away.
+      const latPad = (n - s) / 2
+      const lngPad = (e - w) / 2
+      const nearby = lat >= s - latPad && lat <= n + latPad && lng >= w - lngPad && lng <= e + lngPad
+      setCapitalInView(nearby)
     } else {
       setCapitalInView(true)
     }
@@ -971,10 +991,10 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
   useEffect(() => {
     if (!map.current?.getSource('pending-claims')) return
     const needed = decayConfigRef.current.min_troops_to_claim
-    const features = pendingClaims.map(({ h3_index, quantity }) => {
+    const features = pendingClaims.map(({ h3_index, quantity, claimable }) => {
       try {
         const [lat, lng] = cellToLatLng(h3_index)
-        return { type: 'Feature', properties: { quantity, needed }, geometry: { type: 'Point', coordinates: [lng, lat] } }
+        return { type: 'Feature', properties: { quantity, needed, claimable }, geometry: { type: 'Point', coordinates: [lng, lat] } }
       } catch { return null }
     }).filter(Boolean)
     map.current.getSource('pending-claims').setData({ type: 'FeatureCollection', features })
@@ -1217,9 +1237,12 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
         },
       })
 
-      // Your own troops sitting on a hex you don't own yet (mid-claim, waiting
-      // on MIN_TROOPS_TO_CLAIM) - without this, those troops are real in the
-      // DB but invisible on the map, reading as "my troops disappeared."
+      // Your own troops sitting on a hex you don't own yet - either mid-claim
+      // on land (waiting on MIN_TROOPS_TO_CLAIM, shows "N/needed") or
+      // stranded on ocean, which can never be claimed at any troop count
+      // (shows "⚓ N" instead - no false "getting closer" implication).
+      // Without this layer at all, those troops are real in the DB but
+      // invisible on the map, reading as "my troops disappeared."
       map.current.addSource('pending-claims', {
         type: 'geojson',
         data: { type: 'FeatureCollection', features: [] },
@@ -1230,13 +1253,17 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
         source: 'pending-claims',
         minzoom: 7,
         layout: {
-          'text-field': ['concat', ['to-string', ['get', 'quantity']], '/', ['to-string', ['get', 'needed']]],
+          'text-field': ['case',
+            ['get', 'claimable'],
+            ['concat', ['to-string', ['get', 'quantity']], '/', ['to-string', ['get', 'needed']]],
+            ['concat', '⚓ ', ['to-string', ['get', 'quantity']]],
+          ],
           'text-font': ['Noto Sans Regular'],
           'text-size': 13,
           'text-allow-overlap': true,
         },
         paint: {
-          'text-color': '#c9a04a',
+          'text-color': ['case', ['get', 'claimable'], '#c9a04a', '#5ac9ff'],
           'text-halo-color': 'rgba(0,0,0,0.85)',
           'text-halo-width': 2,
         },
@@ -1366,6 +1393,43 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
           'circle-stroke-color': ['get', 'color'],
           'circle-stroke-opacity': 0.45,
         },
+      })
+
+      // March-route preview: while picking a march/rally target, follows the
+      // cursor and traces the exact hex-by-hex path (gridPathCells) that
+      // army will actually walk - dashed/pale so it reads as "not committed
+      // yet" next to the solid beam used for armies already en route.
+      map.current.addSource('march-preview', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } })
+      // Line/dot color flips to "water warning" blue when the route crosses
+      // any ocean hex (see OCEAN_MARCH_MULTIPLIER, currently 10x march time)
+      // - crossesOcean is a per-feature property set in updateMarchPreview.
+      map.current.addLayer({
+        id: 'march-preview-line', type: 'line', source: 'march-preview', minzoom: 5,
+        filter: ['==', ['geometry-type'], 'LineString'],
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+        paint: {
+          'line-color': ['case', ['get', 'crossesOcean'], '#5ac9ff', '#f0e0a0'],
+          'line-width': 2, 'line-opacity': 0.8, 'line-dasharray': [1.5, 1.5],
+        },
+      })
+      map.current.addLayer({
+        id: 'march-preview-dots', type: 'circle', source: 'march-preview', minzoom: 5,
+        filter: ['==', ['geometry-type'], 'Point'],
+        paint: {
+          'circle-radius': 3,
+          'circle-color': ['case', ['get', 'crossesOcean'], '#5ac9ff', '#f0e0a0'],
+          'circle-opacity': 0.9,
+        },
+      })
+      // Warning label at the preview line's midpoint when it crosses water
+      map.current.addLayer({
+        id: 'march-preview-label', type: 'symbol', source: 'march-preview', minzoom: 5,
+        filter: ['==', ['get', 'labelPoint'], true],
+        layout: {
+          'text-field': `⚓ ${OCEAN_MARCH_MULTIPLIER}× slower over water`,
+          'text-size': 12, 'text-offset': [0, -1.2], 'text-anchor': 'bottom',
+        },
+        paint: { 'text-color': '#5ac9ff', 'text-halo-color': 'rgba(0,0,0,0.85)', 'text-halo-width': 1.4 },
       })
 
       // Army markers (visible at zoom 5+)
@@ -1585,10 +1649,58 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
       })
     })
 
+    // Route preview: the real weighted route the server would actually send
+    // this march along (marchPath.js, via POST /hexes/route) - not a naive
+    // straight gridPathCells line, so this shows the same land-avoiding-
+    // ocean routing an actual march gets, before you commit to it.
+    let lastPreviewKey = null
+    let previewToken = 0
+    function clearMarchPreview() {
+      lastPreviewKey = null
+      previewToken++
+      map.current?.getSource('march-preview')?.setData({ type: 'FeatureCollection', features: [] })
+    }
+    async function updateMarchPreview(fromHex, toHex) {
+      if (!fromHex || !toHex || fromHex === toHex) return clearMarchPreview()
+      const key = `${fromHex}|${toHex}`
+      if (key === lastPreviewKey) return // still hovering the same pair - don't re-fetch the route
+      lastPreviewKey = key
+
+      const myToken = ++previewToken
+      let path, crossesOcean
+      try {
+        const route = await api.getRoute(fromHex, toHex)
+        path = route.path
+        crossesOcean = route.stepCosts.some(c => c > 1)
+      } catch { return clearMarchPreview() }
+      if (myToken !== previewToken) return // a newer hover has since taken over
+      const coords = path.map(h => { const [lat, lng] = cellToLatLng(h); return [lng, lat] })
+
+      const features = [
+        { type: 'Feature', properties: { crossesOcean }, geometry: { type: 'LineString', coordinates: coords } },
+        // Intermediate hex centers only - endpoints already have their own markers
+        ...coords.slice(1, -1).map(c => ({ type: 'Feature', properties: { crossesOcean }, geometry: { type: 'Point', coordinates: c } })),
+      ]
+      if (crossesOcean) {
+        const mid = coords[Math.floor((coords.length - 1) / 2)]
+        features.push({ type: 'Feature', properties: { crossesOcean: true, labelPoint: true }, geometry: { type: 'Point', coordinates: mid } })
+      }
+      map.current.getSource('march-preview')?.setData({ type: 'FeatureCollection', features })
+    }
+
     map.current.on('mouseenter', 'hex-fill', () => {
       map.current.getCanvas().style.cursor = (marchModeRef.current || rallyModeRef.current) ? 'crosshair' : 'pointer'
     })
-    map.current.on('mouseleave', 'hex-fill', () => { map.current.getCanvas().style.cursor = '' })
+    map.current.on('mousemove', 'hex-fill', (e) => {
+      const hoveredHex = e.features[0]?.properties?.h3
+      if (!hoveredHex) return
+      const mode = marchModeRef.current
+      if (mode?.fromHex) updateMarchPreview(mode.fromHex, hoveredHex)
+      else if (mode?.battleMode && mode.targetHex) updateMarchPreview(hoveredHex, mode.targetHex)
+      else if (rallyModeRef.current) updateMarchPreview(rallyModeRef.current, hoveredHex)
+      else clearMarchPreview()
+    })
+    map.current.on('mouseleave', 'hex-fill', () => { map.current.getCanvas().style.cursor = ''; clearMarchPreview() })
 
     map.current.on('click', 'overview-hex-fill', (e) => {
       const center = e.lngLat
@@ -1700,25 +1812,47 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
     // Hex paths don't change while an army marches - compute once per army
     const pathCache = new Map()
 
-    // Continuous position along the army's hex path, so the dot glides
-    // instead of snapping hex-to-hex (and stays glued to the beam line)
+    // Continuous position along the army's actual weighted route (server-
+    // computed, marchPath.js - a real ocean-avoiding route, not a straight
+    // gridPathCells line), so the dot glides instead of snapping hex-to-hex
+    // (and stays glued to the beam line). Progress is weighted by stepCosts,
+    // not a uniform per-segment fraction - an army crossing an ocean segment
+    // (10x cost) should visibly linger on that segment relative to land
+    // ones, same as it actually takes 10x as long. Also returns the
+    // underlying path + which segment the army is currently on, so the beam
+    // (below) can trace the actual remaining route instead of a straight cut
+    // to the destination - same path data the march-preview line draws
+    // before you commit, just consumed differently here.
     function armyPathPos(a) {
-      let path = pathCache.get(a.id)
-      if (!path) {
-        try { path = gridPathCells(a.from_hex, a.to_hex).map(cellToLatLng) } catch { return null }
-        pathCache.set(a.id, path)
+      let cached = pathCache.get(a.id)
+      if (!cached) {
+        if (!a.path?.length) return null
+        cached = { latlngs: a.path.map(cellToLatLng), stepCosts: a.stepCosts || [] }
+        pathCache.set(a.id, cached)
+      }
+      const { latlngs, stepCosts } = cached
+      if (latlngs.length === 1 || !stepCosts.length) {
+        return { lat: latlngs[0][0], lng: latlngs[0][1], path: latlngs, segIndex: 0 }
       }
       const total = new Date(a.arrives_at) - new Date(a.departed_at)
       const elapsed = Date.now() - new Date(a.departed_at)
       const progress = Math.min(1, Math.max(0, elapsed / total))
-      const segs = path.length - 1
-      if (segs <= 0) return { lat: path[0][0], lng: path[0][1] }
-      const t = progress * segs
-      const i = Math.min(Math.floor(t), segs - 1)
-      const frac = t - i
-      const [aLat, aLng] = path[i]
-      const [bLat, bLng] = path[i + 1]
-      return { lat: aLat + (bLat - aLat) * frac, lng: aLng + (bLng - aLng) * frac }
+      const totalCost = stepCosts.reduce((x, y) => x + y, 0)
+      const targetCost = progress * totalCost
+
+      let cum = 0
+      for (let i = 0; i < stepCosts.length; i++) {
+        const segCost = stepCosts[i]
+        if (cum + segCost >= targetCost || i === stepCosts.length - 1) {
+          const frac = segCost > 0 ? Math.min(1, (targetCost - cum) / segCost) : 1
+          const [aLat, aLng] = latlngs[i]
+          const [bLat, bLng] = latlngs[i + 1]
+          return { lat: aLat + (bLat - aLat) * frac, lng: aLng + (bLng - aLng) * frac, path: latlngs, segIndex: i }
+        }
+        cum += segCost
+      }
+      const last = latlngs[latlngs.length - 1]
+      return { lat: last[0], lng: last[1], path: latlngs, segIndex: latlngs.length - 2 }
     }
 
     // Fog of war for marching armies: your own + allied armies are always
@@ -1784,17 +1918,20 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
 
       map.current.getSource('armies').setData({ type: 'FeatureCollection', features })
 
-      // Beam paths: line from the marching dot → destination (shrinks as army travels)
+      // Beam paths: the marching dot's actual remaining hex-by-hex route to
+      // the destination (shrinks one hex at a time as the army advances),
+      // not a straight cut to the destination - same path the pre-march
+      // preview line traces, just clipped to what's left of the trip.
       if (map.current.getSource('march-paths')) {
         const pathFeatures = armiesRef.current.filter(a => isArmyVisible(a, currentPlayer)).map(a => {
           try {
             const pos = armyPathPos(a)
             if (!pos) return null
-            const [tLat, tLng] = cellToLatLng(a.to_hex)
+            const remaining = pos.path.slice(pos.segIndex + 1).map(([lat, lng]) => [lng, lat])
             return {
               type: 'Feature',
               properties: { color: a.color || '#f0c040' },
-              geometry: { type: 'LineString', coordinates: [[pos.lng, pos.lat], [tLng, tLat]] },
+              geometry: { type: 'LineString', coordinates: [[pos.lng, pos.lat], ...remaining] },
             }
           } catch { return null }
         }).filter(Boolean)

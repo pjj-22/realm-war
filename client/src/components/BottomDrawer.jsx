@@ -261,13 +261,17 @@ export default function BottomDrawer({ hex, player, stats, onClaim, onSetCapital
     api.getBuildings(hex.h3).then(setBuildingData).catch(() => {})
   }, [hex?.h3, isClaimed, isFogged])
 
-  // getMilitary is owner-scoped (your troops/training/armies at this hex) - it
-  // always comes back empty for a hex you don't own, so it can only tell you
-  // about your own territory, never an enemy's garrison.
+  // getMilitary is troop-ownership-scoped (your troops/training/armies at
+  // this hex), not hex-ownership-scoped - it can never tell you about an
+  // enemy's garrison, but it's NOT empty for a hex you don't own if you have
+  // troops stranded there (ocean, decayed-away). Used to skip the fetch
+  // entirely when !isOwn, which meant myTroopsHere (below) was always 0 for
+  // exactly the hexes that needed it most - no way to ever discover or march
+  // away stranded troops.
   const loadMilitary = useCallback(() => {
-    if (!isOwn || !hex?.h3) return
+    if (!hex?.h3) return
     api.getMilitary(hex.h3).then(setMilitary).catch(() => {})
-  }, [isOwn, hex?.h3])
+  }, [hex?.h3])
 
   useEffect(() => {
     setBuildingData(null)
@@ -277,6 +281,17 @@ export default function BottomDrawer({ hex, player, stats, onClaim, onSetCapital
     loadMilitary()
   }, [hex?.h3, loadBuildings, loadMilitary])
   useSocket({ 'armies:update': loadMilitary, tick: loadMilitary })
+
+  // Only matters for the "troops sitting on an unclaimed hex" message below -
+  // ocean can never be claimed at any troop count, so that message needs to
+  // say something different than "N more troops and this claims."
+  const [isOceanHex, setIsOceanHex] = useState(false)
+  useEffect(() => {
+    if (!hex?.h3 || isClaimed) { setIsOceanHex(false); return }
+    let cancelled = false
+    api.checkTerrain([hex.h3]).then(r => { if (!cancelled) setIsOceanHex(r[hex.h3] === 'ocean') }).catch(() => {})
+    return () => { cancelled = true }
+  }, [hex?.h3, isClaimed])
 
   useEffect(() => {
     if (!buildingData?.upgrading?.completes_at) return
@@ -392,13 +407,18 @@ export default function BottomDrawer({ hex, player, stats, onClaim, onSetCapital
     const inZone = !!hex.zone_city
     const ZONE_BONUS = hex.zone_bonus ?? 2 // server value from click enrichment; 2 = fallback
     const troops = Object.entries(troopMap).filter(([, n]) => n > 0)
-    // For your own hex, the per-type breakdown from getMilitary is the source
-    // of truth. For anyone else's, that endpoint never has their troops (it's
-    // owner-scoped) - use the hex's own troop_count instead, which already
-    // respects fog of war (-1 = hidden) and power projection.
+    // getMilitary (troopMap) is troop-ownership-scoped, not hex-ownership-scoped
+    // - it returns your troops at this hex regardless of who (if anyone) owns
+    // the hex itself, which is exactly what's needed for troops sitting on an
+    // unclaimed hex (ocean, decayed-away, any "pending claim" state). Only
+    // fall back to the hex's own troop_count (fog-of-war-aware, someone
+    // else's garrison) when the hex is actually owned by someone else -
+    // an unclaimed hex has no "enemy" garrison to show, just possibly yours.
+    const isEnemyOwned = !!hex?.username && !isOwn
     const enemyTroopCount = hex.troop_count ?? 0
-    const isHiddenGarrison = !isOwn && enemyTroopCount === -1
-    const totalTroops = isOwn ? troops.reduce((s, [, n]) => s + n, 0) : Math.max(0, enemyTroopCount)
+    const isHiddenGarrison = isEnemyOwned && enemyTroopCount === -1
+    const myTroopsHere = troops.reduce((s, [, n]) => s + n, 0)
+    const totalTroops = isEnemyOwned ? Math.max(0, enemyTroopCount) : myTroopsHere
     const totalIncome = income.gold + (hex.strategic_bonus || 0) + (inZone ? ZONE_BONUS : 0)
     const completedMines = buildingData?.buildings?.filter(b => b.type === 'mine' && b.is_complete).length || 0
     const pendingMines = buildingData?.buildings?.filter(b => b.type === 'mine' && !b.is_complete).length || 0
@@ -487,7 +507,28 @@ export default function BottomDrawer({ hex, player, stats, onClaim, onSetCapital
 
     if (!isClaimed) return (
       <div style={{ maxWidth: 360 }}>
-        {!player ? (
+        {myTroopsHere > 0 ? (
+          // Troops already sitting here - either mid-claim on land (below
+          // min_troops_to_claim, or auto-claim just hasn't run yet) or
+          // permanently stranded on ocean. Either way, "march more troops
+          // here" from the branches below isn't the useful action anymore -
+          // moving what's already here is.
+          <>
+            <div style={{ fontSize: 14, color: isOceanHex ? '#5ac9ff' : '#7a6040', marginBottom: 12 }}>
+              {isOceanHex
+                ? <>⚓ {myTroopsHere} troops sitting here - ocean can't be claimed, it's just open water on the way to somewhere else. March them on to land.</>
+                : <>{myTroopsHere}/{gameConfig.min_troops_to_claim} troops garrisoned. Reinforce to claim, or march them elsewhere.</>}
+            </div>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              <Btn onClick={() => onMarchStart?.(hex.h3, { troop: Math.max(1, Math.floor(myTroopsHere / 2)) })} danger>
+                → March Half ({Math.max(1, Math.floor(myTroopsHere / 2))})
+              </Btn>
+              <Btn onClick={() => onMarchStart?.(hex.h3, { troop: myTroopsHere })} danger>
+                → March All ({myTroopsHere})
+              </Btn>
+            </div>
+          </>
+        ) : !player ? (
           <>
             <div style={{ fontSize: 14, color: '#5a4828', marginBottom: 12 }}>Login to start your empire here.</div>
             <Btn onClick={onLoginRequired} muted>Login to Claim</Btn>
@@ -702,6 +743,9 @@ export default function BottomDrawer({ hex, player, stats, onClaim, onSetCapital
             )
           )}
 
+          {/* Only ever reached for hexes you own - the !isClaimed branch
+              above (with its own March Half/All for troops stranded on an
+              unowned hex) returns before this point otherwise. */}
           {isOwn && (
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', paddingTop: 4, borderTop: '1px solid rgba(255,255,255,0.06)' }}>
               {!buildingData?.buildings?.length && (

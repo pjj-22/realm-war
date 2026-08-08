@@ -1,7 +1,7 @@
 import { pool } from './db.js'
 import { latLngToCell, gridDisk, gridDistance } from 'h3-js'
 import { getIO } from './socket.js'
-import { IS_DEV, STARTING_GOLD, STARTING_MANA, STARTING_TROOPS, TROOP_STATS, BUILDING_COSTS, OCEAN_MARCH_MULTIPLIER, BUILDING_TIME_SECONDS, TICK_INTERVAL_MS } from './config.js'
+import { IS_DEV, STARTING_GOLD, STARTING_MANA, STARTING_TROOPS, TROOP_STATS, BUILDING_COSTS, BUILDING_TIME_SECONDS, TICK_INTERVAL_MS } from './config.js'
 
 // Per-tick bot chatter is dev-only; creation/respawn logs stay
 const log = IS_DEV ? console.log : () => {}
@@ -9,6 +9,7 @@ import { isOcean } from './terrain.js'
 import { notifyIncomingAttack } from './notify.js'
 import { WILD_USERNAME } from './wild.js'
 import { activeResolution } from './worldState.js'
+import { findMarchPath } from './marchPath.js'
 
 // Six personalities, cycled across the roster below so no two adjacent bots
 // share one - see ARCHETYPES for what each actually does differently.
@@ -751,12 +752,14 @@ async function botMarch(bot, profile, ctx) {
       [sendQty, bot.id, source.h3_index]
     )
 
-    const dist = Math.max(1, gridDistance(source.h3_index, target))
-    const multiplier = isOcean(target) ? OCEAN_MARCH_MULTIPLIER : 1
-    const arrivesAt = new Date(Date.now() + dist * TROOP_STATS.troop.marchMinutesPerHex * multiplier * 60 * 1000)
+    // Same weighted routing a human's march gets (marchPath.js) - bots don't
+    // get a shortcut straight-line march while players have to route around
+    // water properly.
+    const { path, cost } = findMarchPath(source.h3_index, target)
+    const arrivesAt = new Date(Date.now() + Math.max(1, cost) * TROOP_STATS.troop.marchMinutesPerHex * 60 * 1000)
     await pool.query(
-      'INSERT INTO armies (owner_id, from_hex, to_hex, type, quantity, arrives_at, departed_at) VALUES ($1,$2,$3,$4,$5,$6,NOW())',
-      [bot.id, source.h3_index, target, 'troop', sendQty, arrivesAt]
+      'INSERT INTO armies (owner_id, from_hex, to_hex, type, quantity, arrives_at, departed_at, path) VALUES ($1,$2,$3,$4,$5,$6,NOW(),$7)',
+      [bot.id, source.h3_index, target, 'troop', sendQty, arrivesAt, path]
     )
     notifyIncomingAttack(bot.id, target, sendQty, arrivesAt)
     log(`[bot] ${bot.username} (${profile.name}) marching ${sendQty} troops → ${target}`)

@@ -12,6 +12,7 @@ import { IS_DEV, TICK_INTERVAL_MS, BUILDING_TIME_SECONDS, WONDER_INCOME_GOLD } f
 import { GM_EVENTS, triggerEvent } from '../gmEvents.js'
 import { STRATEGIC_HEXES, STRATEGIC_BONUS_GOLD, CITY_ZONES, ZONE_BONUS_PER_HEX } from '../strategic.js'
 import { WONDERS } from '../wonders.js'
+import { currentMarchHex, findMarchPath, pathStepCosts } from '../marchPath.js'
 
 const router = Router()
 
@@ -185,7 +186,7 @@ router.get('/armies', async (req, res) => {
   try {
     const result = await pool.query(`
       SELECT ar.id, ar.from_hex, ar.to_hex, ar.type, ar.quantity,
-        ar.arrives_at, ar.departed_at,
+        ar.arrives_at, ar.departed_at, ar.path,
         p.username, p.color
       FROM armies ar
       JOIN players p ON p.id = ar.owner_id
@@ -193,7 +194,10 @@ router.get('/armies', async (req, res) => {
       ORDER BY ar.arrives_at ASC
       LIMIT 200
     `)
-    res.json(result.rows)
+    res.json(result.rows.map(a => {
+      const path = a.path?.length ? a.path : findMarchPath(a.from_hex, a.to_hex).path
+      return { ...a, current_hex: currentMarchHex(a, path, pathStepCosts(path)) }
+    }))
   } catch (err) {
     console.error('[admin] GET /armies failed:', err.message)
     res.status(500).json({ error: 'Server error' })

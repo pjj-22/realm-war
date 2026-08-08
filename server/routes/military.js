@@ -1,11 +1,11 @@
 import { Router } from 'express'
 import { pool, withTransaction, httpError } from '../db.js'
 import { requireAuth } from '../auth.js'
-import { gridDistance } from 'h3-js'
-import { TROOP_STATS, OCEAN_MARCH_MULTIPLIER, BUILDING_TIME_SECONDS, NO_BARRACKS_TRAIN_MULT, PROJECTION_GARRISON, PROJECTION_EMPIRE } from '../config.js'
+import { TROOP_STATS, BUILDING_TIME_SECONDS, NO_BARRACKS_TRAIN_MULT, PROJECTION_GARRISON, PROJECTION_EMPIRE } from '../config.js'
 import { getIO } from '../socket.js'
 import { isOcean } from '../terrain.js'
 import { notifyIncomingAttack } from '../notify.js'
+import { currentMarchHex, findMarchPath, pathStepCosts } from '../marchPath.js'
 
 const router = Router()
 
@@ -82,13 +82,21 @@ router.post('/march', requireAuth, async (req, res) => {
   if (!fromHex || !toHex || !type || !quantity) return res.status(400).json({ error: 'Invalid request' })
 
   try {
-    const hex = await pool.query('SELECT owner_id FROM hexes WHERE h3_index=$1', [fromHex])
-    if (hex.rows[0]?.owner_id !== req.player.id) return res.status(403).json({ error: 'You do not own this hex' })
-
+    // No hex-ownership check here on purpose - real authorization is the
+    // troops-row lock below (owner_id=req.player.id), which is sufficient on
+    // its own and, unlike a hex-ownership check, doesn't block marching away
+    // troops that are sitting on a hex you don't own (ocean, decayed-away,
+    // any "pending claim" state) - the one case that actually needs this,
+    // since it's the only way to ever recover troops stranded there.
     const stats = TROOP_STATS[type]
-    const dist = Math.max(1, gridDistance(fromHex, toHex))
-    const multiplier = isOcean(toHex) ? OCEAN_MARCH_MULTIPLIER : 1
-    const arrivesAt = new Date(Date.now() + dist * stats.marchMinutesPerHex * multiplier * 60 * 1000)
+    // findMarchPath weighs ocean at OCEAN_MARCH_MULTIPLIER per hex instead of
+    // just checking the destination, so a longer all-land route can beat a
+    // short ocean shortcut when it's actually faster - cost is already in
+    // the same "hexes-equivalent" units the old gridDistance*multiplier
+    // formula produced, just accounting for the real route instead of a
+    // straight line.
+    const { path, cost } = findMarchPath(fromHex, toHex)
+    const arrivesAt = new Date(Date.now() + Math.max(1, cost) * stats.marchMinutesPerHex * 60 * 1000)
 
     const army = await withTransaction(async (tx) => {
       // Lock the garrison row so concurrent marches can't send the same troops twice
@@ -104,8 +112,8 @@ router.post('/march', requireAuth, async (req, res) => {
         [quantity, req.player.id, fromHex, type]
       )
       const result = await tx.query(
-        'INSERT INTO armies (owner_id, from_hex, to_hex, type, quantity, arrives_at, departed_at) VALUES ($1,$2,$3,$4,$5,$6,NOW()) RETURNING *',
-        [req.player.id, fromHex, toHex, type, quantity, arrivesAt]
+        'INSERT INTO armies (owner_id, from_hex, to_hex, type, quantity, arrives_at, departed_at, path) VALUES ($1,$2,$3,$4,$5,$6,NOW(),$7) RETURNING *',
+        [req.player.id, fromHex, toHex, type, quantity, arrivesAt, path]
       )
       return result.rows[0]
     })
@@ -189,7 +197,13 @@ router.get('/armies', async (req, res) => {
     const rows = result.rows.map(a => {
       const projected = a.quantity >= PROJECTION_GARRISON || a.owner_power >= PROJECTION_EMPIRE
       const { owner_power, ...rest } = a
-      return { ...rest, projected }
+      // Armies in flight from before the `path` column existed have none
+      // stored - compute one just for this response so they still render
+      // correctly rather than breaking the beam for whatever's still
+      // mid-march when this deploys. New armies always have it stored.
+      const path = a.path?.length ? a.path : findMarchPath(a.from_hex, a.to_hex).path
+      const stepCosts = pathStepCosts(path)
+      return { ...rest, path, stepCosts, projected, current_hex: currentMarchHex(a, path, stepCosts) }
     })
     res.json(rows)
   } catch (err) {
@@ -199,9 +213,14 @@ router.get('/armies', async (req, res) => {
 })
 
 // Your own troops sitting on hexes you don't own yet - either mid-claim
-// (below MIN_TROOPS_TO_CLAIM, waiting on reinforcement) or on an abandoned
-// hex nobody re-claimed. Without this, those troops are real in the DB but
-// invisible on the map, which reads as "my troops just disappeared."
+// (below MIN_TROOPS_TO_CLAIM, waiting on reinforcement) or stranded on
+// ocean (marchable, but never claimable at any troop count). Without this,
+// those troops are real in the DB but invisible on the map, which reads as
+// "my troops just disappeared." Ocean hexes stay in the list (an earlier
+// version excluded them, which fixed the misleading "N/5" progress label
+// but broke findability entirely - with no entry at all, there was no way
+// to even locate stranded troops to march them back out) - claimable:false
+// tells the client to render them as "stranded," not "almost there."
 router.get('/pending-claims', requireAuth, async (req, res) => {
   try {
     const result = await pool.query(`
@@ -212,7 +231,7 @@ router.get('/pending-claims', requireAuth, async (req, res) => {
       GROUP BY t.h3_index
       HAVING SUM(t.quantity) > 0
     `, [req.player.id])
-    res.json(result.rows)
+    res.json(result.rows.map(r => ({ ...r, claimable: !isOcean(r.h3_index) })))
   } catch (err) {
     console.error('[military] GET /pending-claims failed:', err.message)
     res.status(500).json({ error: 'Server error' })

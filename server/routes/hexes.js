@@ -9,6 +9,7 @@ import { STARTING_TROOPS, PROJECTION_GARRISON, PROJECTION_EMPIRE, MIN_TROOPS_TO_
 import { STRATEGIC_HEXES, STRATEGIC_BONUS_GOLD } from '../strategic.js'
 import { seedCampsAround } from '../wild.js'
 import { foundCapital } from '../founding.js'
+import { findMarchPath } from '../marchPath.js'
 
 const router = Router()
 
@@ -177,6 +178,22 @@ router.post('/terrain', (req, res) => {
     result[h] = isOcean(h) ? 'ocean' : 'land'
   }
   res.json(result)
+})
+
+// The actual weighted-shortest-path route between two hexes (marchPath.js) -
+// same routing a real march would take, so the pre-commit preview line shows
+// the real route (and its real cost) instead of a naive straight line. No
+// auth needed - this doesn't touch anyone's troops, just answers "what would
+// the route be."
+router.post('/route', (req, res) => {
+  const { fromHex, toHex } = req.body
+  if (!fromHex || !toHex) return res.status(400).json({ error: 'fromHex and toHex required' })
+  try {
+    res.json(findMarchPath(fromHex, toHex))
+  } catch (err) {
+    console.error('[hexes] POST /route failed:', err.message)
+    res.status(500).json({ error: 'Server error' })
+  }
 })
 
 router.post('/claim', requireAuth, async (req, res) => {

@@ -116,6 +116,10 @@ initSocket(httpServer, CORS_ORIGIN)
 
 async function runMigrations() {
   await pool.query('ALTER TABLE hexes ADD COLUMN IF NOT EXISTS rally_hex TEXT')
+  // Weighted-shortest-path route (marchPath.js), computed once at march
+  // creation and stored so position/beam rendering always matches exactly
+  // what arrives_at was computed from.
+  await pool.query('ALTER TABLE armies ADD COLUMN IF NOT EXISTS path TEXT[]')
   await pool.query('ALTER TABLE training_queue ADD COLUMN IF NOT EXISTS delivered INTEGER NOT NULL DEFAULT 0')
 
   // Real troop counts tracked alongside the multiplier-inclusive strength pools,

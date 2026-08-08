@@ -4,7 +4,7 @@ import { pool } from '../db.js'
 import { signToken, requireAuth } from '../auth.js'
 import { rateLimit } from '../ratelimit.js'
 import { IS_DEV } from '../config.js'
-import { STARTING_GOLD, STARTING_MANA, TICK_INTERVAL_MS, BUILDING_TIME_SECONDS, GOLD_CAP_BASE, WONDER_INCOME_GOLD } from '../config.js'
+import { STARTING_GOLD, STARTING_MANA, TICK_INTERVAL_MS, BUILDING_TIME_SECONDS, GOLD_CAP_BASE, GOLD_CAP_PER_HEX, GOLD_CAP_PER_MINE, WONDER_INCOME_GOLD } from '../config.js'
 import { nextTickAt } from '../tick.js'
 import { getCountry } from '../countries.js'
 import { STRATEGIC_HEXES, STRATEGIC_BONUS_GOLD, CITY_ZONES, ZONE_BONUS_PER_HEX } from '../strategic.js'
@@ -42,7 +42,7 @@ router.post('/login', rateLimit({ windowMs: 10 * 60 * 1000, max: IS_DEV ? 1000 :
 
   try {
     const result = await pool.query(
-      'SELECT id, username, color, gold, capital_hex, password_hash, last_login_date, login_streak FROM players WHERE username = $1',
+      'SELECT id, username, color, gold, capital_hex, flag_pixels, motto, password_hash, last_login_date, login_streak FROM players WHERE username = $1',
       [username]
     )
     const player = result.rows[0]
@@ -60,11 +60,27 @@ router.post('/login', rateLimit({ windowMs: 10 * 60 * 1000, max: IS_DEV ? 1000 :
       const yesterday = new Date(Date.now() - 86400000).toISOString().split('T')[0]
       const newStreak = lastDate === yesterday ? (login_streak || 0) + 1 : 1
       const bonusGold = newStreak >= 7 ? 100 : newStreak >= 3 ? 50 : 20
+
+      // Cap the bonus the same way the resource tick does (base + hexes + mines) -
+      // using the flat GOLD_CAP_BASE here would clamp an established player's whole
+      // balance down to 500 on every new-day login, wiping out territory income.
+      const capRow = await pool.query(`
+        SELECT COUNT(DISTINCT h.h3_index)::int AS hex_count,
+               COUNT(DISTINCT CASE WHEN b.type='mine' THEN b.id END)::int AS mine_count
+        FROM players p
+        LEFT JOIN hexes h ON h.owner_id = p.id
+        LEFT JOIN buildings b ON b.h3_index = h.h3_index
+        WHERE p.id = $1
+        GROUP BY p.id
+      `, [playerData.id])
+      const { hex_count = 0, mine_count = 0 } = capRow.rows[0] || {}
+      const goldCap = GOLD_CAP_BASE + hex_count * GOLD_CAP_PER_HEX + mine_count * GOLD_CAP_PER_MINE
+
       await pool.query(
         'UPDATE players SET gold = LEAST(gold + $1, $2), last_login_date = $3::date, login_streak = $4 WHERE id = $5',
-        [bonusGold, GOLD_CAP_BASE, today, newStreak, playerData.id]
+        [bonusGold, goldCap, today, newStreak, playerData.id]
       )
-      playerData.gold = Math.min(playerData.gold + bonusGold, GOLD_CAP_BASE)
+      playerData.gold = Math.min(playerData.gold + bonusGold, goldCap)
       loginBonus = { gold: bonusGold, streak: newStreak }
     }
 
@@ -96,6 +112,33 @@ router.get('/leaderboard', async (req, res) => {
     res.json(result.rows)
   } catch (err) {
     console.error('[players] GET /leaderboard failed:', err.message)
+    res.status(500).json({ error: 'Server error' })
+  }
+})
+
+// Look up players by (partial) username, for jumping to a player who isn't
+// in the top-5 leaderboard slice without loading the whole board.
+router.get('/search', async (req, res) => {
+  const q = String(req.query.q || '').trim()
+  if (q.length < 2) return res.json([])
+  try {
+    const result = await pool.query(`
+      WITH hx AS (SELECT owner_id, COUNT(*)::int AS n FROM hexes GROUP BY owner_id),
+           tr AS (SELECT owner_id, SUM(quantity)::float8 AS n FROM troops GROUP BY owner_id)
+      SELECT p.username, p.color, p.capital_hex, p.flag_pixels, a.tag AS alliance_tag,
+        COALESCE(hx.n, 0) AS hex_count,
+        COALESCE(tr.n, 0) AS total_troops
+      FROM players p
+      LEFT JOIN alliances a ON a.id = p.alliance_id
+      LEFT JOIN hx ON hx.owner_id = p.id
+      LEFT JOIN tr ON tr.owner_id = p.id
+      WHERE p.username ILIKE $1 AND p.username NOT LIKE 'WILD_%'
+      ORDER BY hex_count DESC, total_troops DESC
+      LIMIT 10
+    `, [`%${q}%`])
+    res.json(result.rows)
+  } catch (err) {
+    console.error('[players] GET /search failed:', err.message)
     res.status(500).json({ error: 'Server error' })
   }
 })

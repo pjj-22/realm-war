@@ -73,15 +73,64 @@ function Entry({ p, rank, player, showHistory, onToggleHistory, onFlyTo, rowRefs
   )
 }
 
+function SearchRow({ p, onFlyTo }) {
+  const canFly = !!p.capital_hex && !!onFlyTo
+
+  function handleClick() {
+    if (!canFly) return
+    const [lat, lng] = cellToLatLng(p.capital_hex)
+    onFlyTo(lng, lat)
+  }
+
+  return (
+    <div
+      onClick={handleClick}
+      style={{
+        display: 'flex', alignItems: 'center', gap: 8,
+        padding: '6px 4px',
+        borderBottom: '1px solid rgba(74,58,122,0.3)',
+        cursor: canFly ? 'pointer' : 'default',
+        borderRadius: 3,
+        transition: 'background 0.1s',
+      }}
+      onMouseEnter={e => { if (canFly) e.currentTarget.style.background = 'rgba(80,40,160,0.15)' }}
+      onMouseLeave={e => { e.currentTarget.style.background = '' }}
+      title={canFly ? `Go to ${displayName(p.username)}'s capital` : ''}
+    >
+      <RowFlag p={p} />
+      <span style={{ fontSize: 14, flex: 1 }}>
+        {p.alliance_tag && <span style={{ color: '#9070c0', fontSize: 11 }}>[{p.alliance_tag}] </span>}
+        {displayName(p.username)}
+      </span>
+      <span style={{ fontSize: 14, color: '#9a8aaa' }}>{p.hex_count}⬢</span>
+      <span style={{ fontSize: 14, color: '#8a7aaa' }}>{p.total_troops}<SwordsIcon size={11} color="#8a7aaa" /></span>
+      {canFly && <span style={{ fontSize: 14, color: '#5a4a7a' }}>⌖</span>}
+    </div>
+  )
+}
+
 export default function LeaderboardPanel({ player, onFlyTo }) {
   const isMobile = useIsMobile()
   const [board, setBoard] = useState([])
   const [open, setOpen] = useState(false)
   const [showHistory, setShowHistory] = useState(false)
+  const [query, setQuery] = useState('')
+  const [results, setResults] = useState([])
 
   const debounceRef = useRef(null)
+  const searchDebounceRef = useRef(null)
   const rowRefs = useRef(new Map())
   const prevRectsRef = useRef(new Map())
+
+  function handleSearchChange(e) {
+    const q = e.target.value
+    setQuery(q)
+    clearTimeout(searchDebounceRef.current)
+    if (q.trim().length < 2) { setResults([]); return }
+    searchDebounceRef.current = setTimeout(async () => {
+      try { setResults(await api.searchPlayers(q.trim())) } catch { /* keep showing last results on a transient failure */ }
+    }, 300)
+  }
 
   // FLIP: when close bot rankings swap positions, the row list just re-sorts
   // instantly with no transition, which reads as a flicker/jump. Capture each
@@ -156,6 +205,24 @@ export default function LeaderboardPanel({ player, onFlyTo }) {
 
       {open && (
         <div style={{ padding: '2px 12px 10px' }}>
+          <input
+            type="text"
+            value={query}
+            onChange={handleSearchChange}
+            placeholder="Search players…"
+            style={{
+              width: '100%', boxSizing: 'border-box', padding: '5px 8px', marginBottom: 6,
+              background: 'rgba(0,0,0,0.3)', border: '1px solid #4a3a7a', borderRadius: 4,
+              color: '#c9b99a', fontFamily: 'Georgia, serif', fontSize: 13,
+            }}
+          />
+
+          {query.trim().length >= 2 ? (
+            results.length === 0
+              ? <div style={{ fontSize: 12, color: '#6a5878', textAlign: 'center', padding: '6px 0' }}>No players found</div>
+              : results.map(p => <SearchRow key={p.username} p={p} onFlyTo={onFlyTo} />)
+          ) : (
+          <>
           {top5.map((p, i) => (
             <Entry key={p.username} p={p} rank={i + 1} player={player} showHistory={showHistory}
               onToggleHistory={() => setShowHistory(h => !h)} onFlyTo={onFlyTo} rowRefs={rowRefs} />
@@ -187,6 +254,8 @@ export default function LeaderboardPanel({ player, onFlyTo }) {
                 <span style={{ fontSize: 11, color: '#6a5a8a' }}>{showHistory ? '▲' : <ChartIcon size={12} color="#6a5a8a" />}</span>
               </div>
             </>
+          )}
+          </>
           )}
 
           {/* History chart - expands when player clicks their own entry */}

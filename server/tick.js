@@ -3,7 +3,7 @@ import {
   IS_DEV, SPEED_DIV,
   TICK_INTERVAL_MS, BATTLE_INTERVAL_MS, FORT_ADVANTAGE_TROOPS,
   GOLD_CAP_BASE, GOLD_CAP_PER_HEX, GOLD_CAP_PER_MINE, BUILDING_TIME_SECONDS,
-  OCEAN_MARCH_MULTIPLIER, TROOP_STATS,
+  TROOP_STATS,
   ENTRENCH_ADVANTAGE_PER_NEIGHBOR, ENTRENCH_MAX_NEIGHBORS,
   CAMP_LOOT_GOLD, CROWN_MIN_HEXES,
   DECAY_HEX_THRESHOLD, DECAY_CHANCE, DECAY_MAX_PER_TICK, requiredGarrisonForHexCount,
@@ -14,8 +14,9 @@ import { ensureBots, processBots } from './bots.js'
 import { ensureWildlands } from './wild.js'
 import { ensureSeason, processSeason } from './season.js'
 import { processWonders, WONDERS } from './wonders.js'
-import { gridDistance, gridDisk } from 'h3-js'
+import { gridDisk } from 'h3-js'
 import { isOcean } from './terrain.js'
+import { findMarchPath } from './marchPath.js'
 import { sendPush } from './push.js'
 import { STRATEGIC_HEXES, STRATEGIC_BONUS_GOLD, STRATEGIC_ADVANTAGE_TROOPS, CAPITAL_COUNTRY, CITY_ZONES, ZONE_BONUS_PER_HEX } from './strategic.js'
 import { getCountry } from './countries.js'
@@ -251,14 +252,16 @@ export async function processTraining() {
       await pool.query('DELETE FROM training_queue WHERE id=$1', [job.id])
 
       if (hasRally) {
-        // Auto-dispatch the whole batch to the rally point
+        // Auto-dispatch the whole batch to the rally point - same weighted
+        // routing as a manual march (see marchPath.js), not just a straight
+        // gridDistance line, so an auto-reinforcement takes the route that's
+        // actually fastest, not just the shortest crow-flies count.
         const stats = TROOP_STATS[job.type] || TROOP_STATS.troop
-        const dist = Math.max(1, gridDistance(job.h3_index, job.rally_hex))
-        const multiplier = isOcean(job.rally_hex) ? OCEAN_MARCH_MULTIPLIER : 1
-        const arrivesAt = new Date(Date.now() + dist * stats.marchMinutesPerHex * multiplier * 60 * 1000)
+        const { path, cost } = findMarchPath(job.h3_index, job.rally_hex)
+        const arrivesAt = new Date(Date.now() + Math.max(1, cost) * stats.marchMinutesPerHex * 60 * 1000)
         await pool.query(
-          'INSERT INTO armies (owner_id, from_hex, to_hex, type, quantity, arrives_at, departed_at) VALUES ($1,$2,$3,$4,$5,$6,NOW())',
-          [job.owner_id, job.h3_index, job.rally_hex, job.type, job.quantity, arrivesAt]
+          'INSERT INTO armies (owner_id, from_hex, to_hex, type, quantity, arrives_at, departed_at, path) VALUES ($1,$2,$3,$4,$5,$6,NOW(),$7)',
+          [job.owner_id, job.h3_index, job.rally_hex, job.type, job.quantity, arrivesAt, path]
         )
         getIO()?.emit('armies:update')
         await insertEvent(job.owner_id, 'training_complete', `${job.quantity} troops marching to rally point`, job.h3_index)
