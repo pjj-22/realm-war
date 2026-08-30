@@ -117,8 +117,11 @@ router.get('/leaderboard', async (req, res) => {
 })
 
 // Look up players by (partial) username, for jumping to a player who isn't
-// in the top-5 leaderboard slice without loading the whole board.
-router.get('/search', async (req, res) => {
+// in the top-5 leaderboard slice without loading the whole board. Auth +
+// rate limit: the leading-wildcard ILIKE plus two GROUP BY aggregations over
+// hexes/troops is a full scan per call, and the response exposes every
+// player's capital/flag/alliance - not something to serve anonymously in bulk.
+router.get('/search', requireAuth, rateLimit({ windowMs: 60 * 1000, max: IS_DEV ? 5000 : 120, message: 'Slow down' }), async (req, res) => {
   const q = String(req.query.q || '').trim()
   if (q.length < 2) return res.json([])
   try {

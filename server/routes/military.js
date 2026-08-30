@@ -27,7 +27,7 @@ router.get('/hex/:h3Index', requireAuth, async (req, res) => {
 
 router.post('/train', requireAuth, async (req, res) => {
   const { h3Index, type, quantity } = req.body
-  if (!h3Index || !type || !quantity || quantity < 1) return res.status(400).json({ error: 'Invalid request' })
+  if (!h3Index || !type || !Number.isInteger(quantity) || quantity < 1) return res.status(400).json({ error: 'Invalid request' })
   if (!TROOP_STATS[type]) return res.status(400).json({ error: 'Invalid troop type' })
 
   try {
@@ -79,7 +79,12 @@ router.post('/train', requireAuth, async (req, res) => {
 
 router.post('/march', requireAuth, async (req, res) => {
   const { fromHex, toHex, type, quantity } = req.body
-  if (!fromHex || !toHex || !type || !quantity) return res.status(400).json({ error: 'Invalid request' })
+  // quantity must be a positive whole number - a negative value would slip past
+  // the `available < quantity` check below and turn `quantity - $1` into an
+  // addition, minting troops at the source and creating a negative-size army.
+  if (!fromHex || !toHex || !type || !Number.isInteger(quantity) || quantity < 1) {
+    return res.status(400).json({ error: 'Invalid request' })
+  }
 
   try {
     // No hex-ownership check here on purpose - real authorization is the

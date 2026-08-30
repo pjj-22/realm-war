@@ -34,8 +34,12 @@ function haversineHexEstimate(hexA, hexB) {
   const dLat = toRad(latB - latA), dLng = toRad(lngB - lngA)
   const s = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(latA)) * Math.cos(toRad(latB)) * Math.sin(dLng / 2) ** 2
   const km = 2 * R * Math.asin(Math.sqrt(s))
-  const edgeKm = getHexagonEdgeLengthAvg(getResolution(hexA), 'km')
-  return Math.max(1, Math.round(km / edgeKm))
+  // Distance between adjacent H3 cell *centers* is ~sqrt(3)x the edge length,
+  // and a hex "step" moves from one center to the next - dividing by the raw
+  // edge length would inflate the hex count (and thus arrival time and the A*
+  // heuristic) by ~1.73x.
+  const centerSpacingKm = getHexagonEdgeLengthAvg(getResolution(hexA), 'km') * Math.sqrt(3)
+  return Math.max(1, Math.round(km / centerSpacingKm))
 }
 
 function safeGridDistance(a, b) {
@@ -62,14 +66,15 @@ function fallbackPath(fromHex, toHex) {
     const stepCosts = path.slice(1).map(stepCost)
     return { path, stepCosts, cost: stepCosts.reduce((a, b) => a + b, 0) }
   }
-  // h3 can't even compute a straight path between these two (too far apart)
-  // - no way to know the real terrain mix along an unrenderable route, so
-  // assume land speed throughout rather than guess at an ocean penalty that
-  // has no basis. A straight 2-point line is what the client draws; the
-  // synthetic per-hex cost is what makes the arrival time still realistic
-  // instead of "instant" for a genuinely transcontinental march.
+  // h3 can't even compute a straight path between these two (too far apart).
+  // The path is just its two endpoints, so it has exactly one segment -
+  // stepCosts must match that (one entry, not estHexes entries, or
+  // currentMarchHex walks off the end of the 2-element path and returns
+  // undefined). Put the whole estimated cost in that single segment, and
+  // leave it > 1: a straight line this long between continents always crosses
+  // open water, so the client's `stepCosts.some(c => c > 1)` should warn.
   const estHexes = haversineHexEstimate(fromHex, toHex)
-  return { path: [fromHex, toHex], stepCosts: Array(estHexes).fill(1), cost: estHexes }
+  return { path: [fromHex, toHex], stepCosts: [estHexes], cost: estHexes }
 }
 
 export function findMarchPath(fromHex, toHex) {

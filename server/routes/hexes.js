@@ -2,10 +2,11 @@ import { Router } from 'express'
 import { gridDisk, cellToLatLng, cellToParent } from 'h3-js'
 import { pool } from '../db.js'
 import { requireAuth } from '../auth.js'
+import { rateLimit } from '../ratelimit.js'
 import { getIO } from '../socket.js'
 import { isOcean } from '../terrain.js'
 import { getCountry } from '../countries.js'
-import { STARTING_TROOPS, PROJECTION_GARRISON, PROJECTION_EMPIRE, MIN_TROOPS_TO_CLAIM } from '../config.js'
+import { STARTING_TROOPS, PROJECTION_GARRISON, PROJECTION_EMPIRE, MIN_TROOPS_TO_CLAIM, IS_DEV } from '../config.js'
 import { STRATEGIC_HEXES, STRATEGIC_BONUS_GOLD } from '../strategic.js'
 import { seedCampsAround } from '../wild.js'
 import { foundCapital } from '../founding.js'
@@ -182,10 +183,12 @@ router.post('/terrain', (req, res) => {
 
 // The actual weighted-shortest-path route between two hexes (marchPath.js) -
 // same routing a real march would take, so the pre-commit preview line shows
-// the real route (and its real cost) instead of a naive straight line. No
-// auth needed - this doesn't touch anyone's troops, just answers "what would
-// the route be."
-router.post('/route', (req, res) => {
+// the real route (and its real cost) instead of a naive straight line.
+// Auth + rate limit: the A* search is bounded but not cheap (up to
+// MAX_EXPANDED nodes with a linear-scan open set), and the client fires this
+// on every hover over a new hex during march targeting, so it needs a ceiling
+// or a script can pin the event loop.
+router.post('/route', requireAuth, rateLimit({ windowMs: 60 * 1000, max: IS_DEV ? 5000 : 400, message: 'Slow down' }), (req, res) => {
   const { fromHex, toHex } = req.body
   if (!fromHex || !toHex) return res.status(400).json({ error: 'fromHex and toHex required' })
   try {

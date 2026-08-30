@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom'
 import { useSocket, identifySocket } from '../hooks/useSocket'
 import { toast } from '../toastBus'
 import maplibregl from 'maplibre-gl'
-import { polygonToCells, cellToBoundary, cellToLatLng, gridDisk, gridPathCells, getHexagonEdgeLengthAvg } from 'h3-js'
+import { polygonToCells, cellToBoundary, cellToLatLng, gridDisk, getHexagonEdgeLengthAvg } from 'h3-js'
 import 'maplibre-gl/dist/maplibre-gl.css'
 import BottomDrawer from './BottomDrawer'
 import ArmiesHUD from './ArmiesHUD'
@@ -817,7 +817,15 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
       // each direction so it only shows once the capital is genuinely far away.
       const latPad = (n - s) / 2
       const lngPad = (e - w) / 2
-      const nearby = lat >= s - latPad && lat <= n + latPad && lng >= w - lngPad && lng <= e + lngPad
+      // Wrap-aware longitude test: near +/-180 the padded west edge can exceed
+      // the east edge, so a plain `w <= lng <= e` never matches. Normalise
+      // everything to [0,360) and allow the window to straddle the seam.
+      const norm = x => ((x % 360) + 360) % 360
+      const wl = norm(w - lngPad), el = norm(e + lngPad), tl = norm(lng)
+      const lngIn = (el - wl + 360) % 360 >= 359.999
+        ? true // padded window spans the whole globe
+        : wl <= el ? (tl >= wl && tl <= el) : (tl >= wl || tl <= el)
+      const nearby = lat >= s - latPad && lat <= n + latPad && lngIn
       setCapitalInView(nearby)
     } else {
       setCapitalInView(true)
@@ -1698,7 +1706,10 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
       if (mode?.fromHex) updateMarchPreview(mode.fromHex, hoveredHex)
       else if (mode?.battleMode && mode.targetHex) updateMarchPreview(hoveredHex, mode.targetHex)
       else if (rallyModeRef.current) updateMarchPreview(rallyModeRef.current, hoveredHex)
-      else clearMarchPreview()
+      // Not targeting - only touch the preview source if there's actually a
+      // stale line to wipe (just exited march/rally mode). Otherwise this
+      // fires a geojson setData on every mousemove over the map for nothing.
+      else if (lastPreviewKey !== null) clearMarchPreview()
     })
     map.current.on('mouseleave', 'hex-fill', () => { map.current.getCanvas().style.cursor = ''; clearMarchPreview() })
 
@@ -2464,6 +2475,7 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
           hex={selectedHex}
           player={player}
           stats={stats}
+          pendingClaims={pendingClaims}
           ownedHexCount={ownedHexCount}
           getFriendlyNeighborCount={getFriendlyNeighborCount}
           onStatsRefresh={loadStats}

@@ -217,7 +217,7 @@ function UpgradeBar({ completes_at, onExpire }) {
 
 // ── main component ────────────────────────────────────────────────────────────
 
-export default function BottomDrawer({ hex, player, stats, onClaim, onSetCapital, onLoginRequired, onBuild, onPlayerUpdate, onMarchStart, onSetRallyMode, onStatsRefresh, getFriendlyNeighborCount, ownedHexCount }) {
+export default function BottomDrawer({ hex, player, stats, pendingClaims, onClaim, onSetCapital, onLoginRequired, onBuild, onPlayerUpdate, onMarchStart, onSetRallyMode, onStatsRefresh, getFriendlyNeighborCount, ownedHexCount }) {
   const isMobile = useIsMobile()
   const isOwn    = !!(player && hex?.username === player.username)
   const isClaimed = !!hex?.owner
@@ -280,18 +280,24 @@ export default function BottomDrawer({ hex, player, stats, onClaim, onSetCapital
     loadBuildings()
     loadMilitary()
   }, [hex?.h3, loadBuildings, loadMilitary])
-  useSocket({ 'armies:update': loadMilitary, tick: loadMilitary })
+  // Only your own hexes need live military refresh (garrison changes from
+  // arrivals/training). For a hex you don't own, `military` is just your
+  // stranded troops sitting there - that only changes when you march them,
+  // which already refetches - so refetching it on every global tick and
+  // every armies:update anywhere in the game is pure waste (see commit
+  // 06600cc for the same class of regression).
+  useSocket({
+    'armies:update': () => { if (isOwn) loadMilitary() },
+    tick: () => { if (isOwn) loadMilitary() },
+  })
 
   // Only matters for the "troops sitting on an unclaimed hex" message below -
   // ocean can never be claimed at any troop count, so that message needs to
-  // say something different than "N more troops and this claims."
-  const [isOceanHex, setIsOceanHex] = useState(false)
-  useEffect(() => {
-    if (!hex?.h3 || isClaimed) { setIsOceanHex(false); return }
-    let cancelled = false
-    api.checkTerrain([hex.h3]).then(r => { if (!cancelled) setIsOceanHex(r[hex.h3] === 'ocean') }).catch(() => {})
-    return () => { cancelled = true }
-  }, [hex?.h3, isClaimed])
+  // say something different than "N more troops and this claims." Any
+  // unclaimed hex you have troops on is already in pendingClaims with a
+  // server-computed `claimable` flag (claimable === false means ocean), so
+  // read that instead of a separate /hexes/terrain round-trip per click.
+  const isOceanHex = !isClaimed && pendingClaims?.some(p => p.h3_index === hex?.h3 && p.claimable === false)
 
   useEffect(() => {
     if (!buildingData?.upgrading?.completes_at) return
