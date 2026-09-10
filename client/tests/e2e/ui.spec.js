@@ -19,7 +19,7 @@ test.describe('UI labels and layout', () => {
     const res = await fetch('http://localhost:3001/api/players/register', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username: `armies_${Date.now()}`, password: 'testpass123', color: '#0000ff' }),
+      body: JSON.stringify({ username: `armies_${Date.now()}`, password: 'testpass123', color: '#0000ff', ageConfirmed: true }),
     })
     const { token } = await res.json()
     await page.goto('/')
@@ -56,7 +56,7 @@ test.describe('UI labels and layout', () => {
     const res = await fetch('http://localhost:3001/api/players/register', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username: `ui_${Date.now()}`, password: 'testpass123', color: '#ff0000' }),
+      body: JSON.stringify({ username: `ui_${Date.now()}`, password: 'testpass123', color: '#ff0000', ageConfirmed: true }),
     })
     const { token, player } = await res.json()
 

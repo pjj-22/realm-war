@@ -8,7 +8,7 @@ export async function createTestAccount() {
   const res = await fetch(`${API}/players/register`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username, password: 'testpass123', color: '#ff6600' }),
+    body: JSON.stringify({ username, password: 'testpass123', color: '#ff6600', ageConfirmed: true }),
   })
   if (!res.ok) throw new Error(`Register failed: ${await res.text()}`)
   const data = await res.json()

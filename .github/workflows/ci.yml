@@ -72,7 +72,7 @@ jobs:
           # register -> claim -> verify camps + season endpoints
           TOKEN=$(curl -sf -X POST http://localhost:3001/api/players/register \
             -H 'Content-Type: application/json' \
-            -d '{"username":"ci_smoke","password":"ci_password","color":"#ff6600"}' | python3 -c 'import sys,json;print(json.load(sys.stdin)["token"])')
+            -d '{"username":"ci_smoke","password":"ci_password","color":"#ff6600","ageConfirmed":true}' | python3 -c 'import sys,json;print(json.load(sys.stdin)["token"])')
           curl -sf http://localhost:3001/api/players/me -H "Authorization: Bearer $TOKEN" > /dev/null
           curl -sf http://localhost:3001/api/seasons/current > /dev/null
           curl -sf http://localhost:3001/api/world/events > /dev/null

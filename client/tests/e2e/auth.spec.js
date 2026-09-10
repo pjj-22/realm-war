@@ -16,6 +16,7 @@ test.describe('Auth', () => {
     await page.click('text=No account? Register')
     await page.fill('input[placeholder="Username"]', username)
     await page.fill('input[placeholder="Password"]', 'testpass123')
+    await page.locator('input[type="checkbox"]').check()
     await page.click('button:has-text("Join the War")')
     await page.waitForTimeout(2500)
 
