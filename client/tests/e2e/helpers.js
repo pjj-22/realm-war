@@ -41,7 +41,7 @@ export async function zoomToHexGrid(page, steps = 12) {
 
 // Click a hex on the canvas at a given position
 export async function clickHex(page, x = 720, y = 450) {
-  await page.click('canvas', { position: { x, y } })
+  await page.click('canvas.maplibregl-canvas', { position: { x, y } })
   await page.waitForTimeout(800)
 }
 

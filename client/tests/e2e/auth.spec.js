@@ -21,7 +21,7 @@ test.describe('Auth', () => {
     await page.waitForTimeout(2500)
 
     // Should be on the map now
-    await expect(page.locator('canvas')).toBeVisible()
+    await expect(page.locator('canvas.maplibregl-canvas')).toBeVisible()
     // FTUE guide should appear for new player
     await expect(page.locator('text=Claim your first territory')).toBeVisible({ timeout: 5000 })
   })
@@ -42,7 +42,7 @@ test.describe('Auth', () => {
     await page.goto('/')
     await page.click('text=Browse as guest')
     await page.waitForTimeout(2000)
-    await expect(page.locator('canvas')).toBeVisible()
+    await expect(page.locator('canvas.maplibregl-canvas')).toBeVisible()
     await expect(page.locator('text=LOGIN / REGISTER')).toBeVisible()
   })
 
