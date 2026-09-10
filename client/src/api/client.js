@@ -19,7 +19,9 @@ async function request(method, path, body, { allowNull } = {}) {
 }
 
 export const api = {
-  register: (username, password, color) => request('POST', '/players/register', { username, password, color }),
+  register: (username, password, color, ageConfirmed) => request('POST', '/players/register', { username, password, color, ageConfirmed }),
+  deleteAccount: () => request('DELETE', '/players/me'),
+  exportData: () => request('GET', '/players/export'),
   login: (username, password) => request('POST', '/players/login', { username, password }),
   me: () => request('GET', '/players/me'),
   saveFlag: (flagPixels, motto) => request('POST', '/players/flag', { flagPixels, motto }),

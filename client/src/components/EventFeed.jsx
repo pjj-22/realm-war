@@ -11,6 +11,7 @@ import {
   PlagueIcon, MeteorIcon, FamineIcon, RevoltIcon, TentIcon,
 } from './Icons'
 import { toast } from '../toastBus'
+import { theme } from '../theme'
 
 const TYPE_ICONS = {
   battle_won:        TrophyIcon,
@@ -38,7 +39,7 @@ const TYPE_ICONS = {
 
 function EventIcon({ type, size = 14 }) {
   const Icon = TYPE_ICONS[type]
-  return Icon ? <Icon size={size} /> : <span style={{ color: '#6a5878' }}>·</span>
+  return Icon ? <Icon size={size} /> : <span style={{ color: theme.text.tertiary }}>·</span>
 }
 
 function relTime(ts) {
@@ -78,7 +79,7 @@ function PushToggle() {
       title={status === 'on' ? 'Disable attack alerts' : 'Get notified when your realm is under attack'}
       style={{
         background: 'none', border: '1px solid rgba(255,255,255,0.12)',
-        borderRadius: 4, color: status === 'on' ? '#c9a040' : '#7a6890',
+        borderRadius: 4, color: status === 'on' ? '#c9a040' : theme.text.secondary,
         cursor: status === 'blocked' ? 'not-allowed' : 'pointer',
         fontSize: 11, padding: '2px 8px', fontFamily: 'Georgia, serif',
         opacity: status === 'blocked' ? 0.5 : 1,
@@ -97,7 +98,7 @@ function SoundToggle() {
       title={muted ? 'Unmute game sounds' : 'Mute game sounds'}
       style={{
         background: 'none', border: '1px solid rgba(255,255,255,0.12)',
-        borderRadius: 4, color: muted ? '#7a6890' : '#c9a040',
+        borderRadius: 4, color: muted ? theme.text.secondary : '#c9a040',
         cursor: 'pointer', fontSize: 11, padding: '2px 8px', fontFamily: 'Georgia, serif',
       }}>
       {muted ? <SpeakerOffIcon size={13} /> : <SpeakerIcon size={13} color="#c9a040" />}
@@ -113,7 +114,7 @@ function MusicToggle() {
       title={on ? 'Turn off background music' : 'Turn on background music'}
       style={{
         background: 'none', border: '1px solid rgba(255,255,255,0.12)',
-        borderRadius: 4, color: on ? '#c9a040' : '#7a6890',
+        borderRadius: 4, color: on ? '#c9a040' : theme.text.secondary,
         cursor: 'pointer', fontSize: 11, padding: '2px 8px', fontFamily: 'Georgia, serif',
       }}>
       {on ? <MusicIcon size={13} color="#c9a040" /> : <MusicOffIcon size={13} />}
@@ -206,8 +207,8 @@ export default function EventFeed() {
       onClick={() => setTab(id)}
       style={{
         flex: 1, padding: '6px 0', background: 'none',
-        border: 'none', borderBottom: tab === id ? '2px solid #a070e0' : '2px solid transparent',
-        color: tab === id ? '#c0a0f0' : '#6a5878',
+        border: 'none', borderBottom: tab === id ? `2px solid ${theme.accentStrong}` : '2px solid transparent',
+        color: tab === id ? theme.accentStrong : theme.text.tertiary,
         cursor: 'pointer', fontSize: 12, letterSpacing: 2, textTransform: 'uppercase',
         fontFamily: 'Georgia, serif',
       }}>
@@ -233,7 +234,7 @@ export default function EventFeed() {
                 pointerEvents: 'auto', cursor: 'pointer',
                 width: 'min(300px, calc(100vw - 16px))',
                 background: 'rgba(15,10,28,0.96)',
-                border: '1px solid rgba(160,110,200,0.4)',
+                border: '1px solid rgba(201,160,64,0.4)',
                 borderRadius: 6, padding: '10px 14px',
                 boxShadow: '0 4px 20px rgba(0,0,0,0.6)',
                 display: 'flex', gap: 10, alignItems: 'flex-start',
@@ -254,7 +255,7 @@ export default function EventFeed() {
           background: open ? 'rgba(40,30,60,0.9)' : 'none',
           border: open ? '1px solid rgba(255,255,255,0.1)' : 'none',
           borderRadius: 6,
-          color: '#c9b99a',
+          color: theme.text.primary,
           padding: '4px 8px',
           cursor: 'pointer',
           fontSize: 16,
@@ -308,7 +309,7 @@ export default function EventFeed() {
             fontSize: 14,
             letterSpacing: 2,
             textTransform: 'uppercase',
-            color: '#7a6890',
+            color: theme.text.secondary, fontFamily: theme.headerFont,
           }}>
             <span>Dispatches</span>
             <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
@@ -316,7 +317,7 @@ export default function EventFeed() {
               <MusicToggle />
               <PushToggle />
               <button onClick={() => setOpen(false)} style={{
-                background: 'none', border: 'none', color: '#7a6890',
+                background: 'none', border: 'none', color: theme.text.secondary,
                 cursor: 'pointer', fontSize: 18, lineHeight: 1,
               }}>×</button>
             </div>
@@ -329,7 +330,7 @@ export default function EventFeed() {
 
           <div style={{ overflowY: 'auto', flex: 1 }}>
             {rows.length === 0 ? (
-              <div style={{ padding: 16, color: '#6a5878', fontSize: 14, textAlign: 'center' }}>
+              <div style={{ padding: 16, color: theme.text.tertiary, fontSize: 14, textAlign: 'center' }}>
                 {tab === 'empire' ? 'No dispatches' : 'The world is quiet… for now'}
               </div>
             ) : rows.map(ev => (
@@ -348,7 +349,7 @@ export default function EventFeed() {
                   <div style={{ fontSize: 14, color: '#c4b498', wordBreak: 'break-word' }}>
                     {stripEmoji(ev.message)}
                   </div>
-                  <div style={{ fontSize: 12, color: '#6a5878', marginTop: 3 }}>
+                  <div style={{ fontSize: 12, color: theme.text.tertiary, marginTop: 3 }}>
                     {relTime(ev.created_at)}
                   </div>
                 </div>

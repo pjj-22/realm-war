@@ -137,6 +137,13 @@ export const HEX_RESOLUTION = 7
 // correct if HEX_RESOLUTION ever changes.
 export const WORLD_HEX_COUNT = getNumCells(HEX_RESOLUTION)
 
+// Socket "region" rooms: coarser than HEX_RESOLUTION so one room covers a
+// whole neighborhood instead of a single hex. Clients join the region(s)
+// covering their own territory + current viewport; hex/army/battle socket
+// events are scoped to the region(s) covering the affected hex instead of
+// broadcast to every connected socket. See emitToRegion() in socket.js.
+export const REGION_RESOLUTION = 5
+
 // ─── Claiming ─────────────────────────────────────────────────────────────────
 // An unclaimed hex needs a real commitment to take, not a single scout troop -
 // this is what actually stops "spread everywhere with 1 troop," rather than

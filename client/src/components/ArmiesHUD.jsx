@@ -5,6 +5,7 @@ import { useIsMobile } from '../hooks/useIsMobile'
 import { toast } from '../toastBus'
 import { TroopFigure } from './BuildingArt'
 import { SwordsIcon, WarningIcon } from './Icons'
+import { theme } from '../theme'
 
 
 // ── Hex row ──────────────────────────────────────────────────────────────────
@@ -20,21 +21,21 @@ function HexRow({ hex, isCapital, onFlyTo }) {
         cursor: onFlyTo ? 'pointer' : 'default',
         transition: 'background 0.1s',
       }}
-      onMouseEnter={e => { if (onFlyTo) e.currentTarget.style.background = 'rgba(80,40,160,0.18)' }}
+      onMouseEnter={e => { if (onFlyTo) e.currentTarget.style.background = 'rgba(201,160,64,0.15)' }}
       onMouseLeave={e => { e.currentTarget.style.background = isCapital ? 'rgba(80,60,20,0.25)' : 'transparent' }}
     >
       {isCapital
         ? <span style={{ fontSize: 14, color: '#c9a020', width: 12, flexShrink: 0 }}>★</span>
         : <span style={{ width: 12, flexShrink: 0 }} />
       }
-      <span style={{ fontSize: 13, color: '#c9b99a', minWidth: 26, textAlign: 'right', flexShrink: 0, fontVariantNumeric: 'tabular-nums' }}>
+      <span style={{ fontSize: 13, color: theme.text.primary, minWidth: 26, textAlign: 'right', flexShrink: 0, fontVariantNumeric: 'tabular-nums' }}>
         {hex.troop_count}
       </span>
-      <span style={{ flexShrink: 0 }}><SwordsIcon size={11} color="#5a4a7a" /></span>
-      <span style={{ fontSize: 9, color: '#4a3a6a', flex: 1, fontFamily: hex.country_name ? 'Georgia, serif' : 'monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', letterSpacing: 0 }}>
+      <span style={{ flexShrink: 0 }}><SwordsIcon size={11} color={theme.text.tertiary} /></span>
+      <span style={{ fontSize: 9, color: theme.text.tertiary, flex: 1, fontFamily: hex.country_name ? 'Georgia, serif' : 'monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', letterSpacing: 0 }}>
         {hex.country_name || hex.h3_index}
       </span>
-      {onFlyTo && <span style={{ fontSize: 9, color: '#3a2a5a', flexShrink: 0 }}>⌖</span>}
+      {onFlyTo && <span style={{ fontSize: 9, color: theme.text.tertiary, flexShrink: 0 }}>⌖</span>}
     </div>
   )
 }
@@ -70,18 +71,18 @@ function MarchRow({ army, isOwn, canRecall, onRecall, showDistance }) {
   return (
     <div style={{
       padding: '6px 8px', borderRadius: 3, marginBottom: 4,
-      background: isOwn ? 'rgba(80,40,160,0.15)' : 'rgba(160,30,30,0.12)',
-      border: `1px solid ${isOwn ? '#3a2a6a' : '#5a2a2a'}`,
+      background: isOwn ? 'rgba(201,160,64,0.12)' : 'rgba(160,30,30,0.12)',
+      border: `1px solid ${isOwn ? theme.border : '#5a2a2a'}`,
     }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 3 }}>
-        <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 14, color: '#c9b99a' }}>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 14, color: theme.text.primary }}>
           <TroopFigure
-            color={isOwn ? '#c9b99a' : (army.color || '#c06060')}
+            color={isOwn ? theme.text.primary : (army.color || '#c06060')}
             size={20}
             animate
             count={army.quantity}
           />
-          {!isOwn && <span style={{ color: '#9a8aaa' }}>{army.username}</span>}
+          {!isOwn && <span style={{ color: theme.text.secondary }}>{army.username}</span>}
         </span>
         <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
           {showDistance && (
@@ -89,7 +90,7 @@ function MarchRow({ army, isOwn, canRecall, onRecall, showDistance }) {
               {hexesAway} hex{hexesAway !== 1 ? 'es' : ''} away
             </span>
           )}
-          <span style={{ fontSize: 14, color: '#7a6a9a' }}>{eta}</span>
+          <span style={{ fontSize: 14, color: theme.text.secondary }}>{eta}</span>
           {canRecall && (
             <button onClick={() => onRecall(army.id)} style={{
               padding: '1px 6px', background: 'rgba(100,30,30,0.4)',
@@ -102,7 +103,7 @@ function MarchRow({ army, isOwn, canRecall, onRecall, showDistance }) {
       <div style={{ height: 2, background: 'rgba(255,255,255,0.07)', borderRadius: 1 }}>
         <div style={{
           height: '100%', borderRadius: 1,
-          background: isOwn ? '#6050b0' : '#903030',
+          background: isOwn ? theme.accent : '#903030',
           width: `${progress}%`, transition: 'width 1s linear',
         }} />
       </div>
@@ -158,13 +159,13 @@ export default function ArmiesHUD({ armies, activeBattles = [], player, claimedR
       <button onClick={() => setOpen(o => !o)} style={{
         display: 'flex', alignItems: 'center', gap: 8, padding: '8px 14px',
         background: 'rgba(10,8,25,0.85)',
-        border: `1px solid ${threats.length > 0 ? '#7a2a2a' : '#4a3a7a'}`,
-        borderRadius: 6, color: '#c9b99a', cursor: 'pointer', fontSize: 14, letterSpacing: 1,
-        boxShadow: threats.length > 0 ? '0 0 12px rgba(180,40,40,0.4)' : '0 0 12px rgba(80,40,160,0.3)',
+        border: `1px solid ${threats.length > 0 ? '#7a2a2a' : theme.border}`,
+        borderRadius: 6, color: theme.text.primary, cursor: 'pointer', fontSize: 14, letterSpacing: 1,
+        boxShadow: threats.length > 0 ? '0 0 12px rgba(180,40,40,0.4)' : '0 2px 10px rgba(0,0,0,0.5)',
       }}>
-        <span><SwordsIcon size={13} color="#c9b99a" /> Armies</span>
+        <span><SwordsIcon size={13} color={theme.text.primary} /> Armies</span>
         {ownedHexes.length > 0 && (
-          <span style={{ background: '#3a2a6a', borderRadius: 10, padding: '2px 8px', fontSize: 12 }}>
+          <span style={{ background: 'rgba(201,160,64,0.25)', color: theme.accentStrong, borderRadius: 10, padding: '2px 8px', fontSize: 12 }}>
             {ownedHexes.length}⬢
           </span>
         )}
@@ -175,10 +176,10 @@ export default function ArmiesHUD({ armies, activeBattles = [], player, claimedR
       {open && (
         <div style={{
           marginTop: 4,
-          background: 'rgba(10,8,25,0.93)', border: '1px solid #4a3a7a',
+          background: 'rgba(10,8,25,0.93)', border: `1px solid ${theme.border}`,
           borderRadius: 6, padding: '12px 14px',
           width: isMobile ? 'calc(100vw - 32px)' : 210,
-          boxShadow: '0 0 30px rgba(80,40,160,0.4)',
+          boxShadow: '0 4px 24px rgba(0,0,0,0.6)',
           maxHeight: '65vh', overflowY: 'auto',
         }}>
 
@@ -194,7 +195,7 @@ export default function ArmiesHUD({ armies, activeBattles = [], player, claimedR
 
           {myArmies.length > 0 && (
             <>
-              <SectionLabel color="#8a7aaa">Marching ({myArmies.length})</SectionLabel>
+              <SectionLabel color={theme.text.secondary}>Marching ({myArmies.length})</SectionLabel>
               {myArmies.map(a => (
                 <MarchRow key={a.id} army={a} isOwn canRecall onRecall={handleRecall} />
               ))}
@@ -205,7 +206,7 @@ export default function ArmiesHUD({ armies, activeBattles = [], player, claimedR
           {ownedHexes.length > 0 ? (
             <>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 5 }}>
-                <SectionLabel color="#6a5a8a">Territory ({ownedHexes.length})</SectionLabel>
+                <SectionLabel color={theme.text.secondary}>Territory ({ownedHexes.length})</SectionLabel>
                 {onAutoTrain && (
                   <button
                     onClick={handleAutoTrain}
@@ -230,7 +231,7 @@ export default function ArmiesHUD({ armies, activeBattles = [], player, claimedR
               ))}
             </>
           ) : (
-            <div style={{ fontSize: 14, color: '#5a4a7a', textAlign: 'center', padding: '10px 0' }}>
+            <div style={{ fontSize: 14, color: theme.text.tertiary, textAlign: 'center', padding: '10px 0' }}>
               No territory - claim a hex to start
             </div>
           )}
@@ -249,5 +250,5 @@ function SectionLabel({ color, children }) {
 }
 
 function Divider() {
-  return <div style={{ borderTop: '1px solid #2a1a4a', margin: '8px 0' }} />
+  return <div style={{ borderTop: `1px solid ${theme.border}`, margin: '8px 0' }} />
 }

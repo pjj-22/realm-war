@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { createPortal } from 'react-dom'
-import { useSocket, identifySocket } from '../hooks/useSocket'
+import { useSocket, identifySocket, watchRegions } from '../hooks/useSocket'
 import { toast } from '../toastBus'
 import maplibregl from 'maplibre-gl'
-import { polygonToCells, cellToBoundary, cellToLatLng, gridDisk, getHexagonEdgeLengthAvg } from 'h3-js'
+import { polygonToCells, cellToBoundary, cellToLatLng, cellToParent, gridDisk, getHexagonEdgeLengthAvg } from 'h3-js'
 import 'maplibre-gl/dist/maplibre-gl.css'
 import BottomDrawer from './BottomDrawer'
 import ArmiesHUD from './ArmiesHUD'
@@ -20,6 +20,7 @@ import { api } from '../api/client'
 import { GoldIcon, SearchIcon, AllianceIcon, SwordsIcon, WarningIcon, KeepIcon } from './Icons'
 import { resolveFlag, flagImageId, flagToImageData } from '../flags'
 import { playSound } from '../sound.js'
+import { theme } from '../theme'
 
 
 const HEX_RESOLUTION = 7
@@ -454,7 +455,7 @@ function HarvestCountdown({ nextTickAt, onExpire, compact }) {
   const m = Math.floor(secs / 60), s = secs % 60
   const label = m > 0 ? `${m}m ${String(s).padStart(2,'0')}s` : `${secs}s`
   return (
-    <span style={{ fontSize: 11, color: secs <= 5 ? '#c9902a' : '#7a6890', whiteSpace: 'nowrap' }}>
+    <span style={{ fontSize: 11, color: secs <= 5 ? '#c9902a' : theme.text.secondary, whiteSpace: 'nowrap' }}>
       {compact ? `⏳${label}` : `harvest in ${label}`}
     </span>
   )
@@ -546,7 +547,7 @@ function GoldIncomeTooltip({ hexCount, mines, incomeByCountry, wonderIncome, tot
   )
 }
 
-export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onShowHelp }) {
+export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onShowHelp, onShowAccount }) {
   const mapContainer = useRef(null)
   const map = useRef(null)
   // claimedRef is the merge of two sources, kept separate so each can be
@@ -607,6 +608,43 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
   // reload (see loadSeason below) rather than trying to live-rebuild the
   // map's hex grid and MapLibre sources for a new resolution mid-session.
   const hexResolutionRef = useRef(HEX_RESOLUTION)
+
+  // Region rooms (see server/socket.js): a coarser H3 resolution than the
+  // game hex grid, fetched once from /api/health alongside other server
+  // constants. Fixed for the life of the session - unlike hexResolutionRef
+  // this isn't season-dependent, it's just a socket-scoping granularity.
+  const regionResolutionRef = useRef(5)
+  const watchedRegionsRef = useRef([])
+  const regionDebounceRef = useRef(null)
+
+  // Recomputes which region rooms this client should be watching - own
+  // territory (always, so your border stays live even off-screen) union
+  // whatever's currently in viewport (so nearby border skirmishes and
+  // battles show up live even on hexes you don't own) - and tells the
+  // server only when the set actually changed.
+  const updateWatchedRegions = useCallback(() => {
+    const res = regionResolutionRef.current
+    const regions = new Set()
+    const capitalHex = playerRef.current?.capital_hex
+    if (capitalHex) {
+      for (const cell of gridDisk(cellToParent(capitalHex, res), 1)) regions.add(cell)
+    }
+    if (map.current) {
+      for (const cell of polygonToCells(getViewportPolygon(map.current, VIEWPORT_PREFETCH_PAD), res)) {
+        regions.add(cell)
+      }
+    }
+    const next = [...regions].sort()
+    const prev = watchedRegionsRef.current
+    if (next.length === prev.length && next.every((c, i) => c === prev[i])) return
+    watchedRegionsRef.current = next
+    watchRegions(next)
+  }, [])
+
+  // Re-sync watched regions whenever a capital is founded/lost/re-founded -
+  // the viewport-driven recompute (moveend/zoomend) doesn't fire on its own
+  // just because ownership changed.
+  useEffect(() => { updateWatchedRegions() }, [player?.capital_hex, updateWatchedRegions])
 
   // These read only refs (map, claimedRef, playerRef, etc.) so they're stable
   // across renders - safe to depend on elsewhere without causing re-runs.
@@ -722,8 +760,15 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
         min_troops_to_claim: cfg.min_troops_to_claim ?? 5,
         troop_gold_cost: cfg.troop_gold_cost ?? 10,
       }
+      // Must match server/config.js's REGION_RESOLUTION exactly, or the
+      // regions we ask to watch won't line up with the rooms the server
+      // actually emits to - resync once the real value is known.
+      if (cfg.region_resolution != null && cfg.region_resolution !== regionResolutionRef.current) {
+        regionResolutionRef.current = cfg.region_resolution
+        updateWatchedRegions()
+      }
     }).catch(() => {})
-  }, [])
+  }, [updateWatchedRegions])
 
   // Entrenchment count for the defense-breakdown card in BottomDrawer - reads
   // the same claimedRef map already loaded for map rendering, so no extra
@@ -1094,7 +1139,9 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
       style: 'https://tiles.openfreemap.org/styles/dark',
       center: [0, 30],
       zoom: 3,
-      attributionControl: false,
+      // Compact (collapsed "ⓘ") rather than off - the OpenStreetMap/OpenFreeMap
+      // data licence (ODbL) requires the attribution stay visible.
+      attributionControl: { compact: true },
     })
     if (import.meta.env.DEV) window.__map = map.current
 
@@ -1575,6 +1622,7 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
       loadStrategic()
       loadZones()
       loadLandmarks()
+      updateWatchedRegions()
       // armies state may already be loaded - force a sync
       map.current.once('idle', () => {
         setArmies(prev => [...prev])
@@ -1591,8 +1639,16 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
     // the new viewport - panning to a claimed hex we've never loaded a value
     // for should be blank rather than wrong, not silently show nothing until
     // the next hexes:update happens to come along.
-    map.current.on('moveend', () => { updateHexes(); updateOverview(); checkViewport(); loadViewportHexes(); loadOverviewSummary() })
-    map.current.on('zoomend', () => { updateHexes(); updateOverview(); checkViewport(); loadViewportHexes(); loadOverviewSummary() })
+    // Region-watch recompute is debounced separately from the rest - it's a
+    // cheap local computation plus one socket emit, no reason to tie it to
+    // the same cadence as the network fetches above, but panning shouldn't
+    // spam watch-regions on every intermediate frame either.
+    const debouncedRegionUpdate = () => {
+      clearTimeout(regionDebounceRef.current)
+      regionDebounceRef.current = setTimeout(updateWatchedRegions, 800)
+    }
+    map.current.on('moveend', () => { updateHexes(); updateOverview(); checkViewport(); loadViewportHexes(); loadOverviewSummary(); debouncedRegionUpdate() })
+    map.current.on('zoomend', () => { updateHexes(); updateOverview(); checkViewport(); loadViewportHexes(); loadOverviewSummary(); debouncedRegionUpdate() })
     map.current.on('zoom', () => {
       const z = map.current.getZoom()
       setZoom(z)
@@ -1742,7 +1798,7 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
     }
     // All of these are useCallback-memoized on refs/[] only, so they're stable
     // across renders - listing them here doesn't cause the map to reinitialize.
-  }, [checkViewport, enrichHex, loadClaimed, loadLandmarks, loadOverviewSummary, loadStrategic, loadViewportHexes, loadZones, updateClaimed, updateHexes, updateOverview])
+  }, [checkViewport, enrichHex, loadClaimed, loadLandmarks, loadOverviewSummary, loadStrategic, loadViewportHexes, loadZones, updateClaimed, updateHexes, updateOverview, updateWatchedRegions])
 
   useEffect(() => {
     if (!map.current) return
@@ -2129,7 +2185,7 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
       }}>
         {/* Title - hidden on mobile */}
         {!isMobile && (
-          <span style={{ fontSize: 13, letterSpacing: 5, color: '#7a6890', textTransform: 'uppercase', marginRight: 20, userSelect: 'none' }}>
+          <span style={{ fontSize: 13, letterSpacing: 5, color: theme.text.secondary, textTransform: 'uppercase', marginRight: 20, userSelect: 'none', fontFamily: theme.headerFont }}>
             Realm War
           </span>
         )}
@@ -2145,12 +2201,12 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
                 borderRadius: 4, color: '#c4b498', fontFamily: 'Georgia, serif', fontSize: 13, outline: 'none',
               }}
             />
-            <button type="submit" style={{ padding: '4px 10px', background: 'rgba(80,50,160,0.3)', border: '1px solid rgba(120,80,200,0.3)', borderRadius: 4, color: '#c4b498', cursor: 'pointer', fontSize: 13, fontFamily: 'Georgia, serif' }}>Go</button>
-            <button type="button" onClick={() => setSearchOpen(false)} style={{ padding: '4px 8px', background: 'none', border: 'none', color: '#5a4870', cursor: 'pointer', fontSize: 16 }}>×</button>
+            <button type="submit" style={{ padding: '4px 10px', background: 'rgba(201,160,64,0.2)', border: '1px solid rgba(201,160,64,0.4)', borderRadius: 4, color: theme.text.primary, cursor: 'pointer', fontSize: 13, fontFamily: 'Georgia, serif' }}>Go</button>
+            <button type="button" onClick={() => setSearchOpen(false)} style={{ padding: '4px 8px', background: 'none', border: 'none', color: theme.text.tertiary, cursor: 'pointer', fontSize: 16 }}>×</button>
           </form>
         ) : (
-          <button onClick={() => setSearchOpen(true)} style={{ background: 'none', border: 'none', color: '#7a6890', cursor: 'pointer', fontSize: 16, padding: '4px 8px' }}>
-            <SearchIcon size={16} color="#7a6890" />
+          <button onClick={() => setSearchOpen(true)} style={{ background: 'none', border: 'none', color: theme.text.secondary, cursor: 'pointer', fontSize: 16, padding: '4px 8px' }}>
+            <SearchIcon size={16} color={theme.text.secondary} />
           </button>
         )}
 
@@ -2176,15 +2232,15 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
                 {resources.gold}
               </span>
               {goldCap !== null && (goldOverCap || !isMobile) && (
-                <span style={{ fontSize: 11, color: goldOverCap ? '#8a5818' : '#7a6890' }}>
+                <span style={{ fontSize: 11, color: goldOverCap ? '#8a5818' : theme.text.secondary }}>
                   {goldOverCap ? <WarningIcon size={11} color="#e8a020" /> : `/ ${goldCap}`}
                 </span>
               )}
               {stats && !isMobile && <GoldIncomeTooltip hexCount={stats.hex_count || 0} mines={stats.mines || 0} incomeByCountry={stats.income_by_country} wonderIncome={stats.wonder_income || 0} total={stats.income_per_harvest} />}
             </div>
             {stats?.next_tick_at && <HarvestCountdown nextTickAt={stats.next_tick_at} onExpire={loadStats} compact={isMobile} />}
-            {!isMobile && <span style={{ fontSize: 13, color: '#7a6890' }}>⬢ {stats?.hex_count ?? ownedHexCount}</span>}
-            {!isMobile && totalTroops > 0 && <span style={{ fontSize: 13, color: '#7a6890' }}><SwordsIcon size={12} color="#7a6890" /> {totalTroops}</span>}
+            {!isMobile && <span style={{ fontSize: 13, color: theme.text.secondary }}>⬢ {stats?.hex_count ?? ownedHexCount}</span>}
+            {!isMobile && totalTroops > 0 && <span style={{ fontSize: 13, color: theme.text.secondary }}><SwordsIcon size={12} color={theme.text.secondary} /> {totalTroops}</span>}
             {!isMobile && import.meta.env.DEV && (
               <button
                 onClick={async () => { try { const r = await api.devRefill(); onPlayerUpdate?.({ ...player, gold: r.gold }) } catch { /* dev-only convenience button */ } }}
@@ -2203,10 +2259,10 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
               title={alliance ? `Alliance: ${alliance.name}` : 'Join or found an alliance'}
               style={{
                 background: 'none', border: 'none', cursor: 'pointer',
-                color: alliance ? '#c0a0f0' : '#7a6890', fontSize: 15, padding: '4px 6px',
+                color: alliance ? '#c0a0f0' : theme.text.secondary, fontSize: 15, padding: '4px 6px',
                 fontFamily: 'Georgia, serif',
               }}>
-              <AllianceIcon size={15} color={alliance ? '#c0a0f0' : '#7a6890'} />{alliance && !isMobile ? ` ${alliance.tag}` : ''}
+              <AllianceIcon size={15} color={alliance ? '#c0a0f0' : theme.text.secondary} />{alliance && !isMobile ? ` ${alliance.tag}` : ''}
             </button>
             <EventFeed />
             {!isMobile && <span style={{ fontSize: 13, color: '#c4b498' }}>{player.username}</span>}
@@ -2215,10 +2271,10 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
         ) : (
           <button onClick={onLoginRequired} style={{
             padding: isMobile ? '6px 10px' : '6px 16px',
-            background: 'rgba(80,50,160,0.3)', border: '1px solid rgba(120,80,200,0.4)',
-            borderRadius: 4, color: '#c4b498', cursor: 'pointer',
+            background: 'rgba(201,160,64,0.18)', border: '1px solid rgba(201,160,64,0.45)',
+            borderRadius: 4, color: theme.text.primary, cursor: 'pointer',
             fontSize: isMobile ? 11 : 12, letterSpacing: isMobile ? 1 : 2,
-            textTransform: 'uppercase', fontFamily: 'Georgia, serif',
+            textTransform: 'uppercase', fontFamily: theme.headerFont,
           }}>
             {isMobile ? 'Login' : 'Login / Register'}
           </button>
@@ -2230,13 +2286,29 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
           title="How to Play"
           style={{
             marginLeft: 8, width: isMobile ? 34 : 28, height: isMobile ? 34 : 28,
-            background: 'rgba(80,40,160,0.25)', border: '1px solid #4a3a7a',
-            borderRadius: '50%', color: '#7a6a9a', cursor: 'pointer',
+            background: 'rgba(201,160,64,0.15)', border: '1px solid rgba(201,160,64,0.4)',
+            borderRadius: '50%', color: theme.text.secondary, cursor: 'pointer',
             fontSize: 14, fontFamily: 'Georgia, serif', lineHeight: 1,
             display: 'flex', alignItems: 'center', justifyContent: 'center',
           }}>
           ?
         </button>
+
+        {/* Account button (data export / delete / legal) */}
+        {player && onShowAccount && (
+          <button
+            onClick={onShowAccount}
+            title="Account & privacy"
+            style={{
+              marginLeft: 6, width: isMobile ? 34 : 28, height: isMobile ? 34 : 28,
+              background: 'rgba(201,160,64,0.15)', border: '1px solid rgba(201,160,64,0.4)',
+              borderRadius: '50%', color: theme.text.secondary, cursor: 'pointer',
+              fontSize: 13, fontFamily: 'Georgia, serif', lineHeight: 1,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+            }}>
+            ⚙
+          </button>
+        )}
       </div>
 
       {/* ── Armies HUD (below top bar) ──────────────────────────── */}
@@ -2337,9 +2409,9 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
         }}>
           <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 10 }}>
             <span style={{ fontSize: 15, color: '#e8c55a', letterSpacing: 1 }}>{wonderCard.name}</span>
-            <button onClick={() => setWonderCard(null)} style={{ background: 'none', border: 'none', color: '#7a6890', cursor: 'pointer', fontSize: 18, lineHeight: 1, padding: '0 2px' }}>×</button>
+            <button onClick={() => setWonderCard(null)} style={{ background: 'none', border: 'none', color: theme.text.secondary, cursor: 'pointer', fontSize: 18, lineHeight: 1, padding: '0 2px' }}>×</button>
           </div>
-          <div style={{ fontSize: 12, color: '#8a7a9c', marginTop: 2, fontStyle: 'italic' }}>{wonderCard.title}</div>
+          <div style={{ fontSize: 12, color: theme.text.secondary, marginTop: 2, fontStyle: 'italic' }}>{wonderCard.title}</div>
           {wonderCard.income > 0 && (
             <div style={{ fontSize: 12, color: '#c9902a', marginTop: 4 }}>
               Grants +{wonderCard.income}g each harvest to its keeper
@@ -2353,18 +2425,18 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
                 Held by <span style={{ color: '#e8c55a' }}>{wonderCard.holder.username}</span>
               </span>
             ) : (
-              <span style={{ color: '#8a7a9c' }}>Unclaimed, no keeper this age</span>
+              <span style={{ color: theme.text.secondary }}>Unclaimed, no keeper this age</span>
             )}
           </div>
 
-          <div style={{ marginTop: 12, fontSize: 11, letterSpacing: 2, textTransform: 'uppercase', color: '#7a6890' }}>Chronicle</div>
+          <div style={{ marginTop: 12, fontSize: 11, letterSpacing: 2, textTransform: 'uppercase', color: theme.text.secondary }}>Chronicle</div>
           {wonderCard.history?.length > 0 ? (
             <div style={{ marginTop: 6, display: 'flex', flexDirection: 'column', gap: 5 }}>
               {wonderCard.history.map((h, i) => (
                 <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 12.5 }}>
                   <span style={{ width: 8, height: 8, borderRadius: '50%', background: h.color || '#888', flexShrink: 0 }} />
                   <span style={{ color: '#c4b498', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{h.username}</span>
-                  <span style={{ marginLeft: 'auto', color: '#7a6890', fontSize: 11, flexShrink: 0 }}>
+                  <span style={{ marginLeft: 'auto', color: theme.text.secondary, fontSize: 11, flexShrink: 0 }}>
                     {new Date(h.seized_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}{' '}
                     {new Date(h.seized_at).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}
                   </span>
@@ -2372,7 +2444,7 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
               ))}
             </div>
           ) : (
-            <div style={{ marginTop: 6, fontSize: 12, color: '#8a7a9c', fontStyle: 'italic' }}>No banner has ever flown here.</div>
+            <div style={{ marginTop: 6, fontSize: 12, color: theme.text.secondary, fontStyle: 'italic' }}>No banner has ever flown here.</div>
           )}
         </div>
       )}
@@ -2381,7 +2453,8 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
       {zoom < 8 && (
         <div style={{
           position: 'absolute', bottom: 90, left: '50%', transform: 'translateX(-50%)',
-          color: '#6a5878', fontSize: 12, letterSpacing: 3, pointerEvents: 'none', whiteSpace: 'nowrap',
+          color: theme.text.secondary, fontSize: 12, letterSpacing: 3, pointerEvents: 'none', whiteSpace: 'nowrap',
+          fontFamily: theme.headerFont, textShadow: '0 1px 4px rgba(0,0,0,0.8)',
         }}>
           ZOOM IN TO SEE THE BATTLEFIELD
         </div>

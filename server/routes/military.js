@@ -2,7 +2,7 @@ import { Router } from 'express'
 import { pool, withTransaction, httpError } from '../db.js'
 import { requireAuth } from '../auth.js'
 import { TROOP_STATS, BUILDING_TIME_SECONDS, NO_BARRACKS_TRAIN_MULT, PROJECTION_GARRISON, PROJECTION_EMPIRE } from '../config.js'
-import { getIO } from '../socket.js'
+import { emitToRegion } from '../socket.js'
 import { isOcean } from '../terrain.js'
 import { notifyIncomingAttack } from '../notify.js'
 import { currentMarchHex, findMarchPath, pathStepCosts } from '../marchPath.js'
@@ -124,7 +124,8 @@ router.post('/march', requireAuth, async (req, res) => {
     })
 
     notifyIncomingAttack(req.player.id, toHex, quantity, arrivesAt)
-    getIO()?.emit('armies:update')
+    emitToRegion(fromHex, 'armies:update')
+    emitToRegion(toHex, 'armies:update')
     res.json({ army })
   } catch (err) {
     if (err.status) return res.status(err.status).json({ error: err.message })
@@ -150,7 +151,7 @@ router.delete('/armies/:id', requireAuth, async (req, res) => {
       [req.player.id, a.from_hex, a.type, a.quantity]
     )
     await pool.query('DELETE FROM armies WHERE id=$1', [id])
-    getIO()?.emit('armies:update')
+    emitToRegion(a.from_hex, 'armies:update')
     res.json({ success: true })
   } catch (err) {
     console.error('[military] DELETE /armies/:id failed:', err.message)

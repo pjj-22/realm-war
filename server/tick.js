@@ -9,7 +9,7 @@ import {
   DECAY_HEX_THRESHOLD, DECAY_CHANCE, DECAY_MAX_PER_TICK, requiredGarrisonForHexCount,
   WONDER_INCOME_GOLD, MIN_TROOPS_TO_CLAIM,
 } from './config.js'
-import { getIO } from './socket.js'
+import { getIO, emitToRegion } from './socket.js'
 import { ensureBots, processBots } from './bots.js'
 import { ensureWildlands } from './wild.js'
 import { ensureSeason, processSeason } from './season.js'
@@ -213,7 +213,7 @@ async function deliverTrainedTroops(ownerId, hexIndex, type, quantity) {
   const battle = await getActiveBattle(hexIndex)
   if (battle) {
     await reinforceBattle(battle, ownerId, 'defender', type, quantity)
-    getIO()?.emit('battle:update')
+    emitToRegion(hexIndex, 'battle:update')
   } else {
     await depositTroops(ownerId, hexIndex, type, quantity)
   }
@@ -224,7 +224,7 @@ export async function processTraining() {
     const jobs = await pool.query(
       'SELECT t.*, h.rally_hex FROM training_queue t LEFT JOIN hexes h ON h.h3_index = t.h3_index'
     )
-    let deposited = false
+    const depositedHexes = new Set()
 
     for (const job of jobs.rows) {
       const now = Date.now()
@@ -243,7 +243,7 @@ export async function processTraining() {
         if (delta > 0) {
           await deliverTrainedTroops(job.owner_id, job.h3_index, job.type, delta)
           await pool.query('UPDATE training_queue SET delivered=$1 WHERE id=$2', [finished, job.id])
-          deposited = true
+          depositedHexes.add(job.h3_index)
         }
         continue
       }
@@ -263,14 +263,15 @@ export async function processTraining() {
           'INSERT INTO armies (owner_id, from_hex, to_hex, type, quantity, arrives_at, departed_at, path) VALUES ($1,$2,$3,$4,$5,$6,NOW(),$7)',
           [job.owner_id, job.h3_index, job.rally_hex, job.type, job.quantity, arrivesAt, path]
         )
-        getIO()?.emit('armies:update')
+        emitToRegion(job.h3_index, 'armies:update')
+        emitToRegion(job.rally_hex, 'armies:update')
         await insertEvent(job.owner_id, 'training_complete', `${job.quantity} troops marching to rally point`, job.h3_index)
         log(`[training] ${job.quantity} troops auto-marching to rally ${job.rally_hex}`)
       } else {
         const remaining = job.quantity - (job.delivered || 0)
         if (remaining > 0) {
           await deliverTrainedTroops(job.owner_id, job.h3_index, job.type, remaining)
-          deposited = true
+          depositedHexes.add(job.h3_index)
         }
         await insertEvent(job.owner_id, 'training_complete', `${job.quantity} troops finished training at ${job.h3_index}`, job.h3_index)
         log(`[training] ${job.quantity} troops ready at ${job.h3_index}`)
@@ -278,9 +279,9 @@ export async function processTraining() {
     }
 
     // Tell clients the garrisons changed so counts update live
-    if (deposited) {
-      getIO()?.emit('hexes:update')
-      getIO()?.emit('armies:update')
+    for (const hex of depositedHexes) {
+      emitToRegion(hex, 'hexes:update')
+      emitToRegion(hex, 'armies:update')
     }
   } catch (err) {
     console.error('[training] Error:', err.message)
@@ -375,8 +376,8 @@ export async function processCombat() {
           await reinforceBattle(battle, army.owner_id, side, army.type, army.quantity, tx)
           await tx.query("UPDATE armies SET status='in_battle' WHERE id=$1", [army.id])
           afterCommit.push(() => {
-            getIO()?.emit('battle:update')
-            getIO()?.emit('armies:update')
+            emitToRegion(battle.h3_index, 'battle:update')
+            emitToRegion(battle.h3_index, 'armies:update')
             log(`[battle] reinforcement joined battle ${battle.id} as ${side} (+${army.quantity} troops to reserve)`)
           })
 
@@ -385,8 +386,8 @@ export async function processCombat() {
           await depositTroops(army.owner_id, army.to_hex, army.type, army.quantity, tx)
           await tx.query("UPDATE armies SET status='arrived' WHERE id=$1", [army.id])
           afterCommit.push(() => {
-            getIO()?.emit('armies:update')
-            getIO()?.emit('hexes:update')
+            emitToRegion(army.to_hex, 'armies:update')
+            emitToRegion(army.to_hex, 'hexes:update')
             log(`[combat] ${army.owner_id} reinforced own hex ${army.to_hex}`)
           })
 
@@ -414,10 +415,10 @@ export async function processCombat() {
           await tx.query("UPDATE armies SET status='arrived' WHERE id=$1", [army.id])
           afterCommit.push(() => {
             if (claimed) {
-              getIO()?.emit('hexes:update')
+              emitToRegion(army.to_hex, 'hexes:update')
               log(`[combat] ${army.owner_id} auto-claimed ${army.to_hex}`)
             }
-            getIO()?.emit('armies:update')
+            emitToRegion(army.to_hex, 'armies:update')
           })
 
         } else if (await sameAlliance(army.owner_id, targetHex.owner_id, tx)) {
@@ -425,8 +426,8 @@ export async function processCombat() {
           await depositTroops(army.owner_id, army.to_hex, army.type, army.quantity, tx)
           await tx.query("UPDATE armies SET status='arrived' WHERE id=$1", [army.id])
           afterCommit.push(() => {
-            getIO()?.emit('armies:update')
-            getIO()?.emit('hexes:update')
+            emitToRegion(army.to_hex, 'armies:update')
+            emitToRegion(army.to_hex, 'hexes:update')
             log(`[combat] ${army.owner_id} reinforced ally hex ${army.to_hex}`)
           })
 
@@ -472,8 +473,8 @@ export async function processCombat() {
               if (prevOwnerId) {
                 insertEvent(prevOwnerId, 'hex_lost', `Your hex ${army.to_hex} was captured unopposed`, army.to_hex)
               }
-              getIO()?.emit('hexes:update')
-              getIO()?.emit('armies:update')
+              emitToRegion(army.to_hex, 'hexes:update')
+              emitToRegion(army.to_hex, 'armies:update')
               log(`[combat] ${army.to_hex} taken unopposed`)
             })
           } else {
@@ -521,8 +522,8 @@ export async function processCombat() {
                 insertEvent(defenderId, 'under_attack', `Battle started at your hex - ${attackStr} enemy troops attacking`, army.to_hex)
                 sendPush(defenderId, 'You are under attack!', `${attackStr} enemy troops are assaulting your territory. Send reinforcements!`, { hex: army.to_hex })
               }
-              getIO()?.emit('battle:update')
-              getIO()?.emit('armies:update')
+              emitToRegion(army.to_hex, 'battle:update')
+              emitToRegion(army.to_hex, 'armies:update')
               log(`[battle] started at ${army.to_hex}: ${attackStr} atk vs ${defTroopCount} def (${advantagedDefenders} defenders rolling with advantage)`)
             })
           }
@@ -692,9 +693,9 @@ export async function processBattleRounds() {
           )
           await tx.query("UPDATE armies SET status='arrived' WHERE status='in_battle' AND to_hex=$1", [battle.h3_index])
           afterCommit.push(() => {
-            getIO()?.emit('battle:update')
-            getIO()?.emit('hexes:update')
-            getIO()?.emit('armies:update')
+            emitToRegion(battle.h3_index, 'battle:update')
+            emitToRegion(battle.h3_index, 'hexes:update')
+            emitToRegion(battle.h3_index, 'armies:update')
           })
 
         } else {
@@ -711,7 +712,7 @@ export async function processBattleRounds() {
               atkTotal, defTotal,
               result.atkLosses, result.defLosses, battle.id])
           afterCommit.push(() => {
-            getIO()?.emit('battle:update')
+            emitToRegion(battle.h3_index, 'battle:update')
             log(`[battle] clash ${battle.round_number + 1} at ${battle.h3_index}: ${atkTotal.toFixed(0)} vs ${defTotal.toFixed(0)} (-${result.atkLosses} atk, -${result.defLosses} def)`)
           })
         }
@@ -750,7 +751,7 @@ export async function processDecay() {
       HAVING COUNT(h.h3_index) > $1
     `, [DECAY_HEX_THRESHOLD])
 
-    let anyLost = false
+    const lostHexes = new Set()
     for (const player of big.rows) {
       // Required garrison rises with empire size - a token 1-troop garrison
       // only stays decay-safe for a genuinely small empire (see config.js).
@@ -782,15 +783,15 @@ export async function processDecay() {
         )
         if (owned.rows[0].cnt >= neighbors.length) continue
         await pool.query('DELETE FROM hexes WHERE h3_index=$1 AND owner_id=$2', [h3_index, player.id])
+        lostHexes.add(h3_index)
         lost++
       }
       if (lost > 0) {
-        anyLost = true
         insertEvent(player.id, 'decay', `${lost} border hex${lost > 1 ? 'es' : ''} slipped from your control - at your empire's size, a hex needs ${requiredGarrison}+ troops or a building to hold. Garrison or build to hold the frontier.`)
         log(`[decay] ${player.username} lost ${lost} border hexes (required garrison was ${requiredGarrison})`)
       }
     }
-    if (anyLost) getIO()?.emit('hexes:update')
+    for (const hex of lostHexes) emitToRegion(hex, 'hexes:update')
   } catch (err) {
     console.error('[decay] Error:', err.message)
   }

@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import GameMap from './components/GameMap'
 import AuthModal from './components/AuthModal'
 import HelpModal from './components/HelpModal'
+import AccountModal from './components/AccountModal'
 import FTUEGuide from './components/FTUEGuide'
 import FlagOnboardingModal from './components/FlagOnboardingModal'
 import AdminPortal from './components/AdminPortal'
@@ -19,6 +20,7 @@ export default function App() {
   const [showAuth, setShowAuth] = useState(true)
   const [authMode, setAuthMode] = useState('login')
   const [showHelp, setShowHelp] = useState(false)
+  const [showAccount, setShowAccount] = useState(false)
   const [showFTUE, setShowFTUE] = useState(false)
 
   // Checks stored auth on mount by calling the API - an async fetch, so there's
@@ -65,6 +67,7 @@ export default function App() {
         }}
         onPlayerUpdate={updates => setPlayer(p => ({ ...p, ...updates }))}
         onShowHelp={() => setShowHelp(true)}
+        onShowAccount={() => setShowAccount(true)}
       />
       {player?.capital_hex && !player?.flag_pixels && (
         <FlagOnboardingModal onDone={(pixels, motto) => setPlayer(p => ({ ...p, flag_pixels: pixels, motto }))} />
@@ -76,6 +79,19 @@ export default function App() {
         <AuthModal key={authMode} initialMode={authMode} onAuth={handleAuth} onDismiss={() => setShowAuth(false)} />
       )}
       {showHelp && <HelpModal onClose={() => setShowHelp(false)} />}
+      {showAccount && player && (
+        <AccountModal
+          username={player.username}
+          onClose={() => setShowAccount(false)}
+          onDeleted={() => {
+            setShowAccount(false)
+            setPlayer(null)
+            setAuthMode('login')
+            setShowAuth(true)
+            toast('Your account has been deleted.', 'success')
+          }}
+        />
+      )}
       <ToastContainer />
     </>
   )

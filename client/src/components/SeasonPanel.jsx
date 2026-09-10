@@ -3,6 +3,7 @@ import { cellToLatLng } from 'h3-js'
 import { api } from '../api/client'
 import { playSound } from '../sound.js'
 import { BannerIcon, MedalIcon, TrophyIcon, CrownIcon, SwordsIcon } from './Icons'
+import { theme } from '../theme'
 
 function fmtRemaining(ms) {
   if (ms <= 0) return 'ending…'
@@ -46,7 +47,7 @@ export function SeasonChip({ season, onClick, isMobile }) {
 }
 
 function StandingsTable({ rows, highlight }) {
-  if (!rows?.length) return <div style={{ color: '#6a5878', fontSize: 13 }}>No contenders yet.</div>
+  if (!rows?.length) return <div style={{ color: theme.text.tertiary, fontSize: 13 }}>No contenders yet.</div>
   return (
     <div>
       {rows.map((r, i) => (
@@ -57,22 +58,22 @@ function StandingsTable({ rows, highlight }) {
           background: r.username === highlight ? 'rgba(120,80,200,0.1)' : 'none',
           borderRadius: 3,
         }}>
-          <span style={{ width: 22, textAlign: 'right', color: '#8a7a9a', fontSize: 13 }}>
+          <span style={{ width: 22, textAlign: 'right', color: theme.text.secondary, fontSize: 13 }}>
             {i < 3 ? <MedalIcon rank={i + 1} size={15} /> : `${i + 1}.`}
           </span>
           <span style={{ width: 9, height: 9, borderRadius: '50%', background: r.color, flexShrink: 0 }} />
           <span style={{ flex: 1, fontSize: 14, color: '#c4b498' }}>
             {r.alliance_tag && <span style={{ color: '#9070c0', fontSize: 11 }}>[{r.alliance_tag}] </span>}
             {r.username.startsWith('BOT_') ? r.username.slice(4) : r.username}
-            {r.username.startsWith('BOT_') && <span style={{ fontSize: 9, color: '#4a3a6a', marginLeft: 4 }}>AI</span>}
+            {r.username.startsWith('BOT_') && <span style={{ fontSize: 9, color: theme.text.tertiary, marginLeft: 4 }}>AI</span>}
             {r.champion_titles > 0 && (
               <span title={`${r.champion_titles} season championship${r.champion_titles > 1 ? 's' : ''}`} style={{ fontSize: 11, marginLeft: 4 }}>
                 <TrophyIcon size={11} />{r.champion_titles > 1 ? `×${r.champion_titles}` : ''}
               </span>
             )}
           </span>
-          <span style={{ fontSize: 13, color: '#9a8aaa' }}>{r.hex_count}⬢</span>
-          <span style={{ fontSize: 13, color: '#8a7aaa' }}>{r.total_troops}<SwordsIcon size={10} color="#8a7aaa" /></span>
+          <span style={{ fontSize: 13, color: theme.text.secondary }}>{r.hex_count}⬢</span>
+          <span style={{ fontSize: 13, color: theme.text.secondary }}>{r.total_troops}<SwordsIcon size={10} color={theme.text.secondary} /></span>
           {r.crowns > 0 && <span style={{ fontSize: 13, color: '#c9a040' }}>{r.crowns}<CrownIcon size={11} /></span>}
         </div>
       ))}
@@ -86,11 +87,11 @@ const overlayStyle = {
   zIndex: 160, padding: 16,
 }
 const boxStyle = {
-  background: 'rgba(10,8,24,0.98)', border: '1px solid #4a3a7a', borderRadius: 10,
+  background: 'rgba(10,8,24,0.98)', border: `1px solid ${theme.border}`, borderRadius: 8,
   padding: '24px 28px', width: '100%', maxWidth: 440,
   maxHeight: '85vh', overflowY: 'auto',
-  boxShadow: '0 0 50px rgba(80,40,160,0.35)',
-  fontFamily: 'Georgia, serif', color: '#c9b99a',
+  boxShadow: '0 4px 24px rgba(0,0,0,0.6)',
+  fontFamily: 'Georgia, serif', color: theme.text.primary,
 }
 
 // Season dashboard: countdown, win condition, live standings, wonders, hall of fame
@@ -116,20 +117,20 @@ export default function SeasonPanel({ season, history, player, onClose }) {
       <div style={boxStyle} onClick={e => e.stopPropagation()}>
         <button onClick={onClose} style={{
           float: 'right', background: 'none', border: 'none',
-          color: '#7a6890', fontSize: 20, cursor: 'pointer', lineHeight: 1,
+          color: theme.text.secondary, fontSize: 20, cursor: 'pointer', lineHeight: 1,
         }}>×</button>
-        <div style={{ fontSize: 18, letterSpacing: 4, textTransform: 'uppercase', textAlign: 'center', color: '#c0a0f0', marginBottom: 4 }}>
+        <div style={{ fontSize: 18, letterSpacing: 4, textTransform: 'uppercase', textAlign: 'center', color: '#c0a0f0', marginBottom: 4, fontFamily: theme.headerFont }}>
           <BannerIcon size={15} color="#c0a0f0" /> Season {season.number}
         </div>
         <div style={{ textAlign: 'center', marginBottom: 14 }}>
           <span style={{ fontSize: 26, color: left < 60000 ? '#e08060' : '#e0d0b0', fontVariantNumeric: 'tabular-nums' }}>
             {fmtRemaining(left)}
           </span>
-          <span style={{ fontSize: 13, color: '#7a6890' }}> until the horn</span>
+          <span style={{ fontSize: 13, color: theme.text.secondary }}> until the horn</span>
         </div>
 
         <div style={{
-          fontSize: 13, color: '#9a8aaa', lineHeight: 1.6, marginBottom: 16,
+          fontSize: 13, color: theme.text.secondary, lineHeight: 1.6, marginBottom: 16,
           padding: '10px 14px', background: 'rgba(120,80,200,0.08)',
           border: '1px solid rgba(120,80,200,0.2)', borderRadius: 6,
         }}>
@@ -137,21 +138,21 @@ export default function SeasonPanel({ season, history, player, onClose }) {
           (ties broken by total troops). The Champion is immortalized in the Hall of Fame,
           then the map resets for a new age. Accounts, alliances, and history persist.
           {season.world_hex_count != null && (
-            <div style={{ marginTop: 6, color: '#7a6890' }}>
+            <div style={{ marginTop: 6, color: theme.text.secondary }}>
               Season {season.number} spans <b style={{ color: '#c0a0f0' }}>{season.world_hex_count.toLocaleString()}</b> hexes
               {season.hex_resolution != null && season.hex_resolution !== 7 && ` (resolution ${season.hex_resolution})`}.
             </div>
           )}
         </div>
 
-        <div style={{ fontSize: 12, letterSpacing: 2, textTransform: 'uppercase', color: '#7a6890', marginBottom: 8 }}>
+        <div style={{ fontSize: 12, letterSpacing: 2, textTransform: 'uppercase', color: theme.text.secondary, marginBottom: 8 }}>
           Current standings
         </div>
         <StandingsTable rows={season.standings} highlight={player?.username} />
 
         {wonders.length > 0 && (
           <>
-            <div style={{ fontSize: 12, letterSpacing: 2, textTransform: 'uppercase', color: '#7a6890', margin: '18px 0 8px' }}>
+            <div style={{ fontSize: 12, letterSpacing: 2, textTransform: 'uppercase', color: theme.text.secondary, margin: '18px 0 8px' }}>
               World Wonders{wonders[0]?.income > 0 && <span style={{ color: '#a08040', textTransform: 'none', letterSpacing: 0 }}> · +{wonders[0].income}g each per harvest</span>}
             </div>
             {wonders.map(w => (
@@ -175,7 +176,7 @@ export default function SeasonPanel({ season, history, player, onClose }) {
                     </span>
                   </>
                 ) : (
-                  <span style={{ color: '#6a5878', fontSize: 12, fontStyle: 'italic' }}>unclaimed</span>
+                  <span style={{ color: theme.text.tertiary, fontSize: 12, fontStyle: 'italic' }}>unclaimed</span>
                 )}
               </div>
             ))}
@@ -184,17 +185,17 @@ export default function SeasonPanel({ season, history, player, onClose }) {
 
         {myRecord.length > 0 && (
           <>
-            <div style={{ fontSize: 12, letterSpacing: 2, textTransform: 'uppercase', color: '#7a6890', margin: '18px 0 8px' }}>
+            <div style={{ fontSize: 12, letterSpacing: 2, textTransform: 'uppercase', color: theme.text.secondary, margin: '18px 0 8px' }}>
               Your campaign record
             </div>
             <div style={{ fontSize: 13, color: '#c4b498', lineHeight: 1.8 }}>
               {myRecord.map(r => (
                 <span key={r.number} style={{ marginRight: 12, whiteSpace: 'nowrap' }}>
-                  <span style={{ color: '#8a7a9a' }}>S{r.number}</span>{' '}
+                  <span style={{ color: theme.text.secondary }}>S{r.number}</span>{' '}
                   <span style={{ color: r.place === 1 ? '#f0d080' : r.place <= 3 ? '#c0a0f0' : '#c4b498' }}>
                     {r.place <= 3 ? <MedalIcon rank={r.place} size={14} /> : `#${r.place}`}
                   </span>{' '}
-                  <span style={{ color: '#7a6890', fontSize: 11 }}>{r.hexes}⬢</span>
+                  <span style={{ color: theme.text.secondary, fontSize: 11 }}>{r.hexes}⬢</span>
                 </span>
               ))}
             </div>
@@ -203,19 +204,19 @@ export default function SeasonPanel({ season, history, player, onClose }) {
 
         {history?.length > 0 && (
           <>
-            <div style={{ fontSize: 12, letterSpacing: 2, textTransform: 'uppercase', color: '#7a6890', margin: '18px 0 8px' }}>
+            <div style={{ fontSize: 12, letterSpacing: 2, textTransform: 'uppercase', color: theme.text.secondary, margin: '18px 0 8px' }}>
               Hall of Fame
             </div>
             {history.map(s => (
               <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 4px', fontSize: 14 }}>
-                <span style={{ color: '#8a7a9a', fontSize: 13, width: 32 }}>S{s.number}</span>
+                <span style={{ color: theme.text.secondary, fontSize: 13, width: 32 }}>S{s.number}</span>
                 {s.winner_username ? (
                   <>
                     <span style={{ width: 9, height: 9, borderRadius: '50%', background: s.winner_color, flexShrink: 0 }} />
                     <span style={{ color: '#e0c070' }}><CrownIcon size={12} /> {s.winner_username.startsWith('BOT_') ? s.winner_username.slice(4) : s.winner_username}</span>
                     {s.snapshot?.[0] && (
                       <span
-                        style={{ fontSize: 12, color: '#7a6890' }}
+                        style={{ fontSize: 12, color: theme.text.secondary }}
                         title={s.world_hex_count ? `Map held ${s.world_hex_count.toLocaleString()} hexes this age` : undefined}
                       >
                         {s.snapshot[0].hex_count} hexes{s.hex_resolution != null && s.hex_resolution !== 7 && ` (res ${s.hex_resolution})`}
@@ -239,7 +240,7 @@ export default function SeasonPanel({ season, history, player, onClose }) {
                     )}
                   </>
                 ) : (
-                  <span style={{ color: '#6a5878' }}>no champion</span>
+                  <span style={{ color: theme.text.tertiary }}>no champion</span>
                 )}
               </div>
             ))}
@@ -258,7 +259,7 @@ export function SeasonEndOverlay({ endedSeason, newNumber, player, onDismiss }) 
   return (
     <div style={{ ...overlayStyle, zIndex: 180, background: 'rgba(0,0,0,0.9)' }}>
       <div style={{ ...boxStyle, maxWidth: 480, textAlign: 'center' }}>
-        <div style={{ fontSize: 13, letterSpacing: 5, textTransform: 'uppercase', color: '#7a6890', marginBottom: 6 }}>
+        <div style={{ fontSize: 13, letterSpacing: 5, textTransform: 'uppercase', color: theme.text.secondary, marginBottom: 6 }}>
           The horn has sounded
         </div>
         <div style={{ fontSize: 26, letterSpacing: 3, color: '#e0c070', marginBottom: 14 }}>
@@ -281,19 +282,19 @@ export function SeasonEndOverlay({ endedSeason, newNumber, player, onDismiss }) 
           </div>
         )}
         <div style={{ textAlign: 'left', marginBottom: 18 }}>
-          <div style={{ fontSize: 12, letterSpacing: 2, textTransform: 'uppercase', color: '#7a6890', marginBottom: 8 }}>
+          <div style={{ fontSize: 12, letterSpacing: 2, textTransform: 'uppercase', color: theme.text.secondary, marginBottom: 8 }}>
             Final standings
           </div>
           <StandingsTable rows={snapshot} highlight={player?.username} />
         </div>
-        <div style={{ fontSize: 13, color: '#9a8aaa', lineHeight: 1.6, marginBottom: 16 }}>
+        <div style={{ fontSize: 13, color: theme.text.secondary, lineHeight: 1.6, marginBottom: 16 }}>
           The map has been reset. Claim a new capital and write the next chapter.
         </div>
         <button onClick={onDismiss} style={{
           width: '100%', padding: '12px 0',
-          background: 'rgba(120,60,200,0.25)', border: '1px solid rgba(160,80,220,0.4)',
-          borderRadius: 6, color: '#c090f0', cursor: 'pointer',
-          fontSize: 14, letterSpacing: 3, textTransform: 'uppercase', fontFamily: 'Georgia, serif',
+          background: theme.accent, border: `1px solid ${theme.accentStrong}`,
+          borderRadius: 6, color: theme.accentText, cursor: 'pointer', fontWeight: 600,
+          fontSize: 14, letterSpacing: 3, textTransform: 'uppercase', fontFamily: theme.headerFont,
         }}>
           Begin Season {newNumber} →
         </button>

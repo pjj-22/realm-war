@@ -17,7 +17,7 @@ import chatRoutes from './routes/chat.js'
 import seasonRoutes from './routes/season.js'
 import { initPush } from './push.js'
 import { startTick } from './tick.js'
-import { MODE, IS_DEV, STARTING_GOLD, STARTING_MANA, TICK_INTERVAL_MS, BUILDING_TIME_SECONDS, CHAT_ENABLED, TROOP_STATS, BATTLE_INTERVAL_MS, BUILDING_COSTS, FORT_ADVANTAGE_TROOPS, ENTRENCH_ADVANTAGE_PER_NEIGHBOR, ENTRENCH_MAX_NEIGHBORS, MIN_TROOPS_TO_CLAIM, DECAY_HEX_THRESHOLD, DECAY_SCALE_HEXES_PER_STEP, HEX_RESOLUTION, WORLD_HEX_COUNT } from './config.js'
+import { MODE, IS_DEV, STARTING_GOLD, STARTING_MANA, TICK_INTERVAL_MS, BUILDING_TIME_SECONDS, CHAT_ENABLED, TROOP_STATS, BATTLE_INTERVAL_MS, BUILDING_COSTS, FORT_ADVANTAGE_TROOPS, ENTRENCH_ADVANTAGE_PER_NEIGHBOR, ENTRENCH_MAX_NEIGHBORS, MIN_TROOPS_TO_CLAIM, DECAY_HEX_THRESHOLD, DECAY_SCALE_HEXES_PER_STEP, HEX_RESOLUTION, WORLD_HEX_COUNT, REGION_RESOLUTION } from './config.js'
 import { STRATEGIC_ADVANTAGE_TROOPS } from './strategic.js'
 import { FRONTLINE_CAP, MAX_ADVANTAGED_DEFENDERS } from './combat.js'
 import { pool } from './db.js'
@@ -93,6 +93,7 @@ app.get('/api/health', (_, res) => res.json({
   max_advantaged_defenders: MAX_ADVANTAGED_DEFENDERS,
   min_troops_to_claim: MIN_TROOPS_TO_CLAIM,
   hex_resolution: HEX_RESOLUTION,
+  region_resolution: REGION_RESOLUTION,
   world_hex_count: WORLD_HEX_COUNT,
   decay_hex_threshold: DECAY_HEX_THRESHOLD,
   decay_scale_hexes_per_step: DECAY_SCALE_HEXES_PER_STEP,
@@ -207,6 +208,10 @@ async function runMigrations() {
   await pool.query('ALTER TABLE players ADD COLUMN IF NOT EXISTS alliance_id INTEGER REFERENCES alliances(id) ON DELETE SET NULL')
   await pool.query('ALTER TABLE players ADD COLUMN IF NOT EXISTS flag_pixels TEXT')
   await pool.query('ALTER TABLE players ADD COLUMN IF NOT EXISTS motto TEXT')
+  // Set when a player self-deletes their account (DELETE /api/players/me):
+  // the row is anonymised in place rather than hard-deleted, since battle
+  // history FKs it without ON DELETE. Non-null here = login blocked.
+  await pool.query('ALTER TABLE players ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ')
   await pool.query(`
     CREATE TABLE IF NOT EXISTS chat_messages (
       id SERIAL PRIMARY KEY,

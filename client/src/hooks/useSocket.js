@@ -5,6 +5,7 @@ const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || 'http://localhost:3001'
 
 let socket = null
 let currentPlayerId = null
+let currentRegions = []
 
 export function getSocket() {
   if (!socket) {
@@ -12,7 +13,10 @@ export function getSocket() {
     // Re-join on every (re)connect, not just once - a dropped connection
     // (mobile backgrounding, a network blip) gets a fresh socket id
     // server-side, so the room membership from the last connect is gone.
-    socket.on('connect', () => { if (currentPlayerId != null) socket.emit('join', currentPlayerId) })
+    socket.on('connect', () => {
+      if (currentPlayerId != null) socket.emit('join', currentPlayerId)
+      if (currentRegions.length > 0) socket.emit('watch-regions', currentRegions)
+    })
   }
   return socket
 }
@@ -23,6 +27,17 @@ export function getSocket() {
 export function identifySocket(playerId) {
   currentPlayerId = playerId ?? null
   if (currentPlayerId != null) getSocket().emit('join', currentPlayerId)
+}
+
+// Tells the server which map region(s) (home territory + current viewport,
+// both at REGION_RESOLUTION - see GameMap.jsx) this connection cares about,
+// so hexes:update/armies:update/battle:update only reach players actually
+// watching that area instead of every connected socket. Send the full
+// desired set each time - the server diffs it against what the socket is
+// currently in (see socket.js's watch-regions handler).
+export function watchRegions(regionCells) {
+  currentRegions = regionCells
+  getSocket().emit('watch-regions', regionCells)
 }
 
 // useSocket(handlers) - registers socket event listeners, cleans up on unmount.

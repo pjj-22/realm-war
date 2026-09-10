@@ -77,10 +77,10 @@ journalctl -u realmwar -f      # watch boot: migrations, tick start
 ```bash
 cd client
 cat > .env.production <<EOF
-VITE_MAPBOX_TOKEN=<your token>
 VITE_API_URL=https://yourdomain.com
 VITE_SOCKET_URL=https://yourdomain.com
 VITE_PUBLIC_URL=https://yourdomain.com
+VITE_CONTACT_EMAIL=privacy@yourdomain.com   # shown in the in-app Privacy Policy / Terms
 EOF
 npm ci && npm run build         # → dist/
 cp -r dist/* /var/www/realmwar/

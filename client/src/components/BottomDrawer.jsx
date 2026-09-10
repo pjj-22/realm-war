@@ -8,6 +8,7 @@ import { toast } from '../toastBus'
 import { resolveFlag, drawFlagToCanvas } from '../flags'
 import { shortHex } from '../text'
 import Tooltip from './Tooltip'
+import { theme } from '../theme'
 
 function CapitalFlag({ hex, size = 40 }) {
   const ref = useRef(null)
@@ -22,10 +23,6 @@ const PULSE_CSS = `
   0%   { opacity: 1; transform: scale(1); }
   50%  { opacity: 0.6; transform: scale(1.15); }
   100% { opacity: 1; transform: scale(1); }
-}
-@keyframes tickFill {
-  from { width: 0% }
-  to   { width: 100% }
 }
 `
 
@@ -63,7 +60,7 @@ const UPGRADE_MINUTES = 0.5
 
 function Label({ children }) {
   return (
-    <div style={{ fontSize: 14, color: '#9a8060', letterSpacing: 3, textTransform: 'uppercase', marginBottom: 10 }}>
+    <div style={{ fontSize: 14, color: '#9a8060', letterSpacing: 3, textTransform: 'uppercase', marginBottom: 10, fontFamily: theme.headerFont }}>
       {children}
     </div>
   )
@@ -90,7 +87,7 @@ function Btn({ onClick, children, disabled, danger, muted }) {
   )
 }
 
-function ProgressBar({ pct, color = 'linear-gradient(90deg, #5030a0, #8060d0)' }) {
+function ProgressBar({ pct, color = 'linear-gradient(90deg, #8a6820, #d4a030)' }) {
   return (
     <div style={{ height: 3, background: 'rgba(255,255,255,0.07)', borderRadius: 2, overflow: 'hidden' }}>
       <div style={{ width: `${pct}%`, height: '100%', background: color, borderRadius: 2, transition: 'width 0.5s linear' }} />
@@ -135,11 +132,11 @@ function TrainBar({ job }) {
   return (
     <div style={{ marginBottom: 10 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 14, marginBottom: 4 }}>
-        <span style={{ color: '#a090c0' }}>{job.type}s</span>
-        <span style={{ color: '#8070a0' }} ref={labelRef} />
+        <span style={{ color: '#d4b870' }}>{job.type}s</span>
+        <span style={{ color: '#9a8060' }} ref={labelRef} />
       </div>
       <div style={{ height: 3, background: 'rgba(255,255,255,0.07)', borderRadius: 2, overflow: 'hidden' }}>
-        <div ref={barRef} style={{ width: '0%', height: '100%', borderRadius: 2, background: 'linear-gradient(90deg, #5030a0, #8060d0)' }} />
+        <div ref={barRef} style={{ width: '0%', height: '100%', borderRadius: 2, background: 'linear-gradient(90deg, #8a6820, #d4a030)' }} />
       </div>
     </div>
   )
@@ -175,11 +172,11 @@ function BuildBar({ building, buildTimeSecs, onExpire }) {
   return (
     <div style={{ marginBottom: 10 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 14, marginBottom: 4 }}>
-        <span style={{ color: '#a090c0' }}>
+        <span style={{ color: '#d4b870' }}>
           {def?.label || building.type}
-          <span style={{ color: '#6a5878', marginLeft: 6 }}>under construction</span>
+          <span style={{ color: '#9a8060', marginLeft: 6 }}>under construction</span>
         </span>
-        <span style={{ color: '#8070a0' }} ref={labelRef} />
+        <span style={{ color: '#9a8060' }} ref={labelRef} />
       </div>
       <div style={{ height: 3, background: 'rgba(255,255,255,0.07)', borderRadius: 2, overflow: 'hidden' }}>
         <div ref={barRef} style={{ width: '0%', height: '100%', borderRadius: 2, background: 'linear-gradient(90deg, #304070, #5080c0)' }} />
@@ -207,10 +204,10 @@ function UpgradeBar({ completes_at, onExpire }) {
   }, [completes_at, onExpire])
   return (
     <div>
-      <div style={{ fontSize: 14, color: '#8070a8', marginBottom: 4 }}>
+      <div style={{ fontSize: 14, color: '#9a8060', marginBottom: 4 }}>
         Upgrading - {secs > 0 ? `${secs}s remaining` : 'Complete…'}
       </div>
-      <ProgressBar pct={pct} color="linear-gradient(90deg, #5030c0, #9060f0)" />
+      <ProgressBar pct={pct} color="linear-gradient(90deg, #8a6820, #d4a030)" />
     </div>
   )
 }
@@ -505,9 +502,9 @@ export default function BottomDrawer({ hex, player, stats, pendingClaims, onClai
     })()
 
     if (isClaimed && isFogged) return (
-      <div style={{ fontSize: 14, color: '#6a5838', lineHeight: 1.8 }}>
+      <div style={{ fontSize: 14, color: '#9a8060', lineHeight: 1.8 }}>
         Outside your field of vision - expand your territory to reveal this hex.<br />
-        <span style={{ color: '#5a4828' }}>Troops and income hidden.</span>
+        <span style={{ color: '#9a8060' }}>Troops and income hidden.</span>
       </div>
     )
 
@@ -536,7 +533,7 @@ export default function BottomDrawer({ hex, player, stats, pendingClaims, onClai
           </>
         ) : !player ? (
           <>
-            <div style={{ fontSize: 14, color: '#5a4828', marginBottom: 12 }}>Login to start your empire here.</div>
+            <div style={{ fontSize: 14, color: '#9a8060', marginBottom: 12 }}>Login to start your empire here.</div>
             <Btn onClick={onLoginRequired} muted>Login to Claim</Btn>
           </>
         ) : !player.capital_hex && !ownedHexCount ? (
@@ -552,14 +549,14 @@ export default function BottomDrawer({ hex, player, stats, pendingClaims, onClai
           // Capital was destroyed but other territory survived - re-founding
           // costs the same as any claim now, no second round of starter gifts.
           <>
-            <div style={{ fontSize: 14, color: '#5a4828', marginBottom: 12 }}>
+            <div style={{ fontSize: 14, color: '#9a8060', marginBottom: 12 }}>
               March at least {gameConfig.min_troops_to_claim} troops here first, then claim it to found your new capital.
             </div>
             <Btn onClick={() => onClaim(hex.h3)} muted>Found New Capital Here</Btn>
           </>
         ) : (
           <>
-            <div style={{ fontSize: 14, color: '#5a4828', marginBottom: 12 }}>
+            <div style={{ fontSize: 14, color: '#9a8060', marginBottom: 12 }}>
               March at least {gameConfig.min_troops_to_claim} troops here first, then claim it to expand your empire.
             </div>
             <Btn onClick={() => onClaim(hex.h3)} muted>Claim Territory</Btn>
@@ -642,7 +639,7 @@ export default function BottomDrawer({ hex, player, stats, pendingClaims, onClai
                 borderRadius: 6,
               }}>
                 <div style={{ fontSize: 11, color: atDecayRisk ? '#c07830' : '#9a7040', letterSpacing: 2, textTransform: 'uppercase', marginBottom: 6 }}>Garrison</div>
-                <div style={{ fontSize: 26, color: atDecayRisk ? '#e0a050' : totalTroops > 0 ? '#d4b870' : '#4a3828', fontVariantNumeric: 'tabular-nums' }}>
+                <div style={{ fontSize: 26, color: atDecayRisk ? '#e0a050' : totalTroops > 0 ? '#d4b870' : '#9a8060', fontVariantNumeric: 'tabular-nums' }}>
                   {isHiddenGarrison ? '?' : totalTroops > 0 ? totalTroops : '-'}
                 </div>
                 <div style={{ fontSize: 12, color: atDecayRisk ? '#c07830' : '#7a6040', marginTop: 2 }}>
@@ -692,7 +689,7 @@ export default function BottomDrawer({ hex, player, stats, pendingClaims, onClai
             const hrs  = Math.floor((ms % 86400000) / 3600000)
             const label = days > 0 ? `${days}d ${hrs}h` : hrs > 0 ? `${hrs}h` : 'just claimed'
             return (
-              <div style={{ fontSize: 12, color: '#5a4838' }}>
+              <div style={{ fontSize: 12, color: '#9a8060' }}>
                 Held for <span style={{ color: '#7a6040' }}>{label}</span>
               </div>
             )
@@ -700,14 +697,14 @@ export default function BottomDrawer({ hex, player, stats, pendingClaims, onClai
 
           {isOwn && tickSecs !== null && (
             <div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: '#6a5838', marginBottom: 4 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: '#9a8060', marginBottom: 4 }}>
                 <span>Next income</span>
                 <span>{tickSecs}s</span>
               </div>
               <div style={{ height: 4, background: 'rgba(255,255,255,0.06)', borderRadius: 2, overflow: 'hidden' }}>
                 <div style={{
                   height: '100%', borderRadius: 2,
-                  background: 'linear-gradient(90deg, #8060a0, #c0902a)',
+                  background: 'linear-gradient(90deg, #8a6820, #c0902a)',
                   width: `${tickPct}%`,
                   transition: 'width 0.5s linear',
                 }} />
@@ -743,7 +740,7 @@ export default function BottomDrawer({ hex, player, stats, pendingClaims, onClai
                 <span style={{ fontSize: 12, color: '#7a6040' }}>Your capital fell - make this hex your new seat of power.</span>
               </div>
             ) : (
-              <div style={{ fontSize: 12, color: '#5a4828' }}>
+              <div style={{ fontSize: 12, color: '#9a8060' }}>
                 Your capital fell. Garrison at least {gameConfig.min_troops_to_claim} troops here to found a new one ({totalTroops}/{gameConfig.min_troops_to_claim}).
               </div>
             )
@@ -793,10 +790,10 @@ export default function BottomDrawer({ hex, player, stats, pendingClaims, onClai
         <div>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 10 }}>
             <Label>Built</Label>
-            <span style={{ fontSize: 12, color: '#5a4868' }}>{usedSlots}/{slots} slots</span>
+            <span style={{ fontSize: 12, color: '#9a8060' }}>{usedSlots}/{slots} slots</span>
           </div>
           {builtGroups.length === 0 && (
-            <div style={{ fontSize: 14, color: '#6a5878' }}>No building constructed yet.</div>
+            <div style={{ fontSize: 14, color: '#9a8060' }}>No building constructed yet.</div>
           )}
           {builtGroups.map(g => {
             const def = BUILDING_DEFS.find(d => d.type === g.type)
@@ -817,8 +814,8 @@ export default function BottomDrawer({ hex, player, stats, pendingClaims, onClai
                       <ArtComponent size={52} />
                     </div>
                     <div style={{ flex: 1 }}>
-                      <div style={{ fontSize: 13, color: '#8070a0', marginBottom: 6 }}>
-                        {def?.label} - <span style={{ color: '#6a5878' }}>under construction</span>
+                      <div style={{ fontSize: 13, color: '#9a8060', marginBottom: 6 }}>
+                        {def?.label} - <span style={{ color: '#9a8060' }}>under construction</span>
                       </div>
                       <BuildBar building={building} buildTimeSecs={buildingData.build_time_seconds || 30} onExpire={loadBuildings} />
                     </div>
@@ -887,7 +884,7 @@ export default function BottomDrawer({ hex, player, stats, pendingClaims, onClai
           </div>
         )}
         {!canBuild && builtGroups.length > 0 && (
-          <div style={{ fontSize: 13, color: '#6a5878' }}>All slots filled. Demolish a building to change it.</div>
+          <div style={{ fontSize: 13, color: '#9a8060' }}>All slots filled. Demolish a building to change it.</div>
         )}
       </div>
     )
@@ -1096,7 +1093,7 @@ export default function BottomDrawer({ hex, player, stats, pendingClaims, onClai
           {isClaimed && hex.capital_hex === hex.h3 && <CapitalFlag hex={hex} />}
           {isClaimed && hex.capital_hex !== hex.h3 && <Dot color={hex.color} />}
           <div>
-            <span style={{ fontSize: 16, color: isClaimed ? '#e8d090' : '#5a4a28', letterSpacing: 2 }}>
+            <span style={{ fontSize: 16, color: isClaimed ? '#e8d090' : '#9a8060', letterSpacing: 2 }}>
               {ownerLabel}
             </span>
             {isClaimed && (
@@ -1119,10 +1116,10 @@ export default function BottomDrawer({ hex, player, stats, pendingClaims, onClai
             )}
           </div>
           {hex.capital_hex === hex.h3 && (
-            <span style={{ fontSize: 14, color: '#b08030', letterSpacing: 2, textTransform: 'uppercase', border: '1px solid rgba(160,110,30,0.4)', borderRadius: 3, padding: '1px 6px' }}>Capital</span>
+            <span style={{ fontSize: 14, color: '#b08030', letterSpacing: 2, textTransform: 'uppercase', border: '1px solid rgba(160,110,30,0.4)', borderRadius: 3, padding: '1px 6px', fontFamily: theme.headerFont }}>Capital</span>
           )}
         </div>
-        <span style={{ fontSize: 14, color: '#5a4828', userSelect: 'none' }}>{collapsed ? '▲' : '▼'}</span>
+        <span style={{ fontSize: 14, color: '#9a8060', userSelect: 'none' }}>{collapsed ? '▲' : '▼'}</span>
       </div>
 
       {/* Tabs + content - hidden when collapsed */}
@@ -1143,7 +1140,7 @@ export default function BottomDrawer({ hex, player, stats, pendingClaims, onClai
                 borderRadius: '6px 6px 0 0',
                 color: tab === t ? '#e0c070' : '#94805c',
                 cursor: 'pointer', fontSize: isMobile ? 13 : 14, letterSpacing: isMobile ? 1.5 : 3,
-                textTransform: 'uppercase', fontFamily: 'Georgia, serif',
+                textTransform: 'uppercase', fontFamily: theme.headerFont,
                 marginBottom: -1, whiteSpace: 'nowrap',
               }}>
                 {t}

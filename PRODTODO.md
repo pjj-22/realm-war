@@ -39,6 +39,26 @@ gitignored, atomic double-claim fix). Status below; deployment steps live in
   documented in `server/DEPLOY.md` (boot once, watch for `[db] Migrations complete`).
   Consolidating into `schema.sql` is a nice-to-have, not a launch blocker.
 
+## ⚖️ Compliance / privacy
+
+In code:
+- [x] **Privacy Policy + Terms** shown in-app (`LegalModal`), linked from the
+  login screen and the account panel.
+- [x] **Age gate.** Registration requires an explicit "16 or older + accept
+  terms" checkbox; server rejects `ageConfirmed !== true`.
+- [x] **Data export** (`GET /api/players/export`) and **account deletion**
+  (`DELETE /api/players/me`, anonymises in place + purges game presence /
+  events / chat / push) — both from the ⚙ account panel.
+- [x] **Map attribution** restored (compact) — ODbL requires the
+  OpenStreetMap/OpenFreeMap credit stay visible.
+
+Deploy-time / operational:
+- [ ] Set `VITE_CONTACT_EMAIL` to a monitored address (shown in the policy for
+  data requests + abuse reports); make sure that mailbox exists.
+- [ ] Decide on nginx access-log retention/rotation (IPs are personal data).
+- [ ] Keep chat **off** (`CHAT_ENABLED` unset) until there's a moderation/report flow.
+- [ ] Know the GDPR 72-hour breach-notification duty if EU users are affected.
+
 ## 🚀 Deploy (see `server/DEPLOY.md`)
 
 - [ ] Droplet: postgres, systemd unit, nginx + certbot TLS

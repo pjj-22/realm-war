@@ -3,7 +3,7 @@ import { gridDisk, cellToLatLng, cellToParent } from 'h3-js'
 import { pool } from '../db.js'
 import { requireAuth } from '../auth.js'
 import { rateLimit } from '../ratelimit.js'
-import { getIO } from '../socket.js'
+import { emitToRegion } from '../socket.js'
 import { isOcean } from '../terrain.js'
 import { getCountry } from '../countries.js'
 import { STARTING_TROOPS, PROJECTION_GARRISON, PROJECTION_EMPIRE, MIN_TROOPS_TO_CLAIM, IS_DEV } from '../config.js'
@@ -268,7 +268,7 @@ router.post('/claim', requireAuth, async (req, res) => {
       await pool.query('UPDATE players SET capital_hex=$1 WHERE id=$2 AND capital_hex IS NULL', [h3Index, req.player.id])
     }
 
-    getIO()?.emit('hexes:update')
+    emitToRegion(h3Index, 'hexes:update')
     res.json({ success: true, isCapital: isBootstrapping || needsNewCapital })
   } catch (err) {
     console.error('[hexes] POST /claim failed:', err.message)
@@ -306,7 +306,7 @@ router.post('/set-capital', requireAuth, async (req, res) => {
     )
     if (updated.rows.length === 0) return res.status(409).json({ error: 'You already have a capital' })
 
-    getIO()?.emit('hexes:update')
+    emitToRegion(h3Index, 'hexes:update')
     res.json({ success: true })
   } catch (err) {
     console.error('[hexes] POST /set-capital failed:', err.message)

@@ -1,8 +1,9 @@
 import { Router } from 'express'
 import bcrypt from 'bcryptjs'
-import { pool } from '../db.js'
+import { pool, withTransaction } from '../db.js'
 import { signToken, requireAuth } from '../auth.js'
 import { rateLimit } from '../ratelimit.js'
+import { getIO } from '../socket.js'
 import { IS_DEV } from '../config.js'
 import { STARTING_GOLD, STARTING_MANA, TICK_INTERVAL_MS, BUILDING_TIME_SECONDS, GOLD_CAP_BASE, GOLD_CAP_PER_HEX, GOLD_CAP_PER_MINE, WONDER_INCOME_GOLD } from '../config.js'
 import { nextTickAt } from '../tick.js'
@@ -14,11 +15,15 @@ import { containsBadWords } from '../moderation.js'
 const router = Router()
 
 router.post('/register', rateLimit({ windowMs: 60 * 60 * 1000, max: IS_DEV ? 1000 : 10, message: 'Too many accounts created - try later' }), async (req, res) => {
-  const { username, password, color } = req.body
+  const { username, password, color, ageConfirmed } = req.body
   if (!username || !password) return res.status(400).json({ error: 'Username and password required' })
   if (username.length < 3 || username.length > 32) return res.status(400).json({ error: 'Username must be 3-32 characters' })
   if (password.length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters' })
   if (containsBadWords(username)) return res.status(400).json({ error: 'Username not allowed' })
+  // Age gate: COPPA (US, under 13) / GDPR digital-consent age. We can't verify
+  // it, but requiring the explicit affirmation - and recording that it was
+  // given - is the standard bar for a service not directed at children.
+  if (ageConfirmed !== true) return res.status(400).json({ error: 'You must confirm you are 16 or older' })
 
   try {
     const hash = await bcrypt.hash(password, 10)
@@ -42,11 +47,12 @@ router.post('/login', rateLimit({ windowMs: 10 * 60 * 1000, max: IS_DEV ? 1000 :
 
   try {
     const result = await pool.query(
-      'SELECT id, username, color, gold, capital_hex, flag_pixels, motto, password_hash, last_login_date, login_streak FROM players WHERE username = $1',
+      'SELECT id, username, color, gold, capital_hex, flag_pixels, motto, password_hash, last_login_date, login_streak, deleted_at FROM players WHERE username = $1',
       [username]
     )
     const player = result.rows[0]
-    if (!player) return res.status(401).json({ error: 'Invalid credentials' })
+    if (!player || player.deleted_at) return res.status(401).json({ error: 'Invalid credentials' })
+    delete player.deleted_at
 
     const valid = await bcrypt.compare(password, player.password_hash)
     if (!valid) return res.status(401).json({ error: 'Invalid credentials' })
@@ -263,6 +269,79 @@ router.get('/history', requireAuth, async (req, res) => {
     res.json(sampled)
   } catch (err) {
     console.error('[players] GET /history failed:', err.message)
+    res.status(500).json({ error: 'Server error' })
+  }
+})
+
+// GDPR / CCPA data-access ("right to portability"): every row we hold that is
+// tied to this account, as one JSON document. Deliberately excludes password
+// hash (a secret, not personal data to hand back) and other players' data.
+router.get('/export', requireAuth, async (req, res) => {
+  try {
+    const id = req.player.id
+    const q = (sql, params = [id]) => pool.query(sql, params).then(r => r.rows)
+    const [account, hexes, troops, armies, buildings, events, history, pushSubs, chat, battles, alliance] = await Promise.all([
+      q('SELECT id, username, color, gold, mana, capital_hex, flag_pixels, motto, last_login_date, login_streak, created_at, alliance_id FROM players WHERE id=$1').then(r => r[0] || null),
+      q('SELECT h3_index, claimed_at, upgrade_level, rally_hex FROM hexes WHERE owner_id=$1'),
+      q('SELECT h3_index, type, quantity FROM troops WHERE owner_id=$1'),
+      q('SELECT from_hex, to_hex, type, quantity, arrives_at, departed_at, status FROM armies WHERE owner_id=$1'),
+      q("SELECT b.h3_index, b.type, b.created_at FROM buildings b JOIN hexes h ON h.h3_index=b.h3_index WHERE h.owner_id=$1"),
+      q('SELECT type, message, hex_index, read, created_at FROM events WHERE player_id=$1 ORDER BY created_at'),
+      q('SELECT hex_count, recorded_at FROM hex_history WHERE player_id=$1 ORDER BY recorded_at'),
+      q('SELECT endpoint, created_at FROM push_subscriptions WHERE player_id=$1'),
+      q('SELECT text, alliance_id, created_at FROM chat_messages WHERE player_id=$1 ORDER BY created_at').catch(() => []),
+      q('SELECT id, attacker_id, defender_id, h3_index, created_at FROM battles WHERE attacker_id=$1 OR defender_id=$1 ORDER BY created_at'),
+      q(`SELECT a.name, a.tag, a.created_at FROM alliances a
+         JOIN players p ON p.alliance_id = a.id WHERE p.id=$1`).then(r => r[0] || null),
+    ])
+    res.setHeader('Content-Disposition', 'attachment; filename="realmwar-data.json"')
+    res.json({ exported_at: new Date().toISOString(), account, alliance, hexes, troops, armies, buildings, events, hex_history: history, push_subscriptions: pushSubs, chat_messages: chat, battles })
+  } catch (err) {
+    console.error('[players] GET /export failed:', err.message)
+    res.status(500).json({ error: 'Server error' })
+  }
+})
+
+// GDPR / CCPA erasure. Battle history FKs players(id) with no ON DELETE, and
+// Champion monuments are meant to outlive accounts, so this anonymises the
+// row in place (username -> deleted_<id>, all profile PII nulled, login
+// blocked via deleted_at) and purges everything that is purely this player's:
+// live game presence, personal events, push subscriptions, chat. What stays
+// is de-identified - battle rows reference "deleted_<id>", nothing that names
+// a person.
+router.delete('/me', requireAuth, async (req, res) => {
+  const id = req.player.id
+  try {
+    await withTransaction(async (tx) => {
+      await tx.query('DELETE FROM buildings WHERE h3_index IN (SELECT h3_index FROM hexes WHERE owner_id=$1)', [id])
+      await tx.query('DELETE FROM hexes WHERE owner_id=$1', [id])
+      await tx.query('DELETE FROM troops WHERE owner_id=$1', [id])
+      await tx.query('DELETE FROM armies WHERE owner_id=$1', [id])
+      await tx.query('DELETE FROM training_queue WHERE owner_id=$1', [id])
+      await tx.query('DELETE FROM upgrade_queue WHERE owner_id=$1', [id])
+      await tx.query('DELETE FROM country_crowns WHERE player_id=$1', [id])
+      await tx.query('DELETE FROM wonder_holders WHERE owner_id=$1', [id])
+      await tx.query('DELETE FROM push_subscriptions WHERE player_id=$1', [id])
+      await tx.query('DELETE FROM events WHERE player_id=$1', [id])
+      await tx.query('DELETE FROM hex_history WHERE player_id=$1', [id])
+      await tx.query('DELETE FROM chat_messages WHERE player_id=$1', [id]).catch(() => {})
+      await tx.query(`
+        UPDATE players SET
+          username = 'deleted_' || id,
+          password_hash = '',
+          color = '#555555',
+          gold = 0, mana = 0,
+          capital_hex = NULL, flag_pixels = NULL, motto = NULL,
+          alliance_id = NULL, last_login_date = NULL, login_streak = 0,
+          deleted_at = NOW()
+        WHERE id = $1
+      `, [id])
+    })
+    getIO()?.emit('hexes:update')
+    getIO()?.emit('armies:update')
+    res.json({ ok: true })
+  } catch (err) {
+    console.error('[players] DELETE /me failed:', err.message)
     res.status(500).json({ error: 'Server error' })
   }
 })
