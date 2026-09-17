@@ -1,6 +1,6 @@
 import { Router } from 'express'
 import { pool, withTransaction, httpError } from '../db.js'
-import { requireAuth } from '../auth.js'
+import { requireAuth, optionalAuth } from '../auth.js'
 import { TROOP_STATS, BUILDING_TIME_SECONDS, NO_BARRACKS_TRAIN_MULT, PROJECTION_GARRISON, PROJECTION_EMPIRE } from '../config.js'
 import { emitToRegion } from '../socket.js'
 import { isOcean } from '../terrain.js'
@@ -191,7 +191,7 @@ router.delete('/rally/:h3Index', requireAuth, async (req, res) => {
 // hexes: huge forces (or huge empires) can't hide - the client applies its own
 // fog-of-war filtering for everything else, with more leeway than hexes get
 // since a moving column is easier to spot than a quiet border.
-router.get('/armies', requireAuth, async (req, res) => {
+router.get('/armies', optionalAuth, async (req, res) => {
   try {
     const result = await pool.query(`
       WITH power AS (SELECT owner_id, SUM(quantity)::float8 AS total FROM troops GROUP BY owner_id)
@@ -201,7 +201,7 @@ router.get('/armies', requireAuth, async (req, res) => {
       LEFT JOIN power ON power.owner_id = a.owner_id
       WHERE a.status='marching'
     `)
-    const visibleSet = await buildVisibleSet(req.player.id)
+    const visibleSet = await buildVisibleSet(req.player?.id ?? null)
     const rows = result.rows.map(a => {
       const projected = a.quantity >= PROJECTION_GARRISON || a.owner_power >= PROJECTION_EMPIRE
       const { owner_power, ...rest } = a
@@ -213,7 +213,7 @@ router.get('/armies', requireAuth, async (req, res) => {
       const stepCosts = pathStepCosts(path)
       // You always know your own army's size - only an enemy/bystander's
       // march gets hidden, and only when its destination isn't visible.
-      const canSee = a.owner_id === req.player.id || canSeeDetail(a.to_hex, visibleSet, projected)
+      const canSee = (req.player && a.owner_id === req.player.id) || canSeeDetail(a.to_hex, visibleSet, projected)
       if (!canSee) rest.quantity = null
       return { ...rest, path, stepCosts, projected, current_hex: currentMarchHex(a, path, stepCosts) }
     })

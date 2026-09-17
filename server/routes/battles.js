@@ -1,7 +1,7 @@
 import { Router } from 'express'
 import { pool } from '../db.js'
 import { nextBattleRoundAt } from '../tick.js'
-import { requireAuth } from '../auth.js'
+import { optionalAuth } from '../auth.js'
 import { buildVisibleSet, canSeeDetail } from '../visibility.js'
 import { PROJECTION_GARRISON } from '../config.js'
 
@@ -28,7 +28,7 @@ function redactBattle(battle, visibleSet) {
 // recently concluded one (briefly) so the client can actually show the
 // deciding clash's result instead of the panel just vanishing the instant
 // status flips away from 'active'.
-router.get('/hex/:h3Index', requireAuth, async (req, res) => {
+router.get('/hex/:h3Index', optionalAuth, async (req, res) => {
   try {
     const result = await pool.query(`
       SELECT b.*,
@@ -45,7 +45,7 @@ router.get('/hex/:h3Index', requireAuth, async (req, res) => {
 
     if (!result.rows[0]) return res.json({ battle: null })
 
-    const visibleSet = await buildVisibleSet(req.player.id)
+    const visibleSet = await buildVisibleSet(req.player?.id ?? null)
     const battle = redactBattle(result.rows[0], visibleSet)
     const canSee = battle.attacker_strength !== null
 
@@ -68,7 +68,7 @@ router.get('/hex/:h3Index', requireAuth, async (req, res) => {
   }
 })
 
-router.get('/active', requireAuth, async (req, res) => {
+router.get('/active', optionalAuth, async (req, res) => {
   try {
     const result = await pool.query(`
       SELECT b.id, b.h3_index, b.round_number, b.attacker_strength, b.defender_strength,
@@ -80,7 +80,7 @@ router.get('/active', requireAuth, async (req, res) => {
       JOIN players pd ON pd.id = b.defender_id
       WHERE b.status = 'active'
     `)
-    const visibleSet = await buildVisibleSet(req.player.id)
+    const visibleSet = await buildVisibleSet(req.player?.id ?? null)
     res.json(result.rows.map(b => redactBattle(b, visibleSet)))
   } catch (err) {
     console.error('[battles] GET /active failed:', err.message)

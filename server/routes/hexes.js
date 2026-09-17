@@ -1,7 +1,7 @@
 import { Router } from 'express'
 import { gridDisk, cellToLatLng, cellToParent } from 'h3-js'
 import { pool } from '../db.js'
-import { requireAuth } from '../auth.js'
+import { requireAuth, optionalAuth } from '../auth.js'
 import { rateLimit } from '../ratelimit.js'
 import { emitToRegion } from '../socket.js'
 import { isOcean } from '../terrain.js'
@@ -18,11 +18,13 @@ const router = Router()
 // Shared by every "give me full claim data for these hexes" route below -
 // same base query, just a different WHERE. whereClause must reference $1
 // (and may reference further placeholders via extraParams).
-// viewerId is optional (the admin/debug full-world dump has no authenticated
-// caller) - when present, troop_count/building_types are redacted for any
-// hex the viewer can't actually see (server/visibility.js), so the response
-// itself carries no real data to hide client-side, not just a cosmetic '-1'.
-async function queryEnrichedHexes(whereClause, params, viewerId = null) {
+// By default this redacts troop_count/building_types for any hex the caller
+// can't actually see (server/visibility.js) - a missing viewerId (a guest,
+// see AuthModal.jsx "Browse as guest") gets an empty visible set, not a
+// skipped check, so the response itself carries no real data to hide
+// client-side, not just a cosmetic '-1'. skipRedaction is only for the
+// admin/debug full-world dump below, which intentionally wants real data.
+async function queryEnrichedHexes(whereClause, params, { viewerId = null, skipRedaction = false } = {}) {
   const result = await pool.query(`
     WITH power AS (SELECT owner_id, SUM(quantity)::float8 AS total FROM troops GROUP BY owner_id)
     SELECT h.h3_index, h.owner_id, h.upgrade_level, h.rally_hex, h.claimed_at, p.color, p.username, p.capital_hex, p.flag_pixels, p.motto,
@@ -37,7 +39,7 @@ async function queryEnrichedHexes(whereClause, params, viewerId = null) {
     WHERE ${whereClause}
     GROUP BY h.h3_index, h.owner_id, h.upgrade_level, h.rally_hex, p.color, p.username, p.capital_hex, p.flag_pixels, p.motto
   `, params)
-  const visibleSet = viewerId ? await buildVisibleSet(viewerId) : null
+  const visibleSet = skipRedaction ? null : await buildVisibleSet(viewerId, 1)
   return result.rows.map(h => {
     const info = getCountry(h.h3_index)
     const strategic = STRATEGIC_HEXES.get(h.h3_index)
@@ -66,7 +68,7 @@ async function queryEnrichedHexes(whereClause, params, viewerId = null) {
 // most of it is irrelevant to any one player at any one time.
 router.get('/', async (req, res) => {
   try {
-    res.json(await queryEnrichedHexes('TRUE', []))
+    res.json(await queryEnrichedHexes('TRUE', [], { skipRedaction: true }))
   } catch (err) {
     console.error('[hexes] GET / failed:', err.message)
     res.status(500).json({ error: 'Server error' })
@@ -76,11 +78,11 @@ router.get('/', async (req, res) => {
 // Claim data for a specific set of hexes - the client sends exactly the
 // cells its own viewport/overview math already computed, so the response is
 // proportional to what's on screen instead of the whole world.
-router.post('/viewport', requireAuth, async (req, res) => {
+router.post('/viewport', optionalAuth, async (req, res) => {
   const { h3Indexes } = req.body
   if (!Array.isArray(h3Indexes)) return res.status(400).json({ error: 'h3Indexes required' })
   try {
-    res.json(await queryEnrichedHexes('h.h3_index = ANY($1)', [h3Indexes.slice(0, 4000)], req.player.id))
+    res.json(await queryEnrichedHexes('h.h3_index = ANY($1)', [h3Indexes.slice(0, 4000)], { viewerId: req.player?.id ?? null }))
   } catch (err) {
     console.error('[hexes] POST /viewport failed:', err.message)
     res.status(500).json({ error: 'Server error' })
@@ -99,7 +101,7 @@ router.get('/mine', requireAuth, async (req, res) => {
         AND alliance_id = (SELECT alliance_id FROM players WHERE id = $1)
     `, [req.player.id])
     const ownerIds = [req.player.id, ...allies.rows.map(r => r.id)]
-    res.json(await queryEnrichedHexes('h.owner_id = ANY($1)', [ownerIds]))
+    res.json(await queryEnrichedHexes('h.owner_id = ANY($1)', [ownerIds], { viewerId: req.player.id }))
   } catch (err) {
     console.error('[hexes] GET /mine failed:', err.message)
     res.status(500).json({ error: 'Server error' })
