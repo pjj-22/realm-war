@@ -287,12 +287,7 @@ router.get('/export', requireAuth, async (req, res) => {
       q('SELECT h3_index, type, quantity FROM troops WHERE owner_id=$1'),
       q('SELECT from_hex, to_hex, type, quantity, arrives_at, departed_at, status FROM armies WHERE owner_id=$1'),
       q("SELECT b.h3_index, b.type, b.created_at FROM buildings b JOIN hexes h ON h.h3_index=b.h3_index WHERE h.owner_id=$1"),
-      // Your own export is your real historical record, not a live gameplay
-      // view - substitute the actual quantity (notify.js stores a {quantity}
-      // placeholder in message, see server/routes/events.js for the
-      // gameplay-visibility-aware version of this same substitution).
-      q('SELECT type, message, hex_index, quantity, read, created_at FROM events WHERE player_id=$1 ORDER BY created_at')
-        .then(rows => rows.map(r => ({ ...r, message: r.quantity != null ? r.message.replace('{quantity}', `${r.quantity} troops`) : r.message }))),
+      q('SELECT type, message, hex_index, quantity, read, created_at FROM events WHERE player_id=$1 ORDER BY created_at'),
       q('SELECT hex_count, recorded_at FROM hex_history WHERE player_id=$1 ORDER BY recorded_at'),
       q('SELECT endpoint, created_at FROM push_subscriptions WHERE player_id=$1'),
       q('SELECT text, alliance_id, created_at FROM chat_messages WHERE player_id=$1 ORDER BY created_at').catch(() => []),

@@ -46,7 +46,7 @@ async function queryEnrichedHexes(whereClause, params, { viewerId = null, skipRe
     // Power projection: huge garrisons (or huge empires) can't hide in fog
     const projected = h.troop_count >= PROJECTION_GARRISON || h.owner_power >= PROJECTION_EMPIRE
     const { owner_power, ...rest } = h
-    if (visibleSet && !canSeeDetail(h.h3_index, visibleSet, projected)) {
+    if (visibleSet && !canSeeDetail(h.h3_index, visibleSet, projected, new Date(), h.owner_id === viewerId)) {
       rest.troop_count = null
       rest.building_types = null
     }

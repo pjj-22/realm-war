@@ -40,7 +40,12 @@ export function isDark(h3Index, now = new Date()) {
 // The single check every endpoint should use before sending real numbers for
 // a hex. `projected` carries over unchanged from the existing client concept
 // (huge garrisons/empires can't hide, GameMap.jsx buildClaimedPoints) - it
-// overrides the visibility-ring check but not darkness.
-export function canSeeDetail(h3Index, visibleSet, projected = false, now = new Date()) {
+// overrides the visibility-ring check but not darkness. `isOwner` bypasses
+// everything, including darkness: hiding a player's own numbers from
+// themselves at night is theater, not security - they can already see the
+// real number by clicking their own garrison (a different, unredacted query
+// - see BottomDrawer's TerritoryPanel), so the map may as well show it too.
+export function canSeeDetail(h3Index, visibleSet, projected = false, now = new Date(), isOwner = false) {
+  if (isOwner) return true
   return (visibleSet.has(h3Index) || projected) && !isDark(h3Index, now)
 }

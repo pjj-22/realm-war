@@ -75,3 +75,9 @@ test('canSeeDetail: darkness hides even an in-range hex; projection overrides ra
   assert.equal(canSeeDetail(greenwich, new Set(), true, noon), true, 'projection overrides out-of-range')
   assert.equal(canSeeDetail(greenwich, new Set(), true, midnight), false, 'projection does not override darkness')
 })
+
+test('canSeeDetail: isOwner bypasses everything, including darkness and out-of-range', () => {
+  const greenwich = latLngToCell(51.5, 0, 7)
+  const midnight = new Date('2026-01-01T00:00:00Z')
+  assert.equal(canSeeDetail(greenwich, new Set(), false, midnight, true), true, 'own hex stays visible even dark and out of range')
+})

@@ -19,6 +19,7 @@ import { useIsMobile } from '../hooks/useIsMobile'
 import { api } from '../api/client'
 import { GoldIcon, SearchIcon, AllianceIcon, SwordsIcon, WarningIcon, KeepIcon } from './Icons'
 import { resolveFlag, flagImageId, flagToImageData } from '../flags'
+import { isDark } from '../daylight'
 import { playSound } from '../sound.js'
 import { theme } from '../theme'
 
@@ -308,6 +309,10 @@ function hexToGeoJSONFeature(cell, claimed, visibleSet) {
       flag_pixels: claimed?.flag_pixels || null,
       motto: claimed?.motto || null,
       fog,
+      // Purely visual (client-computed, applies to every hex including
+      // unclaimed ones - see daylight.js) - independent of `hidden`, which
+      // gates real troop_count data and is server-driven.
+      dark: isDark(cell),
     },
     geometry: { type: 'Polygon', coordinates: [coords] },
   }
@@ -1248,6 +1253,19 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
         paint: {
           'fill-color': ['case', ['!=', ['get', 'color'], null], ['get', 'color'], 'rgba(30,20,60,0.35)'],
           'fill-opacity': ['case', ['boolean', ['get', 'fog'], false], 0.1, 0.35],
+        },
+      })
+      // Night wash - a dark tint over any hex currently outside its local
+      // daylight hours (client/src/daylight.js isDark), independent of fog:
+      // applies to every hex including unclaimed and the viewer's own, since
+      // it's just showing what time it really is there, not hiding data.
+      map.current.addLayer({
+        id: 'hex-night',
+        type: 'fill',
+        source: 'hexes',
+        paint: {
+          'fill-color': '#050318',
+          'fill-opacity': ['case', ['boolean', ['get', 'dark'], false], 0.45, 0],
         },
       })
       map.current.addLayer({

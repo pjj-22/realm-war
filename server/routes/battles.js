@@ -11,9 +11,13 @@ const router = Router()
 // them from anyone who can't see the hex (visibility.js), don't just trust
 // the client to render around them. A big enough clash still projects
 // through fog, same rule as a hex's own power-projection carve-out.
-function redactBattle(battle, visibleSet) {
+function redactBattle(battle, visibleSet, viewerId) {
   const projected = battle.attacker_troops >= PROJECTION_GARRISON || battle.defender_troops >= PROJECTION_GARRISON
-  if (canSeeDetail(battle.h3_index, visibleSet, projected)) return battle
+  // A combatant can already see their own battle's real numbers just by
+  // being in it - hiding this from them at night is theater, same reasoning
+  // as a hex's own troop_count (server/visibility.js canSeeDetail).
+  const isParticipant = viewerId != null && (viewerId === battle.attacker_id || viewerId === battle.defender_id)
+  if (canSeeDetail(battle.h3_index, visibleSet, projected, new Date(), isParticipant)) return battle
   return {
     ...battle,
     attacker_strength: null, defender_strength: null,
@@ -46,7 +50,7 @@ router.get('/hex/:h3Index', optionalAuth, async (req, res) => {
     if (!result.rows[0]) return res.json({ battle: null })
 
     const visibleSet = await buildVisibleSet(req.player?.id ?? null)
-    const battle = redactBattle(result.rows[0], visibleSet)
+    const battle = redactBattle(result.rows[0], visibleSet, req.player?.id ?? null)
     const canSee = battle.attacker_strength !== null
 
     const parts = await pool.query(`
@@ -81,7 +85,8 @@ router.get('/active', optionalAuth, async (req, res) => {
       WHERE b.status = 'active'
     `)
     const visibleSet = await buildVisibleSet(req.player?.id ?? null)
-    res.json(result.rows.map(b => redactBattle(b, visibleSet)))
+    const viewerId = req.player?.id ?? null
+    res.json(result.rows.map(b => redactBattle(b, visibleSet, viewerId)))
   } catch (err) {
     console.error('[battles] GET /active failed:', err.message)
     res.status(500).json({ error: 'Server error' })
