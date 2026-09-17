@@ -1967,7 +1967,7 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
         return {
           type: 'Feature',
           properties: {
-            label: `${a.quantity}`,
+            label: a.quantity == null ? '?' : `${a.quantity}`,
             color: a.color || '#f0c040',
             isEnemy: isEnemy ? 1 : 0,
           },

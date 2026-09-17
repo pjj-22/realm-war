@@ -6,6 +6,7 @@ import { emitToRegion } from '../socket.js'
 import { isOcean } from '../terrain.js'
 import { notifyIncomingAttack } from '../notify.js'
 import { currentMarchHex, findMarchPath, pathStepCosts } from '../marchPath.js'
+import { buildVisibleSet, canSeeDetail } from '../visibility.js'
 
 const router = Router()
 
@@ -190,7 +191,7 @@ router.delete('/rally/:h3Index', requireAuth, async (req, res) => {
 // hexes: huge forces (or huge empires) can't hide - the client applies its own
 // fog-of-war filtering for everything else, with more leeway than hexes get
 // since a moving column is easier to spot than a quiet border.
-router.get('/armies', async (req, res) => {
+router.get('/armies', requireAuth, async (req, res) => {
   try {
     const result = await pool.query(`
       WITH power AS (SELECT owner_id, SUM(quantity)::float8 AS total FROM troops GROUP BY owner_id)
@@ -200,6 +201,7 @@ router.get('/armies', async (req, res) => {
       LEFT JOIN power ON power.owner_id = a.owner_id
       WHERE a.status='marching'
     `)
+    const visibleSet = await buildVisibleSet(req.player.id)
     const rows = result.rows.map(a => {
       const projected = a.quantity >= PROJECTION_GARRISON || a.owner_power >= PROJECTION_EMPIRE
       const { owner_power, ...rest } = a
@@ -209,6 +211,10 @@ router.get('/armies', async (req, res) => {
       // mid-march when this deploys. New armies always have it stored.
       const path = a.path?.length ? a.path : findMarchPath(a.from_hex, a.to_hex).path
       const stepCosts = pathStepCosts(path)
+      // You always know your own army's size - only an enemy/bystander's
+      // march gets hidden, and only when its destination isn't visible.
+      const canSee = a.owner_id === req.player.id || canSeeDetail(a.to_hex, visibleSet, projected)
+      if (!canSee) rest.quantity = null
       return { ...rest, path, stepCosts, projected, current_hex: currentMarchHex(a, path, stepCosts) }
     })
     res.json(rows)

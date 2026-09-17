@@ -173,6 +173,31 @@ export default function BattlePanel({ hex, player, onMarchStart, onClose }) {
   if (!data?.battle) return null
 
   const { battle, participants } = data
+
+  // Redacted server-side (visibility.js) - out of range or the hex is dark
+  // right now. No real numbers reached the client to render, by design.
+  if (battle.attacker_strength === null) {
+    return (
+      <div style={{
+        position: 'absolute', bottom: 0,
+        left: isMobile ? 0 : '50%',
+        transform: isMobile ? 'none' : 'translateX(-50%)',
+        width: isMobile ? '100vw' : 'min(780px, 96vw)',
+        background: 'linear-gradient(180deg, rgba(24,8,8,0.98) 0%, rgba(12,4,4,0.99) 100%)',
+        border: '1px solid rgba(190,60,50,0.5)',
+        borderBottom: 'none', borderRadius: '10px 10px 0 0',
+        padding: '18px 20px', color: '#c9a090', fontFamily: 'Georgia, serif',
+        textAlign: 'center',
+      }}>
+        A battle rages in the dark - too far or too dark to see how it's going.
+        {onClose && (
+          <div style={{ marginTop: 10 }}>
+            <button onClick={onClose} style={{ background: 'none', border: 'none', color: '#c9a090', cursor: 'pointer', textDecoration: 'underline' }}>Close</button>
+          </div>
+        )}
+      </div>
+    )
+  }
   // Combat resolves in discrete dice clashes, not a continuously-decaying pool -
   // there's nothing to smoothly animate between polls, so this shows the real
   // last-synced numbers only (same reasoning as the gold display).

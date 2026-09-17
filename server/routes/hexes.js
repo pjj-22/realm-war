@@ -11,13 +11,18 @@ import { STRATEGIC_HEXES, STRATEGIC_BONUS_GOLD } from '../strategic.js'
 import { seedCampsAround } from '../wild.js'
 import { foundCapital } from '../founding.js'
 import { findMarchPath } from '../marchPath.js'
+import { buildVisibleSet, canSeeDetail } from '../visibility.js'
 
 const router = Router()
 
 // Shared by every "give me full claim data for these hexes" route below -
 // same base query, just a different WHERE. whereClause must reference $1
 // (and may reference further placeholders via extraParams).
-async function queryEnrichedHexes(whereClause, params) {
+// viewerId is optional (the admin/debug full-world dump has no authenticated
+// caller) - when present, troop_count/building_types are redacted for any
+// hex the viewer can't actually see (server/visibility.js), so the response
+// itself carries no real data to hide client-side, not just a cosmetic '-1'.
+async function queryEnrichedHexes(whereClause, params, viewerId = null) {
   const result = await pool.query(`
     WITH power AS (SELECT owner_id, SUM(quantity)::float8 AS total FROM troops GROUP BY owner_id)
     SELECT h.h3_index, h.owner_id, h.upgrade_level, h.rally_hex, h.claimed_at, p.color, p.username, p.capital_hex, p.flag_pixels, p.motto,
@@ -32,12 +37,17 @@ async function queryEnrichedHexes(whereClause, params) {
     WHERE ${whereClause}
     GROUP BY h.h3_index, h.owner_id, h.upgrade_level, h.rally_hex, p.color, p.username, p.capital_hex, p.flag_pixels, p.motto
   `, params)
+  const visibleSet = viewerId ? await buildVisibleSet(viewerId) : null
   return result.rows.map(h => {
     const info = getCountry(h.h3_index)
     const strategic = STRATEGIC_HEXES.get(h.h3_index)
     // Power projection: huge garrisons (or huge empires) can't hide in fog
     const projected = h.troop_count >= PROJECTION_GARRISON || h.owner_power >= PROJECTION_EMPIRE
     const { owner_power, ...rest } = h
+    if (visibleSet && !canSeeDetail(h.h3_index, visibleSet, projected)) {
+      rest.troop_count = null
+      rest.building_types = null
+    }
     return {
       ...rest,
       projected,
@@ -66,11 +76,11 @@ router.get('/', async (req, res) => {
 // Claim data for a specific set of hexes - the client sends exactly the
 // cells its own viewport/overview math already computed, so the response is
 // proportional to what's on screen instead of the whole world.
-router.post('/viewport', async (req, res) => {
+router.post('/viewport', requireAuth, async (req, res) => {
   const { h3Indexes } = req.body
   if (!Array.isArray(h3Indexes)) return res.status(400).json({ error: 'h3Indexes required' })
   try {
-    res.json(await queryEnrichedHexes('h.h3_index = ANY($1)', [h3Indexes.slice(0, 4000)]))
+    res.json(await queryEnrichedHexes('h.h3_index = ANY($1)', [h3Indexes.slice(0, 4000)], req.player.id))
   } catch (err) {
     console.error('[hexes] POST /viewport failed:', err.message)
     res.status(500).json({ error: 'Server error' })

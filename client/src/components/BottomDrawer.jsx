@@ -970,7 +970,7 @@ export default function BottomDrawer({ hex, player, stats, pendingClaims, onClai
                 return (
                   <div key={a.id} style={{ marginBottom: 16, paddingRight: 4 }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 14, color: '#9a8060', marginBottom: 6 }}>
-                      <span>{a.quantity} troops</span>
+                      <span>{a.quantity == null ? '?' : a.quantity} troops</span>
                       <span>{mins}m remaining</span>
                     </div>
                     <ProgressBar pct={pct} color="linear-gradient(90deg, #802020, #c04040)" />

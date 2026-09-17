@@ -122,6 +122,11 @@ async function runMigrations() {
   // what arrives_at was computed from.
   await pool.query('ALTER TABLE armies ADD COLUMN IF NOT EXISTS path TEXT[]')
   await pool.query('ALTER TABLE training_queue ADD COLUMN IF NOT EXISTS delivered INTEGER NOT NULL DEFAULT 0')
+  // Incoming-attack events store the raw army size here instead of baking it
+  // into `message` - the route renders the final text at read time using
+  // current fog/darkness (visibility.js), since a warning can be read hours
+  // after it fired and visibility can have changed since. See notify.js.
+  await pool.query('ALTER TABLE events ADD COLUMN IF NOT EXISTS quantity INTEGER')
 
   // Real troop counts tracked alongside the multiplier-inclusive strength pools,
   // so survivors can be computed round-by-round instead of reconstructed at the
