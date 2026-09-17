@@ -4,7 +4,7 @@ import { createTestAccount } from './helpers.js'
 test.describe('Auth', () => {
   test('login screen renders', async ({ page }) => {
     await page.goto('/')
-    await expect(page.locator('text=Realm War').first()).toBeVisible()
+    await expect(page.locator('text=HexNation').first()).toBeVisible()
     await expect(page.locator('input[placeholder="Username"]')).toBeVisible()
     await expect(page.locator('input[placeholder="Password"]')).toBeVisible()
     await expect(page.locator('text=Browse as guest')).toBeVisible()
