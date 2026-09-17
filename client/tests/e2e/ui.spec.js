@@ -45,6 +45,12 @@ test.describe('UI labels and layout', () => {
   test('no JS errors on load', async ({ page }) => {
     const errors = []
     page.on('pageerror', e => errors.push(e.message))
+    // A failed MapLibre worker load (wrong MIME type / missing asset) is a
+    // console error, not a pageerror - and it leaves the map silently black.
+    // That's exactly what the 5->6 upgrade shipped, so watch for it here.
+    page.on('console', msg => {
+      if (msg.type() === 'error' && /worker|mime/i.test(msg.text())) errors.push(msg.text())
+    })
     await page.goto('/')
     await page.click('text=Browse as guest')
     await page.waitForTimeout(3000)
@@ -58,7 +64,7 @@ test.describe('UI labels and layout', () => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ username: `ui_${Date.now()}`, password: 'testpass123', color: '#ff0000', ageConfirmed: true }),
     })
-    const { token, player } = await res.json()
+    const { token } = await res.json()
 
     await page.goto('/')
     await page.evaluate((t) => localStorage.setItem('rw_token', t), token)
@@ -67,7 +73,6 @@ test.describe('UI labels and layout', () => {
 
     // Get into march mode via GameMap (need to click own hex with troops)
     // Verify the march mode banner text when it appears
-    const banner = page.locator('text=Select target hex')
     // Just verify the old text is gone - banner is conditional on having troops
     await expect(page.locator('text=Click target hex')).not.toBeVisible()
   })

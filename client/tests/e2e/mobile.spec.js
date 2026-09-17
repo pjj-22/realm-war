@@ -27,6 +27,10 @@ test.describe('Mobile layout', () => {
   test('no JS errors on load, guest browse', async ({ page }) => {
     const errors = []
     page.on('pageerror', e => errors.push(e.message))
+    // Failed worker loads are console errors, not pageerrors (see ui.spec.js)
+    page.on('console', msg => {
+      if (msg.type() === 'error' && /worker|mime/i.test(msg.text())) errors.push(msg.text())
+    })
     await page.goto('/')
     await page.click('text=Browse as guest')
     await page.waitForTimeout(3000)

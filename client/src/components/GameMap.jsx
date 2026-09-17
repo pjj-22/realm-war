@@ -4,6 +4,17 @@ import { useSocket, identifySocket, watchRegions } from '../hooks/useSocket'
 import { toast } from '../toastBus'
 // MapLibre 6 is ESM-only with named exports - no default export anymore.
 import * as maplibregl from 'maplibre-gl'
+// v6 runs its tile/geometry work in a separate module worker file. Left to
+// its own devices it resolves that file relative to the main chunk's URL
+// (/assets/maplibre-gl-worker.mjs), which the production build never emits
+// - nginx's SPA fallback then serves index.html as the worker, the browser
+// rejects the text/html MIME type, and the map never renders (all-black
+// screen after the 5->6 upgrade). Importing it with ?url makes Vite emit
+// the real file as a hashed asset and hands MapLibre that path. Only the
+// built bundle is affected; `vite dev` served it fine, which is why the
+// e2e suite didn't catch it - CI now tests the built bundle via preview.
+import maplibreWorkerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url'
+maplibregl.setWorkerUrl(maplibreWorkerUrl)
 import { polygonToCells, cellToBoundary, cellToLatLng, cellToParent, gridDisk, getHexagonEdgeLengthAvg } from 'h3-js'
 import 'maplibre-gl/dist/maplibre-gl.css'
 import BottomDrawer from './BottomDrawer'

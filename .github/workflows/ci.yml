@@ -114,7 +114,11 @@ jobs:
       - name: Start server and client
         run: |
           (cd server && node index.js > /tmp/server.log 2>&1 &)
-          (cd client && npm run dev -- --port 5199 > /tmp/client.log 2>&1 &)
+          # Test the production build, not the dev server: `vite dev` resolves
+          # things the built bundle doesn't (it served MapLibre 6's worker file
+          # fine while the real build shipped a black map). `vite preview` serves
+          # dist/ with the same SPA fallback nginx uses in prod.
+          (cd client && npm run build && npx vite preview --port 5199 --strictPort > /tmp/client.log 2>&1 &)
           for i in $(seq 1 30); do
             curl -sf http://localhost:3001/api/health > /dev/null && curl -sf http://localhost:5199 > /dev/null && break
             sleep 1
