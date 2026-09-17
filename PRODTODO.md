@@ -26,5 +26,5 @@
 - [ ] Server deps carry transitive advisories inside `express`/`socket.io` (`qs`, `path-to-regexp`, `ws`, `engine.io`) that `npm audit fix` can't clear - re-check after upstream releases.
 - [ ] Test gaps: no unit tests for `auth`, `ratelimit`, `season`, `socket`, `marchPath`, `bots`, `notify`; no client unit tests (e2e only).
 - [ ] `GameMap.jsx` is ~2,700 lines and where most recent bugs lived - split out the topbar and the army/battle overlay effects when next touched.
-- [ ] Night tint is only on the `hexes` source (zoom ≥ 8); the low-zoom `overview-hexes` layer has none. Deliberately deferred - the topbar sun/moon is the primary signal.
+- [ ] Night tint is only on the `hexes` source (the individual-hex detail view); the low-zoom `overview-hexes` layer has none. Deliberately deferred - the topbar sun/moon is the primary signal.
 - [ ] Password reset: no email is collected, so there's no recovery path today (backlog since 2026-09-09).

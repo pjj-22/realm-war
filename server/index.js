@@ -58,7 +58,10 @@ const app = express()
 if (process.env.TRUST_PROXY) app.set('trust proxy', Number(process.env.TRUST_PROXY) || 1)
 app.use(helmet())
 app.use(cors({ origin: CORS_ORIGIN }))
-app.use(express.json())
+// 4000 h3 indexes (POST /hexes/viewport's cap) is ~76KB of JSON, just under
+// express's 100kb default - the extra headroom keeps a slightly oversized
+// viewport request from failing outright with a 413 instead of being sliced.
+app.use(express.json({ limit: '256kb' }))
 
 app.use('/api/players', playerRoutes)
 app.use('/api/hexes', hexRoutes)

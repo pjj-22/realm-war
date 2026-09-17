@@ -115,7 +115,42 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push frontend image
+      - name: Build frontend image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./client
+          file: ./client/Dockerfile
+          push: false
+          load: true
+          provenance: false
+          tags: ${{ env.IMAGE_PREFIX }}/frontend:latest
+          build-args: |
+            VITE_API_URL=${{ env.SITE_URL }}
+            VITE_SOCKET_URL=${{ env.SITE_URL }}
+            VITE_PUBLIC_URL=${{ env.SITE_URL }}
+            VITE_CONTACT_EMAIL=privacy@hexnation.app
+
+      # Runs the image as nginx would in prod and checks it serves the page
+      # and every built JS asset - including MapLibre's .mjs worker - with a
+      # JavaScript content-type. CI's e2e runs against `vite preview`, which
+      # has its own MIME table, so this is the only place the nginx config
+      # gets exercised before the droplet (an .mjs served as octet-stream
+      # shipped a black map in Firefox once). --add-host gives nginx's
+      # `proxy_pass http://backend:3001` a resolvable name - it refuses to
+      # start otherwise, and compose is what supplies it in prod.
+      - name: Smoke-test the frontend image
+        run: |
+          docker run -d --rm --name frontend-smoke -p 8480:80 --add-host backend:127.0.0.1 ${{ env.IMAGE_PREFIX }}/frontend:latest
+          for i in $(seq 1 20); do curl -sf http://localhost:8480/health > /dev/null && break; sleep 1; done
+          curl -sf http://localhost:8480/ | grep -q '<div id="root">'
+          for asset in $(docker exec frontend-smoke sh -c 'ls /usr/share/nginx/html/assets | grep -E "\.m?js$"'); do
+            ct=$(curl -sI "http://localhost:8480/assets/$asset" | tr -d '\r' | grep -i '^content-type:')
+            echo "$asset -> $ct"
+            echo "$ct" | grep -qi 'javascript' || { echo "::error::$asset is not served as JavaScript"; exit 1; }
+          done
+          docker stop frontend-smoke
+
+      - name: Push frontend image
         uses: docker/build-push-action@v6
         with:
           context: ./client

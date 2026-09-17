@@ -15,7 +15,7 @@ import * as maplibregl from 'maplibre-gl'
 // e2e suite didn't catch it - CI now tests the built bundle via preview.
 import maplibreWorkerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url'
 maplibregl.setWorkerUrl(maplibreWorkerUrl)
-import { polygonToCells, cellToBoundary, cellToLatLng, cellToParent, gridDisk, getHexagonEdgeLengthAvg } from 'h3-js'
+import { polygonToCells, cellToBoundary, cellToLatLng, cellToParent, gridDisk, getHexagonEdgeLengthAvg, getHexagonAreaAvg } from 'h3-js'
 import 'maplibre-gl/dist/maplibre-gl.css'
 import BottomDrawer from './BottomDrawer'
 import ArmiesHUD from './ArmiesHUD'
@@ -183,23 +183,79 @@ const MONUMENT_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="${44 * DPR}
   </g>
 </svg>`
 
-// padFraction extends the bounds outward by that fraction of the viewport's
-// own width/height on every side before computing which cells fall inside -
-// 0 (the default) is the exact visible rectangle, as before.
-function getViewportPolygon(map, padFraction = 0) {
+// Wraps a longitude into [-180, 180).
+function wrapLng(lng) {
+  return ((lng + 180) % 360 + 360) % 360 - 180
+}
+
+// H3 cells at `resolution` covering the map's current bounds, extended
+// outward by padFraction of the viewport's own width/height on every side
+// (0 = the exact visible rectangle).
+//
+// Cuts the bounds into longitude chunks under 90° before handing each to
+// polygonToCells, and clamps latitude to mercator's range. h3 reads any ring
+// spanning 180° or more of longitude as a transmeridian polygon and fills the
+// *complement* of the viewport - a wide window at zoom 3 has bounds 300°+
+// across, and MapLibre hands back unwrapped values like -187° - which
+// silently produced the wrong overview cells, and its internal cell-count
+// estimate undershoots badly enough there that polygonToCells throws
+// E_FAILED. A chunk that still fails is dropped rather than thrown, since
+// this runs inside MapLibre's moveend handler. The Set dedups the cells
+// neighbouring chunks share along their cut.
+const LNG_CHUNK_DEG = 90
+
+function cellsInViewport(map, resolution, padFraction = 0) {
   const bounds = map.getBounds()
   const ne = bounds.getNorthEast()
   const sw = bounds.getSouthWest()
   const latPad = (ne.lat - sw.lat) * padFraction
   const lngPad = (ne.lng - sw.lng) * padFraction
-  const n = ne.lat + latPad, s = sw.lat - latPad, e = ne.lng + lngPad, w = sw.lng - lngPad
-  return [[
-    [n, w],
-    [n, e],
-    [s, e],
-    [s, w],
-    [n, w],
-  ]]
+  const n = Math.min(85, ne.lat + latPad), s = Math.max(-85, sw.lat - latPad)
+  let w = sw.lng - lngPad, e = ne.lng + lngPad
+  if (e - w >= 360) { w = -180; e = 180 }
+  const cells = new Set()
+  const addRing = (west, east) => {
+    try {
+      for (const c of polygonToCells([[[n, west], [n, east], [s, east], [s, west], [n, west]]], resolution)) cells.add(c)
+    } catch { /* degenerate ring - see above */ }
+  }
+  for (let x0 = w; x0 < e; x0 += LNG_CHUNK_DEG) {
+    const west = wrapLng(x0)
+    const east = west + (Math.min(e, x0 + LNG_CHUNK_DEG) - x0)
+    if (east > 180) { addRing(west, 180); addRing(-180, east - 360) } else addRing(west, east)
+  }
+  return [...cells]
+}
+
+// Rough count of `resolution` cells inside the current bounds: the bounds'
+// area over the average cell area. polygonToCells is the exact answer but
+// takes seconds at res 7 across a zoom-3 view (~20M cells), and the callers
+// only need to know whether the count fits under a cap.
+const KM_PER_DEG = 111.32
+
+function estimateViewportCellCount(map, resolution) {
+  const bounds = map.getBounds()
+  const ne = bounds.getNorthEast()
+  const sw = bounds.getSouthWest()
+  const midLat = ((ne.lat + sw.lat) / 2) * Math.PI / 180
+  const heightKm = (ne.lat - sw.lat) * KM_PER_DEG
+  const widthKm = Math.min(360, ne.lng - sw.lng) * KM_PER_DEG * Math.cos(midLat)
+  return heightKm * widthKm / getHexagonAreaAvg(resolution, 'km2')
+}
+
+// POST /hexes/viewport slices its input to 4000 cells (server/routes/hexes.js),
+// and 4000 indexes is also about what fits under express's JSON body limit.
+const VIEWPORT_MAX_CELLS = 4000
+
+// Whether the view is zoomed in enough to render individual hexes, or should
+// fall back to the coarse overview layer. Decided by how many cells the view
+// holds rather than a fixed zoom: at the old zoom-8 cutoff a 1440x900 window
+// already held ~36k res-7 hexes - a 225KB POST the server answered with 413,
+// so the map sat blank between zoom 8 and ~9.5. Every zoom-gated piece of
+// the map (viewport fetch, overview layer, region watching, zoom hint,
+// cursor) goes through this one check so they hand off at the same point.
+function showsIndividualHexes(map, resolution) {
+  return estimateViewportCellCount(map, resolution) <= VIEWPORT_MAX_CELLS
 }
 
 // The capital-flag icon-size curve and its minzoom cutoff are both tuned for
@@ -241,35 +297,30 @@ function flagMinZoom(resolution) {
 // per-hex geometry, so there's nothing to prefetch smoothness for and
 // padding would just inflate the aggregation query for no visible benefit.
 //
-// Safety valve: cell count at zoom 8 (the lowest zoom this fires at) scales
-// hard with resolution - at the historical default (res 7) it's already
-// ~36k cells *unpadded*, way past POST /hexes/viewport's 4000-cell cap, even
-// though that's never bitten anyone because nobody actually looks at
-// individual hexes at zoom 8 with resolution that fine (they're slivers -
-// real usage is much more zoomed in, where the bbox and cell count are
-// tiny). Still, resolution is admin-configurable now, so rather than lean on
-// that in-practice assumption, padding backs off to the unpadded set
-// whenever it would exceed the cap - prefetch is a nice-to-have, not worth
-// risking a multi-MB request body over.
+// Padding backs off to the unpadded set whenever it would exceed its own cap
+// (the padded box has ~2.8x the area, so near the detail/overview handoff it
+// usually does) - prefetch is a nice-to-have, not worth a 413 over.
 const VIEWPORT_PREFETCH_PAD = 0.33
 const VIEWPORT_PREFETCH_MAX_CELLS = 3500
 
 function getViewportHexes(map, resolution = HEX_RESOLUTION) {
-  if (map.getZoom() < 8) return []
-  const padded = polygonToCells(getViewportPolygon(map, VIEWPORT_PREFETCH_PAD), resolution)
+  if (!showsIndividualHexes(map, resolution)) return []
+  const padded = cellsInViewport(map, resolution, VIEWPORT_PREFETCH_PAD)
   if (padded.length <= VIEWPORT_PREFETCH_MAX_CELLS) return padded
-  return polygonToCells(getViewportPolygon(map), resolution)
+  // The count estimate is approximate; the slice keeps a view that squeaks
+  // past it from turning into a 413 (a few edge hexes go unrendered instead).
+  return cellsInViewport(map, resolution).slice(0, VIEWPORT_MAX_CELLS)
 }
 
 function getOverviewHexes(map, baseResolution = HEX_RESOLUTION) {
   const zoom = map.getZoom()
-  if (zoom >= 8 || zoom < 3) return { cells: [], res: Math.max(0, baseResolution - 3) }
+  if (zoom < 3 || showsIndividualHexes(map, baseResolution)) return { cells: [], res: Math.max(0, baseResolution - 3) }
   // Coarser tiers as you zoom out, relative to the base resolution (at the
   // default res 7 this reproduces the original fixed ladder 2/3/4/5) instead
   // of hardcoded absolute resolutions that only made sense at res 7.
   const offset = zoom < 5 ? 5 : zoom < 6 ? 4 : zoom < 7 ? 3 : 2
   const res = Math.max(0, baseResolution - offset)
-  return { cells: polygonToCells(getViewportPolygon(map), res), res }
+  return { cells: cellsInViewport(map, res), res }
 }
 
 // overviewSummary is a pre-aggregated { [parentCell]: { color } } map from
@@ -592,6 +643,7 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
   const overviewSummaryRef = useRef({}) // parent-cell -> {color}, for the low-zoom overview layer
   const [selectedHex, setSelectedHex] = useState(null)
   const [zoom, setZoom] = useState(3)
+  const [detailView, setDetailView] = useState(false) // showsIndividualHexes() for the current view
   // Whether the current viewport's center is in nighttime - a zoom-
   // independent, always-visible indicator (topbar) for the day/night
   // mechanic, since per-hex tinting alone is illegible at both ends of the
@@ -665,17 +717,17 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
     if (capitalHex) {
       for (const cell of gridDisk(cellToParent(capitalHex, res), 1)) regions.add(cell)
     }
-    // Mirrors getViewportHexes' own zoom gate (line ~246) - below zoom 8 the
-    // client is in overview mode and isn't fetching individual hex/army/
-    // battle detail for the viewport at all, so there's nothing for a region
-    // subscription to usefully cover there either. Skipping it isn't just an
-    // optimization: at low zoom the viewport polygon spans a huge area, and
-    // covering it in region-resolution cells produced a watch-regions
-    // payload large enough to blow past engine.io/nginx's request-size
-    // limits (413s, then connection instability) - this is what actually
-    // caused that, not a cosmetic missed case.
-    if (map.current && map.current.getZoom() >= 8) {
-      for (const cell of polygonToCells(getViewportPolygon(map.current, VIEWPORT_PREFETCH_PAD), res)) {
+    // Same gate as getViewportHexes - in overview mode the client isn't
+    // fetching individual hex/army/battle detail for the viewport at all, so
+    // there's nothing for a region subscription to usefully cover there
+    // either. Skipping it isn't just an optimization: at low zoom the
+    // viewport spans a huge area, and covering it in region-resolution cells
+    // produced a watch-regions payload large enough to blow past
+    // engine.io/nginx's request-size limits (413s, then connection
+    // instability) - this is what actually caused that, not a cosmetic
+    // missed case.
+    if (map.current && showsIndividualHexes(map.current, hexResolutionRef.current)) {
+      for (const cell of cellsInViewport(map.current, res, VIEWPORT_PREFETCH_PAD)) {
         regions.add(cell)
       }
     }
@@ -1711,17 +1763,24 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
       regionDebounceRef.current = setTimeout(updateWatchedRegions, 800)
     }
     const updateCenterDark = () => setCenterDark(isDarkAtLng(map.current.getCenter().lng))
-    map.current.on('moveend', () => { updateHexes(); updateOverview(); checkViewport(); loadViewportHexes(); loadOverviewSummary(); debouncedRegionUpdate(); updateCenterDark() })
-    map.current.on('zoomend', () => { updateHexes(); updateOverview(); checkViewport(); loadViewportHexes(); loadOverviewSummary(); debouncedRegionUpdate(); updateCenterDark() })
-    updateCenterDark()
-    map.current.on('zoom', () => {
-      const z = map.current.getZoom()
-      setZoom(z)
-      if (z < 8 && !marchModeRef.current && !rallyModeRef.current) {
+    // Detail vs overview depends on the bounds' cell count, not just zoom,
+    // so it's re-checked on pans too (the count drifts with latitude).
+    const updateDetailView = () => {
+      const detail = showsIndividualHexes(map.current, hexResolutionRef.current)
+      setDetailView(detail)
+      if (!detail && !marchModeRef.current && !rallyModeRef.current) {
         map.current.getCanvas().style.cursor = 'zoom-in'
-      } else if (z >= 8) {
+      } else if (detail) {
         map.current.getCanvas().style.cursor = ''
       }
+    }
+    map.current.on('moveend', () => { updateDetailView(); updateHexes(); updateOverview(); checkViewport(); loadViewportHexes(); loadOverviewSummary(); debouncedRegionUpdate(); updateCenterDark() })
+    map.current.on('zoomend', () => { updateDetailView(); updateHexes(); updateOverview(); checkViewport(); loadViewportHexes(); loadOverviewSummary(); debouncedRegionUpdate(); updateCenterDark() })
+    updateCenterDark()
+    updateDetailView()
+    map.current.on('zoom', () => {
+      setZoom(map.current.getZoom())
+      updateDetailView()
     })
 
     map.current.on('click', 'hex-fill', (e) => {
@@ -2549,7 +2608,7 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
       )}
 
       {/* ── Zoom hint ───────────────────────────────────────────── */}
-      {zoom < 8 && (
+      {!detailView && (
         <div style={{
           position: 'absolute', bottom: 90, left: '50%', transform: 'translateX(-50%)',
           color: theme.text.secondary, fontSize: 12, letterSpacing: 3, pointerEvents: 'none', whiteSpace: 'nowrap',
