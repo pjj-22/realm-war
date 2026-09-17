@@ -85,7 +85,7 @@ export default function AuthModal({ onAuth, onDismiss, initialMode = 'login' }) 
   return (
     <div ref={overlayRef} style={styles.overlay}>
       <div style={styles.box}>
-        <div style={styles.title}>Realm War</div>
+        <div style={styles.title}>HexNation</div>
         <form onSubmit={submit}>
           {error && <div style={styles.error}>{error}</div>}
           <input

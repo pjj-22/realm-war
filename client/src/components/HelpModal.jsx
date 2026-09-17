@@ -83,7 +83,7 @@ export default function HelpModal({ onClose }) {
           ×
         </button>
         <div style={S.title}>How to Play</div>
-        <div style={S.subtitle}>Realm War</div>
+        <div style={S.subtitle}>HexNation</div>
 
         <div style={S.section}>
           <div style={S.sectionTitle}>Your Goal</div>
