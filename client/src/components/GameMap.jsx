@@ -653,7 +653,16 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
     if (capitalHex) {
       for (const cell of gridDisk(cellToParent(capitalHex, res), 1)) regions.add(cell)
     }
-    if (map.current) {
+    // Mirrors getViewportHexes' own zoom gate (line ~246) - below zoom 8 the
+    // client is in overview mode and isn't fetching individual hex/army/
+    // battle detail for the viewport at all, so there's nothing for a region
+    // subscription to usefully cover there either. Skipping it isn't just an
+    // optimization: at low zoom the viewport polygon spans a huge area, and
+    // covering it in region-resolution cells produced a watch-regions
+    // payload large enough to blow past engine.io/nginx's request-size
+    // limits (413s, then connection instability) - this is what actually
+    // caused that, not a cosmetic missed case.
+    if (map.current && map.current.getZoom() >= 8) {
       for (const cell of polygonToCells(getViewportPolygon(map.current, VIEWPORT_PREFETCH_PAD), res)) {
         regions.add(cell)
       }

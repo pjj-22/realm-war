@@ -34,9 +34,17 @@ export function initSocket(httpServer, origin = '*') {
     // current viewport, both at REGION_RESOLUTION) every time it changes;
     // hex/army/battle events are scoped to the region(s) covering the
     // affected hex via emitToRegion() below instead of broadcast globally.
+    // Capped defensively - a client bug (or a malicious one) sending an
+    // unbounded array here shouldn't be trusted just because the current
+    // client is well-behaved; this is a boundary. A well-behaved client
+    // covering its actual viewport at REGION_RESOLUTION never gets close to
+    // this many regions - see the zoom gate in GameMap.jsx's
+    // updateWatchedRegions, added after an unguarded viewport-spanning
+    // region list here caused oversized watch-regions payloads at low zoom.
+    const MAX_WATCHED_REGIONS = 3000
     socket.on('watch-regions', (regionCells) => {
       if (!Array.isArray(regionCells)) return
-      syncRooms(socket, 'region-', regionCells)
+      syncRooms(socket, 'region-', regionCells.slice(0, MAX_WATCHED_REGIONS))
     })
     // Alliance chat room - same idea, scoped to one alliance id.
     socket.on('watch-alliance', (allianceId) => {
