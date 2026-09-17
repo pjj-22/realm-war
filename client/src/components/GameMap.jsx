@@ -2252,7 +2252,7 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
             per-hex tinting alone is illegible both zoomed all the way out
             (those hexes aren't even rendered) and zoomed in (everything
             visible is almost always the same side of the terminator). */}
-        <Tooltip text={centerDark ? "It's currently night where you're looking - dark hexes hide troop counts" : "It's currently day where you're looking"}>
+        <Tooltip placement="bottom" text={centerDark ? "It's currently night where you're looking - dark hexes hide troop counts" : "It's currently day where you're looking"}>
           <span style={{ display: 'flex', alignItems: 'center', gap: 5, marginRight: 16, userSelect: 'none' }}>
             {centerDark ? <MoonIcon size={14} /> : <SunIcon size={14} />}
             {!isMobile && (
