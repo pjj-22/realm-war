@@ -2140,9 +2140,11 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
     let budget = player.gold
     if (budget < goldPerTroop) { toast(`Need at least ${goldPerTroop}g to train.`); return }
 
-    const shuffled = [...owned].sort(() => Math.random() - 0.5)
-    const maxHexes = Math.max(1, Math.ceil(owned.length / 2))
-    const targets = shuffled.slice(0, 1 + Math.floor(Math.random() * maxHexes))
+    // Every owned hex gets a shot at reinforcement, not a random subset -
+    // used to cap at ceil(owned/2), which meant 1-2 owned hexes always
+    // collapsed to training at exactly one of them. Shuffled order still
+    // randomizes which hex ends up absorbing the remainder below.
+    const targets = [...owned].sort(() => Math.random() - 0.5)
 
     let trainedTotal = 0
     let hexesUsed = 0
