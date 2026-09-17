@@ -64,7 +64,7 @@ export default function AccountModal({ username, onClose, onDeleted }) {
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      a.download = 'realmwar-data.json'
+      a.download = 'hexnation-data.json'
       document.body.appendChild(a)
       a.click()
       a.remove()

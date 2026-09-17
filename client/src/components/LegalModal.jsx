@@ -45,7 +45,7 @@ function Privacy() {
     <div>
       <div style={S.meta}>Last updated: {UPDATED}</div>
       <p style={S.p}>
-        RealmWar is a free browser strategy game. This policy explains what
+        HexNation is a free browser strategy game. This policy explains what
         data it holds and why. It is written to be short and honest rather
         than exhaustive.
       </p>
@@ -90,7 +90,7 @@ function Privacy() {
 
       <div style={S.h}>Age</div>
       <p style={S.p}>
-        RealmWar is not directed at children. You must be at least 16 years
+        HexNation is not directed at children. You must be at least 16 years
         old (or the digital-consent age in your country, if lower but not
         under 13) to create an account.
       </p>
@@ -108,7 +108,7 @@ function Terms() {
 
       <div style={S.h}>The service</div>
       <p style={S.p}>
-        RealmWar is provided free of charge, as-is and as-available, with no
+        HexNation is provided free of charge, as-is and as-available, with no
         warranty. It is a hobby project: the world may be reset, wiped,
         rebalanced, or taken offline at any time, and seasons end and reset
         the map by design.
@@ -143,7 +143,7 @@ function Terms() {
       <div style={S.h}>Liability</div>
       <p style={S.p}>
         To the fullest extent permitted by law, the operator is not liable for
-        any loss arising from use of, or inability to use, RealmWar, including
+        any loss arising from use of, or inability to use, HexNation, including
         loss of game progress.
       </p>
 

@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-  <!-- RealmWar: gold crown inside a hex on deep purple -->
+  <!-- HexNation: gold crown inside a hex on deep purple -->
   <path d="M32 2 L58 17 L58 47 L32 62 L6 47 L6 17 Z" fill="#141028" stroke="#7a5ab0" stroke-width="2.5"/>
   <path d="M32 8 L52.8 20 L52.8 44 L32 56 L11.2 44 L11.2 20 Z" fill="none" stroke="#3a2a60" stroke-width="1.5"/>
   <path d="M17 42 L15.5 25 L23.5 32.5 L32 21 L40.5 32.5 L48.5 25 L47 42 Z" fill="#e0b84a"/>

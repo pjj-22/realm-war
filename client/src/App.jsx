@@ -11,7 +11,7 @@ import { toast } from './toastBus'
 import { api } from './api/client'
 
 if (window.location.hash === '#admin') {
-  document.title = 'Admin - Realm War'
+  document.title = 'Admin - HexNation'
 }
 
 export default function App() {

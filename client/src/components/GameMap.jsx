@@ -2186,7 +2186,7 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
         {/* Title - hidden on mobile */}
         {!isMobile && (
           <span style={{ fontSize: 13, letterSpacing: 5, color: theme.text.secondary, textTransform: 'uppercase', marginRight: 20, userSelect: 'none', fontFamily: theme.headerFont }}>
-            Realm War
+            HexNation
           </span>
         )}
 
