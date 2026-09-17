@@ -2,7 +2,8 @@ import { useEffect, useRef, useState, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { useSocket, identifySocket, watchRegions } from '../hooks/useSocket'
 import { toast } from '../toastBus'
-import maplibregl from 'maplibre-gl'
+// MapLibre 6 is ESM-only with named exports - no default export anymore.
+import * as maplibregl from 'maplibre-gl'
 import { polygonToCells, cellToBoundary, cellToLatLng, cellToParent, gridDisk, getHexagonEdgeLengthAvg } from 'h3-js'
 import 'maplibre-gl/dist/maplibre-gl.css'
 import BottomDrawer from './BottomDrawer'
@@ -1309,7 +1310,10 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
           'icon-image': ['case', ['!=', ['get', 'troop_count'], 0], 'garrison-icon', ''],
           'icon-size': ['interpolate', ['linear'], ['zoom'], 7, 0.32, 10, 0.46],
           'icon-anchor': 'right',
-          'icon-offset': [2, 32],
+          // MapLibre 6 stopped multiplying icon-offset by icon-size (render
+          // breaking change) - this is the old [2, 32] pre-scaled by the
+          // ~0.4 icon-size above so the badge lands where it always did.
+          'icon-offset': [1, 13],
           // Decay warning rides along in the same text field (not a separate
           // layer) so it always sits directly next to the number regardless
           // of how many digits the troop count has - no offset-guessing.
@@ -1590,7 +1594,9 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
         map.current.setLayoutProperty('army-label', 'icon-allow-overlap', true)
         map.current.setLayoutProperty('army-label', 'icon-ignore-placement', true)
         map.current.setLayoutProperty('army-label', 'icon-anchor', 'right')
-        map.current.setLayoutProperty('army-label', 'icon-offset', [8, 1])
+        // Pre-scaled by the 0.42 icon-size (was [8, 1]) - see the garrison
+        // icon-offset note: MapLibre 6 no longer scales offsets with size.
+        map.current.setLayoutProperty('army-label', 'icon-offset', [3, 0])
       }
       armyImg.src = 'data:image/svg+xml;base64,' + btoa(armySvg)
 

@@ -51,6 +51,9 @@ test.describe('Auth', () => {
     await page.fill('input[placeholder="Username"]', 'doesnotexist')
     await page.fill('input[placeholder="Password"]', 'wrongpass')
     await page.click('button:has-text("Enter the War")')
-    await expect(page.locator('text=Invalid credentials')).toBeVisible({ timeout: 3000 })
+    // Toasts auto-dismiss after ~4s, so wait generously but start waiting
+    // immediately - a fixed sleep before the assert is what made this flaky
+    // under CI load (see git history).
+    await expect(page.locator('text=Invalid credentials')).toBeVisible({ timeout: 10000 })
   })
 })

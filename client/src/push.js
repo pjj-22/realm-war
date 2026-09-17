@@ -20,12 +20,26 @@ export async function getPushStatus() {
   return sub ? 'on' : 'off'
 }
 
+// Resolves to the server's VAPID public key, or null when push isn't
+// configured server-side (GET /api/push/key -> 503). Asked *before* the
+// browser permission prompt: prompting first and then failing meant a
+// player granted notifications for nothing when VAPID keys weren't set.
+export async function getPushServerKey() {
+  try {
+    const { key } = await api.getPushKey()
+    return key || null
+  } catch {
+    return null
+  }
+}
+
 export async function enablePush() {
   if (!pushSupported()) throw new Error('Notifications not supported in this browser')
+  const key = await getPushServerKey()
+  if (!key) throw new Error('Notifications aren\'t set up on this server yet')
   const permission = await Notification.requestPermission()
   if (permission !== 'granted') throw new Error('Notifications blocked')
   const reg = await navigator.serviceWorker.register('/sw.js')
-  const { key } = await api.getPushKey()
   const sub = await reg.pushManager.subscribe({
     userVisibleOnly: true,
     applicationServerKey: urlBase64ToUint8Array(key),

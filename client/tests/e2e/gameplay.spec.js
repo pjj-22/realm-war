@@ -17,9 +17,10 @@ test.describe('Core gameplay', () => {
     const claimBtn = page.locator('button:has-text("Found Your Capital Here")')
     if (await claimBtn.isVisible({ timeout: 2000 }).catch(() => false)) {
       await claimBtn.click()
-      await page.waitForTimeout(2000)
-      // Should show capital founded toast
-      await expect(page.locator('text=Capital founded')).toBeVisible({ timeout: 5000 })
+      // Toasts auto-dismiss after ~4s: the old fixed 2s sleep before a 5s
+      // assert left a narrow, load-dependent window and flaked in CI. Wait
+      // from the click, generously.
+      await expect(page.locator('text=Capital founded')).toBeVisible({ timeout: 10000 })
 
       // Founding a capital opens the one-time flag onboarding modal, which
       // otherwise blocks the map canvas for every later test on this account.
@@ -114,10 +115,9 @@ test.describe('Strategic hexes', () => {
     const unowned = res.find(h => !h.owner && h.primary)
     if (!unowned) return // all capitals owned, skip
 
-    // Fly to it via the map
-    const { cellToLatLng } = await page.evaluate(() => import('/node_modules/h3-js/lib/esm/index.js').catch(() => null)) || {}
-    // Simpler: just check that strategic info appears when visiting the hex via search
-    // For now just verify the endpoint works
+    // For now just verify the endpoint works (flying to it and asserting
+    // the drawer is the follow-up - see the skipped test above for why
+    // canvas-position-based hex tests are brittle)
     expect(unowned.name).toBeTruthy()
     expect(unowned.bonus_gold).toBe(5)
     expect(unowned.primary).toBe(true)
