@@ -1,0 +1,106 @@
+# ============================================
+# HEXNATION (RealmWar) - DOCKER COMPOSE CONFIGURATION
+# ============================================
+#
+# REQUIRED: Create a .env file from .env.example before starting
+#   cp .env.example .env
+#   Edit .env and fill in real secrets (openssl rand -base64 32)
+#
+# Designed to run alongside other projects (e.g. planner) on the same
+# droplet - all host ports are distinct from planner's and bound to
+# 127.0.0.1 only, reached via the Cloudflare Tunnel, never exposed directly.
+# ============================================
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-realmwar}
+      POSTGRES_USER: ${POSTGRES_USER:-realmwar}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    ports:
+      - "127.0.0.1:${POSTGRES_HOST_PORT:-5434}:5432"
+    volumes:
+      - realmwar_postgres_data:/var/lib/postgresql/data
+      # Only runs on a fresh/empty volume - server's own runMigrations()
+      # handles everything added to the schema since this file was written.
+      - ./server/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - hexnation-network
+    restart: unless-stopped
+
+  backend:
+    image: ghcr.io/pjj-22/realm-war/backend:${IMAGE_TAG:-latest}
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-realmwar}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-realmwar}
+      JWT_SECRET: ${JWT_SECRET}
+      ADMIN_SECRET: ${ADMIN_SECRET}
+      PORT: 3001
+      MODE: ${MODE:-prod}
+      CLIENT_ORIGIN: ${CLIENT_ORIGIN:-https://hexnation.app}
+      TRUST_PROXY: ${TRUST_PROXY:-1}
+      CHAT_ENABLED: ${CHAT_ENABLED:-}
+      NOTIFICATIONS_ENABLED: ${NOTIFICATIONS_ENABLED:-}
+      VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}
+      VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
+      VAPID_SUBJECT: ${VAPID_SUBJECT:-}
+    ports:
+      - "127.0.0.1:${BACKEND_HOST_PORT:-8481}:3001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:3001/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 15s
+    networks:
+      - hexnation-network
+    restart: unless-stopped
+
+  frontend:
+    image: ghcr.io/pjj-22/realm-war/frontend:${IMAGE_TAG:-latest}
+    build:
+      context: ./client
+      dockerfile: Dockerfile
+      args:
+        VITE_API_URL: ${VITE_API_URL:-https://hexnation.app}
+        VITE_SOCKET_URL: ${VITE_SOCKET_URL:-https://hexnation.app}
+        VITE_PUBLIC_URL: ${VITE_PUBLIC_URL:-https://hexnation.app}
+        VITE_CONTACT_EMAIL: ${VITE_CONTACT_EMAIL:-}
+        VITE_CHAT_ENABLED: ${VITE_CHAT_ENABLED:-}
+    ports:
+      - "127.0.0.1:${FRONTEND_HOST_PORT:-8480}:80"
+    depends_on:
+      - backend
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:80/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    networks:
+      - hexnation-network
+    restart: unless-stopped
+
+volumes:
+  realmwar_postgres_data:
+    driver: local
+
+networks:
+  hexnation-network:
+    driver: bridge
+
+# Usage:
+#   docker compose up --build -d      # local build
+#   docker compose pull && docker compose up -d --force-recreate   # from GHCR
+#   docker compose down               # stop (keeps volumes)
+#   docker compose down -v            # WARNING: deletes the database

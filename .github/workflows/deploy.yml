@@ -1,0 +1,151 @@
+name: Deploy - Build & Push Images
+
+on:
+  push:
+    branches: [main]
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_PREFIX: ghcr.io/pjj-22/realm-war
+  # Public site config baked into the frontend bundle at build time - not secret.
+  SITE_URL: https://hexnation.app
+
+jobs:
+  # Reuses the same checks as ci.yml (separate workflow run, so jobs can't be
+  # shared directly) - fast gate before pushing images, e2e stays CI-only.
+  client-build:
+    name: Client Build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: client
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: client/package-lock.json
+      - run: npm ci
+      - run: npm run build
+
+  server-smoke:
+    name: Server Smoke Test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: server
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: realmwar
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:ci@localhost:5432/realmwar
+      JWT_SECRET: ci_secret
+      ADMIN_SECRET: ci_admin
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+      - run: npm ci
+      - name: Apply schema
+        run: PGPASSWORD=ci psql -h localhost -U postgres -d realmwar -f schema.sql
+      - name: Boot server and smoke-test the API
+        run: |
+          node index.js &
+          SERVER_PID=$!
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:3001/api/health > /dev/null && break
+            sleep 1
+          done
+          curl -sf http://localhost:3001/api/health
+          kill $SERVER_PID
+
+  build-backend:
+    name: Build Backend Image
+    needs: [client-build, server-smoke]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push backend image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./server
+          file: ./server/Dockerfile
+          push: true
+          provenance: false
+          tags: ${{ env.IMAGE_PREFIX }}/backend:latest
+
+  build-frontend:
+    name: Build Frontend Image
+    needs: [client-build, server-smoke]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push frontend image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./client
+          file: ./client/Dockerfile
+          push: true
+          provenance: false
+          tags: ${{ env.IMAGE_PREFIX }}/frontend:latest
+          build-args: |
+            VITE_API_URL=${{ env.SITE_URL }}
+            VITE_SOCKET_URL=${{ env.SITE_URL }}
+            VITE_PUBLIC_URL=${{ env.SITE_URL }}
+            VITE_CONTACT_EMAIL=privacy@hexnation.app
+
+  # Deletes untagged image versions after each push (the old "latest" left
+  # dangling by the retag above) - unbounded growth here blew past the
+  # account-wide 500MB GHCR free tier once already.
+  cleanup-old-images:
+    name: Prune Untagged GHCR Versions
+    needs: [build-backend, build-frontend]
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+    strategy:
+      matrix:
+        package: [backend, frontend]
+    steps:
+      - name: Delete untagged versions of realm-war/${{ matrix.package }}
+        uses: actions/delete-package-versions@v5
+        with:
+          package-name: 'realm-war/${{ matrix.package }}'
+          package-type: 'container'
+          min-versions-to-keep: 0
+          delete-only-untagged-versions: 'true'
