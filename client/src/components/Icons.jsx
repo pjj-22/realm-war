@@ -404,6 +404,25 @@ export function GearIcon({ size = 14, color = '#c9b99a' }) {
   )
 }
 
+export function SunIcon({ size = 14, color = '#e0b84a' }) {
+  return (
+    <Svg size={size}>
+      <circle cx="8" cy="8" r="3.2" fill={color} />
+      <g stroke={color} strokeWidth="1.4" strokeLinecap="round">
+        <path d="M8 1.4v1.8M8 12.8v1.8M1.4 8h1.8M12.8 8h1.8M3.4 3.4l1.3 1.3M11.3 11.3l1.3 1.3M12.6 3.4l-1.3 1.3M4.7 11.3l-1.3 1.3" />
+      </g>
+    </Svg>
+  )
+}
+
+export function MoonIcon({ size = 14, color = '#8a9ad4' }) {
+  return (
+    <Svg size={size}>
+      <path d="M10.8 2.2a6 6 0 1 0 3 9.4 5 5 0 0 1-3-9.4z" fill={color} stroke={color} strokeWidth="0.6" strokeLinejoin="round" />
+    </Svg>
+  )
+}
+
 // Dice - replaces the game-die emoji (renders as color emoji on some platforms)
 export function DiceIcon({ size = 14, color = '#c090f0' }) {
   return (

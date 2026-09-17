@@ -17,9 +17,10 @@ import SeasonPanel, { SeasonChip, SeasonEndOverlay } from './SeasonPanel'
 import { useResourceTicker } from '../hooks/useResourceTicker'
 import { useIsMobile } from '../hooks/useIsMobile'
 import { api } from '../api/client'
-import { GoldIcon, SearchIcon, AllianceIcon, SwordsIcon, WarningIcon, KeepIcon } from './Icons'
+import { GoldIcon, SearchIcon, AllianceIcon, SwordsIcon, WarningIcon, KeepIcon, SunIcon, MoonIcon } from './Icons'
+import Tooltip from './Tooltip'
 import { resolveFlag, flagImageId, flagToImageData } from '../flags'
-import { isDark } from '../daylight'
+import { isDark, isDarkAtLng } from '../daylight'
 import { playSound } from '../sound.js'
 import { theme } from '../theme'
 
@@ -579,6 +580,13 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
   const overviewSummaryRef = useRef({}) // parent-cell -> {color}, for the low-zoom overview layer
   const [selectedHex, setSelectedHex] = useState(null)
   const [zoom, setZoom] = useState(3)
+  // Whether the current viewport's center is in nighttime - a zoom-
+  // independent, always-visible indicator (topbar) for the day/night
+  // mechanic, since per-hex tinting alone is illegible at both ends of the
+  // zoom range: too far out and those hexes aren't even rendered (overview
+  // mode), too far in and every visible hex is almost always the same side
+  // of the terminator anyway, so there's nothing to contrast against.
+  const [centerDark, setCenterDark] = useState(false)
   const [marchMode, setMarchMode] = useState(null) // { fromHex, type, quantity }
   const [rallyMode, setRallyMode] = useState(null) // fromHex string or null
   const [armies, setArmies] = useState([])
@@ -1676,8 +1684,10 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
       clearTimeout(regionDebounceRef.current)
       regionDebounceRef.current = setTimeout(updateWatchedRegions, 800)
     }
-    map.current.on('moveend', () => { updateHexes(); updateOverview(); checkViewport(); loadViewportHexes(); loadOverviewSummary(); debouncedRegionUpdate() })
-    map.current.on('zoomend', () => { updateHexes(); updateOverview(); checkViewport(); loadViewportHexes(); loadOverviewSummary(); debouncedRegionUpdate() })
+    const updateCenterDark = () => setCenterDark(isDarkAtLng(map.current.getCenter().lng))
+    map.current.on('moveend', () => { updateHexes(); updateOverview(); checkViewport(); loadViewportHexes(); loadOverviewSummary(); debouncedRegionUpdate(); updateCenterDark() })
+    map.current.on('zoomend', () => { updateHexes(); updateOverview(); checkViewport(); loadViewportHexes(); loadOverviewSummary(); debouncedRegionUpdate(); updateCenterDark() })
+    updateCenterDark()
     map.current.on('zoom', () => {
       const z = map.current.getZoom()
       setZoom(z)
@@ -1828,6 +1838,16 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
     // All of these are useCallback-memoized on refs/[] only, so they're stable
     // across renders - listing them here doesn't cause the map to reinitialize.
   }, [checkViewport, enrichHex, loadClaimed, loadLandmarks, loadOverviewSummary, loadStrategic, loadViewportHexes, loadZones, updateClaimed, updateHexes, updateOverview, updateWatchedRegions])
+
+  // Keeps the topbar day/night indicator correct even if the map sits still
+  // for a while (moveend/zoomend alone would leave it stale across a real
+  // dawn/dusk while nobody's panning) - cheap enough for a minute-scale poll.
+  useEffect(() => {
+    const id = setInterval(() => {
+      if (map.current) setCenterDark(isDarkAtLng(map.current.getCenter().lng))
+    }, 60000)
+    return () => clearInterval(id)
+  }, [])
 
   useEffect(() => {
     if (!map.current) return
@@ -2227,6 +2247,19 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
             HexNation
           </span>
         )}
+
+        {/* Day/night at the current viewport center - zoom-independent, since
+            per-hex tinting alone is illegible both zoomed all the way out
+            (those hexes aren't even rendered) and zoomed in (everything
+            visible is almost always the same side of the terminator). */}
+        <Tooltip text={centerDark ? "It's currently night where you're looking - dark hexes hide troop counts" : "It's currently day where you're looking"}>
+          <span style={{ display: 'flex', alignItems: 'center', gap: 5, marginRight: 16, userSelect: 'none' }}>
+            {centerDark ? <MoonIcon size={14} /> : <SunIcon size={14} />}
+            {!isMobile && (
+              <span style={{ fontSize: 12, color: theme.text.secondary }}>{centerDark ? 'Night here' : 'Day here'}</span>
+            )}
+          </span>
+        </Tooltip>
 
         {/* Search */}
         {searchOpen ? (
