@@ -2,12 +2,12 @@ import { useState, useRef, useEffect } from 'react'
 import { api } from '../api/client.js'
 import { useSocket } from '../hooks/useSocket'
 import { getPushStatus, enablePush, disablePush } from '../push.js'
-import { playForEventType, soundMuted, setSoundMuted, musicEnabled, setMusicEnabled } from '../sound.js'
+import { playForEventType, soundMuted, setSoundMuted } from '../sound.js'
 import { stripEmoji } from '../text.js'
 import {
   TrophyIcon, SkullIcon, CheckIcon, FallenCrownIcon, BowIcon, FlameIcon,
   CrownIcon, GoldIcon, LeafIcon, BannerIcon, BellIcon, BellOffIcon,
-  SpeakerIcon, SpeakerOffIcon, MusicIcon, MusicOffIcon, ScrollIcon, SwordsIcon,
+  SpeakerIcon, SpeakerOffIcon, ScrollIcon, SwordsIcon,
   PlagueIcon, MeteorIcon, FamineIcon, RevoltIcon, TentIcon,
 } from './Icons'
 import { toast } from '../toastBus'
@@ -102,22 +102,6 @@ function SoundToggle() {
         cursor: 'pointer', fontSize: 11, padding: '2px 8px', fontFamily: 'Georgia, serif',
       }}>
       {muted ? <SpeakerOffIcon size={13} /> : <SpeakerIcon size={13} color="#c9a040" />}
-    </button>
-  )
-}
-
-function MusicToggle() {
-  const [on, setOn] = useState(musicEnabled())
-  return (
-    <button
-      onClick={() => { setMusicEnabled(!on); setOn(!on) }}
-      title={on ? 'Turn off background music' : 'Turn on background music'}
-      style={{
-        background: 'none', border: '1px solid rgba(255,255,255,0.12)',
-        borderRadius: 4, color: on ? '#c9a040' : theme.text.secondary,
-        cursor: 'pointer', fontSize: 11, padding: '2px 8px', fontFamily: 'Georgia, serif',
-      }}>
-      {on ? <MusicIcon size={13} color="#c9a040" /> : <MusicOffIcon size={13} />}
     </button>
   )
 }
@@ -314,7 +298,6 @@ export default function EventFeed() {
             <span>Dispatches</span>
             <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
               <SoundToggle />
-              <MusicToggle />
               <PushToggle />
               <button onClick={() => setOpen(false)} style={{
                 background: 'none', border: 'none', color: theme.text.secondary,
