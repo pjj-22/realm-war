@@ -2256,7 +2256,7 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
           <span style={{ display: 'flex', alignItems: 'center', gap: 5, marginRight: 16, userSelect: 'none' }}>
             {centerDark ? <MoonIcon size={14} /> : <SunIcon size={14} />}
             {!isMobile && (
-              <span style={{ fontSize: 12, color: theme.text.secondary }}>{centerDark ? 'Night here' : 'Day here'}</span>
+              <span style={{ fontSize: 12, color: theme.text.secondary }}>{centerDark ? 'Night' : 'Day'}</span>
             )}
           </span>
         </Tooltip>
