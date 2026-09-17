@@ -1,21 +1,38 @@
 import { Router } from 'express'
 import { pool, withTransaction, httpError } from '../db.js'
-import { requireAuth } from '../auth.js'
-import { BUILDING_COSTS, UPGRADE_COST, UPGRADE_MINUTES, MAX_UPGRADE_LEVEL, BUILDING_TIME_SECONDS, TICK_INTERVAL_MS } from '../config.js'
+import { requireAuth, optionalAuth } from '../auth.js'
+import { BUILDING_COSTS, UPGRADE_COST, UPGRADE_MINUTES, MAX_UPGRADE_LEVEL, BUILDING_TIME_SECONDS, TICK_INTERVAL_MS, PROJECTION_GARRISON, PROJECTION_EMPIRE } from '../config.js'
+import { buildVisibleSet, canSeeDetail } from '../visibility.js'
 
 const router = Router()
 const VALID_TYPES = Object.keys(BUILDING_COSTS)
 const MAX_BUILDINGS_PER_HEX = 1
 
-router.get('/:h3Index', async (req, res) => {
+// Same visibility rule as a hex's building_types in /api/hexes (server/
+// visibility.js): the client already skips this call for fogged hexes, but
+// that's courtesy, not enforcement - without this, a direct request returned
+// any hex's buildings and upgrade level regardless of fog or darkness.
+router.get('/:h3Index', optionalAuth, async (req, res) => {
   try {
     const { h3Index } = req.params
-    const [buildings, hexRow, upgradeRow] = await Promise.all([
+    const viewerId = req.player?.id ?? null
+    const [buildings, hexRow, upgradeRow, garrison, visibleSet] = await Promise.all([
       pool.query('SELECT * FROM buildings WHERE h3_index=$1 ORDER BY created_at ASC', [h3Index]),
-      pool.query('SELECT h.upgrade_level, p.capital_hex FROM hexes h JOIN players p ON p.id=h.owner_id WHERE h.h3_index=$1', [h3Index]),
+      pool.query(`
+        SELECT h.upgrade_level, h.owner_id, p.capital_hex,
+          (SELECT COALESCE(SUM(quantity), 0)::float8 FROM troops WHERE owner_id = h.owner_id) AS owner_power
+        FROM hexes h JOIN players p ON p.id=h.owner_id WHERE h.h3_index=$1`, [h3Index]),
       pool.query('SELECT * FROM upgrade_queue WHERE h3_index=$1', [h3Index]),
+      pool.query('SELECT COALESCE(SUM(quantity), 0)::float8 AS n FROM troops WHERE h3_index=$1', [h3Index]),
+      buildVisibleSet(viewerId, 1),
     ])
-    const hex = hexRow.rows[0] || { upgrade_level: 0, capital_hex: null }
+    const hex = hexRow.rows[0] || { upgrade_level: 0, capital_hex: null, owner_id: null, owner_power: 0 }
+    if (hex.owner_id != null) {
+      const projected = garrison.rows[0].n >= PROJECTION_GARRISON || hex.owner_power >= PROJECTION_EMPIRE
+      if (!canSeeDetail(h3Index, visibleSet, projected, new Date(), hex.owner_id === viewerId)) {
+        return res.status(403).json({ error: 'Hex not visible' })
+      }
+    }
     const enriched = buildings.rows.map(b => ({
       ...b,
       is_complete: !b.created_at || (Date.now() - new Date(b.created_at).getTime() >= BUILDING_TIME_SECONDS * 1000),

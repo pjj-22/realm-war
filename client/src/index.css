@@ -16,9 +16,23 @@ input[type=number] {
 
 body {
   overflow: hidden;
+  /* The map owns every vertical drag - without this, dragging past the
+     edge on a phone triggers Chrome's pull-to-refresh / iOS rubber-band
+     instead of panning. */
+  overscroll-behavior: none;
   background: #0a0a1a;
   font-family: 'Georgia', serif;
   color: #c9b99a;
+}
+
+/* iOS Safari zooms the whole page when a focused input's font is under
+   16px. Every input in the app sets an inline 12-14px size for the desktop
+   look, so this is the one place that can win over those inline styles -
+   phones only, desktop keeps the compact type. */
+@media (max-width: 767px) {
+  input, textarea, select {
+    font-size: 16px !important;
+  }
 }
 
 #root {

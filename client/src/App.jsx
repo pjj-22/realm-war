@@ -1,11 +1,14 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, lazy, Suspense } from 'react'
 import GameMap from './components/GameMap'
 import AuthModal from './components/AuthModal'
 import HelpModal from './components/HelpModal'
 import AccountModal from './components/AccountModal'
 import FTUEGuide from './components/FTUEGuide'
 import FlagOnboardingModal from './components/FlagOnboardingModal'
-import AdminPortal from './components/AdminPortal'
+// Only ever rendered at #admin, so it's split out of the main bundle -
+// ~1100 lines of dashboard code every normal player was downloading and
+// parsing for nothing.
+const AdminPortal = lazy(() => import('./components/AdminPortal'))
 import { ToastContainer } from './components/Toast'
 import { toast } from './toastBus'
 import { api } from './api/client'
@@ -41,7 +44,7 @@ export default function App() {
       .finally(() => setChecking(false))
   }, [])
 
-  if (window.location.hash === '#admin') return <AdminPortal />
+  if (window.location.hash === '#admin') return <Suspense fallback={null}><AdminPortal /></Suspense>
   if (checking) return null
 
   function handleAuth(p, isNew = false, loginBonus = null) {

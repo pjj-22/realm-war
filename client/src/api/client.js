@@ -30,7 +30,6 @@ export const api = {
   getStats: () => request('GET', '/players/stats'),
   claimHex: (h3Index) => request('POST', '/hexes/claim', { h3Index }),
   setCapital: (h3Index) => request('POST', '/hexes/set-capital', { h3Index }),
-  getHexes: () => request('GET', '/hexes'),
   getHexesViewport: (h3Indexes) => request('POST', '/hexes/viewport', { h3Indexes }),
   getMyHexes: () => request('GET', '/hexes/mine'),
   getHexOverview: (res) => request('GET', `/hexes/overview?res=${res}`),

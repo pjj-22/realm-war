@@ -18,13 +18,13 @@ const router = Router()
 // Shared by every "give me full claim data for these hexes" route below -
 // same base query, just a different WHERE. whereClause must reference $1
 // (and may reference further placeholders via extraParams).
-// By default this redacts troop_count/building_types for any hex the caller
-// can't actually see (server/visibility.js) - a missing viewerId (a guest,
-// see AuthModal.jsx "Browse as guest") gets an empty visible set, not a
-// skipped check, so the response itself carries no real data to hide
-// client-side, not just a cosmetic '-1'. skipRedaction is only for the
-// admin/debug full-world dump below, which intentionally wants real data.
-async function queryEnrichedHexes(whereClause, params, { viewerId = null, skipRedaction = false } = {}) {
+// Always redacts troop_count/building_types for any hex the caller can't
+// actually see (server/visibility.js) - a missing viewerId (a guest, see
+// AuthModal.jsx "Browse as guest") gets an empty visible set, not a skipped
+// check, so the response itself carries no real data to hide client-side,
+// not just a cosmetic '-1'. There is deliberately no bypass: the admin
+// portal has its own requireAdmin-gated dump at /api/admin/hexes/all.
+async function queryEnrichedHexes(whereClause, params, { viewerId = null } = {}) {
   const result = await pool.query(`
     WITH power AS (SELECT owner_id, SUM(quantity)::float8 AS total FROM troops GROUP BY owner_id)
     SELECT h.h3_index, h.owner_id, h.upgrade_level, h.rally_hex, h.claimed_at, p.color, p.username, p.capital_hex, p.flag_pixels, p.motto,
@@ -39,14 +39,14 @@ async function queryEnrichedHexes(whereClause, params, { viewerId = null, skipRe
     WHERE ${whereClause}
     GROUP BY h.h3_index, h.owner_id, h.upgrade_level, h.rally_hex, p.color, p.username, p.capital_hex, p.flag_pixels, p.motto
   `, params)
-  const visibleSet = skipRedaction ? null : await buildVisibleSet(viewerId, 1)
+  const visibleSet = await buildVisibleSet(viewerId, 1)
   return result.rows.map(h => {
     const info = getCountry(h.h3_index)
     const strategic = STRATEGIC_HEXES.get(h.h3_index)
     // Power projection: huge garrisons (or huge empires) can't hide in fog
     const projected = h.troop_count >= PROJECTION_GARRISON || h.owner_power >= PROJECTION_EMPIRE
     const { owner_power, ...rest } = h
-    if (visibleSet && !canSeeDetail(h.h3_index, visibleSet, projected, new Date(), h.owner_id === viewerId)) {
+    if (!canSeeDetail(h.h3_index, visibleSet, projected, new Date(), h.owner_id === viewerId)) {
       rest.troop_count = null
       rest.building_types = null
     }
@@ -61,19 +61,6 @@ async function queryEnrichedHexes(whereClause, params, { viewerId = null, skipRe
     }
   })
 }
-
-// Full-world dump - kept for admin/debug use, but the client no longer calls
-// this for normal play (see /viewport and /mine below): with hexes numerous
-// this payload runs into the megabytes and only grows over a season, and
-// most of it is irrelevant to any one player at any one time.
-router.get('/', async (req, res) => {
-  try {
-    res.json(await queryEnrichedHexes('TRUE', [], { skipRedaction: true }))
-  } catch (err) {
-    console.error('[hexes] GET / failed:', err.message)
-    res.status(500).json({ error: 'Server error' })
-  }
-})
 
 // Claim data for a specific set of hexes - the client sends exactly the
 // cells its own viewport/overview math already computed, so the response is
