@@ -300,7 +300,7 @@ function hexToGeoJSONFeature(cell, claimed, visibleSet) {
       owner: claimed?.owner_id || null,
       color: claimed?.color || null,
       username: claimed?.username || null,
-      troop_count: hidden ? -1 : claimed.troop_count,
+      troop_count: hidden ? -1 : (claimed?.troop_count ?? 0),
       upgrade_level: claimed?.upgrade_level || 0,
       country_name: claimed?.country_name || null,
       country_continent: claimed?.country_continent || null,
