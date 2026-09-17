@@ -3,7 +3,7 @@ import bcrypt from 'bcryptjs'
 import { pool, withTransaction } from '../db.js'
 import { signToken, requireAuth } from '../auth.js'
 import { rateLimit } from '../ratelimit.js'
-import { getIO } from '../socket.js'
+import { getIO, emitToRegion } from '../socket.js'
 import { IS_DEV } from '../config.js'
 import { STARTING_GOLD, STARTING_MANA, TICK_INTERVAL_MS, BUILDING_TIME_SECONDS, GOLD_CAP_BASE, GOLD_CAP_PER_HEX, GOLD_CAP_PER_MINE, WONDER_INCOME_GOLD } from '../config.js'
 import { nextTickAt } from '../tick.js'
@@ -244,7 +244,8 @@ router.post('/flag', requireAuth, async (req, res) => {
     return res.status(400).json({ error: 'Motto not allowed' })
   }
   try {
-    await pool.query('UPDATE players SET flag_pixels = $1, motto = $2 WHERE id = $3', [flagPixels, cleanMotto || null, req.player.id])
+    const { rows } = await pool.query('UPDATE players SET flag_pixels = $1, motto = $2 WHERE id = $3 RETURNING capital_hex', [flagPixels, cleanMotto || null, req.player.id])
+    if (rows[0]?.capital_hex) emitToRegion(rows[0].capital_hex, 'hexes:update')
     res.json({ ok: true })
   } catch (err) {
     console.error('[players] POST /flag failed:', err.message)
