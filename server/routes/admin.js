@@ -24,14 +24,24 @@ function secretsMatch(given, secret) {
   return a.length === b.length ? timingSafeEqual(a, b) : (timingSafeEqual(a, a), false)
 }
 
+// Brute-force guard on the secret: only *failed* checks count against it.
+// Requests carrying the right secret used to share a 300/min bucket with
+// wrong guesses, and the portal alone polls ten endpoints every 5s - add a
+// World Map load or a second tab and it locked itself out in normal use.
+const failedSecretLimit = rateLimit({ windowMs: 15 * 60 * 1000, max: IS_DEV ? 1000 : 20, message: 'Too many failed admin attempts - try later' })
+
 function requireAdmin(req, res, next) {
   const secret = process.env.ADMIN_SECRET
   if (!secret) return res.status(503).json({ error: 'Admin not configured (set ADMIN_SECRET)' })
-  if (!secretsMatch(req.headers['x-admin-secret'], secret)) return res.status(403).json({ error: 'Forbidden' })
+  if (!secretsMatch(req.headers['x-admin-secret'], secret)) {
+    return failedSecretLimit(req, res, () => res.status(403).json({ error: 'Forbidden' }))
+  }
   next()
 }
 
-router.use(rateLimit({ windowMs: 60 * 1000, max: IS_DEV ? 1000 : 300, message: 'Too many admin requests' }))
+// Ceiling on total admin traffic per client, well above the portal's own
+// ~150/min - a runaway tab, not a human, is what this catches.
+router.use(rateLimit({ windowMs: 60 * 1000, max: IS_DEV ? 5000 : 1200, message: 'Too many admin requests' }))
 router.use(requireAdmin)
 
 // Static world outline for the admin world-map view - land-110m (56KB) is

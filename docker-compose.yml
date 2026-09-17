@@ -47,6 +47,7 @@ services:
       MODE: ${MODE:-prod}
       CLIENT_ORIGIN: ${CLIENT_ORIGIN:-https://hexnation.app}
       TRUST_PROXY: ${TRUST_PROXY:-1}
+      CLIENT_IP_HEADER: ${CLIENT_IP_HEADER:-cf-connecting-ip}
       CHAT_ENABLED: ${CHAT_ENABLED:-}
       NOTIFICATIONS_ENABLED: ${NOTIFICATIONS_ENABLED:-}
       VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}

@@ -10,11 +10,23 @@ setInterval(() => {
   }
 }, 10 * 60 * 1000).unref()
 
+// The client address a bucket is keyed on. CLIENT_IP_HEADER names a header
+// the proxy in front of us sets from the true client - behind Cloudflare
+// that's cf-connecting-ip, which the edge overwrites on every request, so
+// it can't be spoofed from outside. Unset, this is req.ip (which honours
+// Express "trust proxy"). Never key on raw x-forwarded-for: clients can
+// prepend to it and mint themselves fresh buckets, and with cloudflared +
+// nginx both in the chain, hop-counting `trust proxy` is fragile - one hop
+// short and every player shares a single bucket.
+export function clientIp(req) {
+  const header = process.env.CLIENT_IP_HEADER?.toLowerCase()
+  const fromHeader = header && req.headers?.[header]
+  return fromHeader || req.ip || req.socket?.remoteAddress || 'unknown'
+}
+
 export function rateLimit({ windowMs, max, key, message = 'Slow down - too many requests' }) {
   return (req, res, next) => {
-    // req.ip respects Express "trust proxy" - never key on raw x-forwarded-for,
-    // which clients can spoof to mint themselves fresh buckets
-    const k = key ? key(req) : (req.ip || req.socket.remoteAddress || 'unknown')
+    const k = key ? key(req) : clientIp(req)
     const now = Date.now()
     let bucket = buckets.get(k)
     if (!bucket || now > bucket.reset) {
