@@ -1874,7 +1874,7 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
     if (activeBattles.length === 0) return
     let t = 0
     const pulse = setInterval(() => {
-      if (!map.current?.getLayer('battle-hex-fill')) return
+      if (!map.current?.getLayer('battle-hex-fill') || map.current.isMoving()) return
       t += 0.15
       const wave = 0.5 + 0.5 * Math.sin(t)
       try {
@@ -1948,6 +1948,15 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
 
     function updateArmyPositions() {
       if (!map.current?.getSource('armies')) return
+      // Skip while the map is actively zooming/panning/rotating - MapLibre
+      // reloads tiles continuously during a gesture, and calling setData
+      // from this independent 150ms timer while that's happening can race
+      // MapLibre's own render loop ("Attempting to run(), but is already
+      // running", an uncaught internal error since it's thrown from the
+      // library's own rAF callback, not synchronously from this call, so a
+      // try/catch here wouldn't have caught it anyway). Just resumes on the
+      // next tick once the gesture ends - nothing needs to be flushed.
+      if (map.current.isMoving()) return
       const currentPlayer = playerRef.current
       const currentClaimed = claimedRef.current
       const activeIds = new Set()
@@ -2038,7 +2047,7 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
     // Pulse the destination ring opacity
     let pulseT = 0
     const pulseInterval = setInterval(() => {
-      if (!map.current?.getLayer('march-dest-ring')) return
+      if (!map.current?.getLayer('march-dest-ring') || map.current.isMoving()) return
       pulseT += 0.12
       const opacity = 0.2 + 0.35 * (0.5 + 0.5 * Math.sin(pulseT))
       try { map.current.setPaintProperty('march-dest-ring', 'circle-stroke-opacity', opacity) } catch { /* layer mid-update */ }
