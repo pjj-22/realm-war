@@ -493,7 +493,7 @@ export default function AdminPortal() {
     return (
       <div style={{ position: 'fixed', inset: 0, background: '#0a0818', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'Georgia, serif', color: '#c9b99a' }}>
         <div style={{ ...CARD_STYLE, width: 320, textAlign: 'center' }}>
-          <div style={{ fontSize: 20, marginBottom: 4, letterSpacing: 2 }}>REALM WAR</div>
+          <div style={{ fontSize: 20, marginBottom: 4, letterSpacing: 2 }}>HexNation</div>
           <div style={{ fontSize: 12, color: '#8a7a9a', letterSpacing: 3, marginBottom: 24 }}>ADMIN</div>
           <input
             type="password"
@@ -525,7 +525,7 @@ export default function AdminPortal() {
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20, flexWrap: 'wrap', gap: 10 }}>
         <div>
-          <span style={{ fontSize: 22, letterSpacing: 2 }}>REALM WAR</span>
+          <span style={{ fontSize: 22, letterSpacing: 2 }}>HexNation</span>
           <span style={{ fontSize: 12, color: '#8a7a9a', letterSpacing: 3, marginLeft: 12 }}>ADMIN PORTAL</span>
           {system && (
             <span style={{ fontSize: 11, marginLeft: 14, color: system.dev_mode ? '#d4a843' : '#6a9a6a', border: `1px solid ${system.dev_mode ? '#6a5320' : '#2a4a2a'}`, borderRadius: 4, padding: '2px 8px', letterSpacing: 1 }}>
