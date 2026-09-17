@@ -6,6 +6,7 @@ import { useIsMobile } from '../hooks/useIsMobile'
 import { useSocket } from '../hooks/useSocket'
 import { toast } from '../toastBus'
 import { resolveFlag, drawFlagToCanvas } from '../flags'
+import { daylightHoursLocal } from '../daylight'
 import { shortHex } from '../text'
 import Tooltip from './Tooltip'
 import { theme } from '../theme'
@@ -606,6 +607,10 @@ export default function BottomDrawer({ hex, player, stats, pendingClaims, onClai
               </div>
             </div>
           )}
+
+          <div style={{ fontSize: 12, color: '#7a6040', marginBottom: 10 }}>
+            ☼ Daylight here: {daylightHoursLocal(hex.h3)} (your time)
+          </div>
 
           <div style={{ display: 'flex', gap: 10 }}>
             <Tooltip text={incomeTooltip} style={{ flex: 1 }}>

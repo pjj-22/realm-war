@@ -287,6 +287,12 @@ function hexToGeoJSONFeature(cell, claimed, visibleSet) {
   // fog = claimed enemy hex outside the visible ring - unless its garrison
   // (or its owner's total host) is too massive to hide (power projection)
   const fog = !!claimed?.owner_id && !!visibleSet && !visibleSet.has(cell) && !claimed?.projected
+  // The server also nulls troop_count when an owned hex is genuinely dark
+  // right now (server/visibility.js) - a reason this client's own ring-only
+  // `fog` doesn't know about, so it's checked independently here. Guarded on
+  // owner_id so an actually-unclaimed hex (no `claimed` row at all) still
+  // reads as empty/claimable, not hidden.
+  const hidden = fog || (!!claimed?.owner_id && claimed?.troop_count == null)
   return {
     type: 'Feature',
     properties: {
@@ -294,7 +300,7 @@ function hexToGeoJSONFeature(cell, claimed, visibleSet) {
       owner: claimed?.owner_id || null,
       color: claimed?.color || null,
       username: claimed?.username || null,
-      troop_count: fog ? -1 : (claimed?.troop_count || 0),
+      troop_count: hidden ? -1 : claimed.troop_count,
       upgrade_level: claimed?.upgrade_level || 0,
       country_name: claimed?.country_name || null,
       country_continent: claimed?.country_continent || null,
@@ -346,13 +352,18 @@ function buildClaimedPoints(claimedHexes, visibleSet, playerId, requiredGarrison
   const features = Object.entries(claimedHexes).map(([cell, claimed]) => {
     const [lat, lng] = cellToLatLng(cell)
     const isVisible = !visibleSet || visibleSet.has(cell) || claimed.projected
-    const troopCount = claimed.troop_count || 0
+    // Keep null distinct from a real 0 - null means "server hid this because
+    // it's dark right now" (server/visibility.js), including for your own
+    // hexes, and treating that as 0 would both misrender troop_count and
+    // falsely trigger a decay warning below.
+    const troopCount = claimed.troop_count
 
     // Mirrors BottomDrawer's atDecayRisk exactly: own, undeveloped, border,
-    // under-garrisoned hex, once the empire is past the decay threshold.
+    // under-garrisoned hex, once the empire is past the decay threshold. Skips
+    // entirely while masked by darkness - better no warning than a wrong one.
     let decayRisk = false
     if (playerId && requiredGarrison > 0 && claimed.owner_id === playerId
-      && claimed.capital_hex !== cell && troopCount < requiredGarrison
+      && claimed.capital_hex !== cell && troopCount != null && troopCount < requiredGarrison
       && parseTypes(claimed.building_types).length === 0) {
       const neighbors = gridDisk(cell, 1).filter(n => n !== cell)
       const friendlyCount = neighbors.filter(n => claimedHexes[n]?.owner_id === playerId).length
@@ -362,7 +373,7 @@ function buildClaimedPoints(claimedHexes, visibleSet, playerId, requiredGarrison
     return {
       type: 'Feature',
       properties: {
-        troop_count: isVisible ? troopCount : -1,
+        troop_count: (isVisible && troopCount != null) ? troopCount : -1,
         decay_risk: decayRisk,
       },
       geometry: { type: 'Point', coordinates: [lng, lat] },
