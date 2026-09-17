@@ -160,6 +160,7 @@ CREATE TABLE IF NOT EXISTS alliances (
 ALTER TABLE players ADD COLUMN IF NOT EXISTS alliance_id INTEGER REFERENCES alliances(id) ON DELETE SET NULL;
 ALTER TABLE players ADD COLUMN IF NOT EXISTS flag_pixels TEXT;
 ALTER TABLE players ADD COLUMN IF NOT EXISTS motto TEXT;
+CREATE UNIQUE INDEX IF NOT EXISTS players_username_lower_idx ON players (LOWER(username));
 
 -- Chat: alliance_id NULL = global channel
 CREATE TABLE IF NOT EXISTS chat_messages (

@@ -46,8 +46,11 @@ router.post('/login', rateLimit({ windowMs: 10 * 60 * 1000, max: IS_DEV ? 1000 :
   if (!username || !password) return res.status(400).json({ error: 'Username and password required' })
 
   try {
+    // Case-insensitive (players_username_lower_idx guarantees at most one
+    // match once it exists) - LIMIT 1 is defensive insurance, not load-
+    // bearing, for the narrow window before that index exists/is rebuilt.
     const result = await pool.query(
-      'SELECT id, username, color, gold, capital_hex, flag_pixels, motto, password_hash, last_login_date, login_streak, deleted_at FROM players WHERE username = $1',
+      'SELECT id, username, color, gold, capital_hex, flag_pixels, motto, password_hash, last_login_date, login_streak, deleted_at FROM players WHERE LOWER(username) = LOWER($1) LIMIT 1',
       [username]
     )
     const player = result.rows[0]

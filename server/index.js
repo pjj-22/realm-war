@@ -217,6 +217,16 @@ async function runMigrations() {
   // the row is anonymised in place rather than hard-deleted, since battle
   // history FKs it without ON DELETE. Non-null here = login blocked.
   await pool.query('ALTER TABLE players ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ')
+  // Case-insensitive username uniqueness ("Patrick"/"patrick" are the same
+  // identity) while still storing/displaying whatever casing the player
+  // chose - the standard pattern (GitHub, Discord, etc). Wrapped, not left
+  // to throw: a pre-existing case-only collision in the data would fail
+  // this CREATE and, since runMigrations() has no caller-side try/catch,
+  // would otherwise abort boot before startTick() ever runs - the whole
+  // game engine, not just registration, going down over a duplicate
+  // username. Logs and self-heals on a later boot once resolved instead.
+  await pool.query('CREATE UNIQUE INDEX IF NOT EXISTS players_username_lower_idx ON players (LOWER(username))')
+    .catch(err => console.error('[db] players_username_lower_idx not created (likely an existing case-only username collision) - will retry next boot:', err.message))
   await pool.query(`
     CREATE TABLE IF NOT EXISTS chat_messages (
       id SERIAL PRIMARY KEY,
