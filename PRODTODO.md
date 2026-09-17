@@ -1,67 +1,30 @@
-# Production Go-Live Checklist
+# Production status
 
-Pre-launch review of the `admin-events-zones` branch. Fundamentals are solid
-(bcrypt hashing, JWT auth, rate-limited register/login, input validation, `.env`
-gitignored, atomic double-claim fix). Status below; deployment steps live in
-`server/DEPLOY.md`.
+**Live at https://hexnation.app since 2026-09-17.** Deployment, verification, and backups are documented in `server/DEPLOY.md`. This file tracks only what's still open.
 
-## 🔴 Blockers
+## Done at launch (kept for the record)
 
-- [x] **DEV_MODE fails closed in production.** `index.js` now refuses to boot under
-  `NODE_ENV=production` unless `DEV_MODE=false` is set explicitly. Still verify
-  after deploy via `/api/health` → `devMode:false`.
+- Boot guards under `MODE=prod` (real secrets, `CLIENT_ORIGIN`), CORS locked, admin routes rate-limited with timing-safe compare, `helmet`, rate limiter keyed off `req.ip` behind `TRUST_PROXY=1`
+- Privacy Policy + Terms in-app, 16+ age gate, data export (`GET /api/players/export`), account deletion (`DELETE /api/players/me`, anonymises in place), OSM/OpenFreeMap attribution
+- Fog of war enforced server-side (`server/visibility.js`) - hexes, buildings, armies, battles; no unredacted public dump
+- Case-insensitive username uniqueness (`players_username_lower_idx`)
+- Docker Compose + Cloudflare Tunnel deploy, GHCR images with automatic untagged-version pruning, `scripts/backup-db.sh`
+- Mobile: Pixel-7 e2e coverage, safe-area/`dvh` layout, 16px inputs on phones, `overscroll-behavior`
 
-- [x] **Boot-time secret checks.** Production boot asserts `JWT_SECRET` exists and
-  isn't a known placeholder, `ADMIN_SECRET` isn't a placeholder/short, and
-  `CLIENT_ORIGIN` is set. Generate real values: `openssl rand -base64 32`.
-  - [ ] *At deploy time*: actually generate and set the secrets on the droplet.
+## Open
 
-## 🟠 High
-
-- [x] **Admin routes hardened.** CORS locked to `CLIENT_ORIGIN` (Express + Socket.io),
-  admin router rate-limited (60/min in prod), secret compared with
-  `crypto.timingSafeEqual`.
-
-- [x] **Rate limiter proxy-safe.** Keys off `req.ip` (respects Express
-  `trust proxy`, set via `TRUST_PROXY=1` behind nginx) instead of spoofable
-  `x-forwarded-for`. Still per-process in-memory — fine for a single instance;
-  revisit before scaling out.
-
-## 🟡 Polish
-
-- [x] **Tick/bot log spam gated behind `DEV_MODE`.** Errors still log; boot and
-  season/bot-creation lines kept.
-
-- [x] **`helmet` added** for standard security headers.
-
-- [ ] **Schema relies on migrations.** `world_events`, `seasons`, `country_crowns`,
-  etc. exist only via `runMigrations()`, not `schema.sql`. Self-heals on boot —
-  documented in `server/DEPLOY.md` (boot once, watch for `[db] Migrations complete`).
-  Consolidating into `schema.sql` is a nice-to-have, not a launch blocker.
-
-## ⚖️ Compliance / privacy
-
-In code:
-- [x] **Privacy Policy + Terms** shown in-app (`LegalModal`), linked from the
-  login screen and the account panel.
-- [x] **Age gate.** Registration requires an explicit "16 or older + accept
-  terms" checkbox; server rejects `ageConfirmed !== true`.
-- [x] **Data export** (`GET /api/players/export`) and **account deletion**
-  (`DELETE /api/players/me`, anonymises in place + purges game presence /
-  events / chat / push) — both from the ⚙ account panel.
-- [x] **Map attribution** restored (compact) — ODbL requires the
-  OpenStreetMap/OpenFreeMap credit stay visible.
-
-Deploy-time / operational:
-- [ ] Set `VITE_CONTACT_EMAIL` to a monitored address (shown in the policy for
-  data requests + abuse reports); make sure that mailbox exists.
-- [ ] Decide on nginx access-log retention/rotation (IPs are personal data).
+### Ops
+- [ ] **Install the backup cron on the droplet** (`server/DEPLOY.md` → Backups) and set `RCLONE_REMOTE` to a DO Space for off-box copies - local dumps don't survive the droplet dying.
+- [ ] **Push notifications**: generate VAPID keys (`npx web-push generate-vapid-keys`), add to the droplet `.env`, `docker compose up -d backend`. Currently disabled; the client no longer prompts for permission when it's unconfigured.
+- [ ] Confirm the `privacy@hexnation.app` mailbox exists (it's what the Privacy Policy tells people to contact).
+- [ ] Decide nginx access-log retention (IPs are personal data). Tunnel + container logs only today.
+- [ ] Stop `planner-dev` on the shared droplet if CPU contention appears (`docker stats`), before resizing.
 - [ ] Keep chat **off** (`CHAT_ENABLED` unset) until there's a moderation/report flow.
 - [ ] Know the GDPR 72-hour breach-notification duty if EU users are affected.
 
-## 🚀 Deploy (see `server/DEPLOY.md`)
-
-- [ ] Droplet: postgres, systemd unit, nginx + certbot TLS
-- [ ] Client production build (`VITE_API_URL`/`VITE_SOCKET_URL` → prod domain)
-- [ ] Run the go-live verification checklist in DEPLOY.md
-- [ ] Daily `pg_dump` backup cron
+### Code
+- [ ] Server deps carry transitive advisories inside `express`/`socket.io` (`qs`, `path-to-regexp`, `ws`, `engine.io`) that `npm audit fix` can't clear - re-check after upstream releases.
+- [ ] Test gaps: no unit tests for `auth`, `ratelimit`, `season`, `socket`, `marchPath`, `bots`, `notify`; no client unit tests (e2e only).
+- [ ] `GameMap.jsx` is ~2,700 lines and where most recent bugs lived - split out the topbar and the army/battle overlay effects when next touched.
+- [ ] Night tint is only on the `hexes` source (zoom ≥ 8); the low-zoom `overview-hexes` layer has none. Deliberately deferred - the topbar sun/moon is the primary signal.
+- [ ] Password reset: no email is collected, so there's no recovery path today (backlog since 2026-09-09).

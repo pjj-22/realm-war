@@ -1,143 +1,81 @@
-# Deploying RealmWar
+# Deploying HexNation
 
-Single-droplet deployment: nginx (TLS + reverse proxy) → Node server (systemd) → PostgreSQL, with the client served as static files by nginx. Assumes Ubuntu 22.04+.
+How `hexnation.app` actually runs: **Docker Compose on a shared DigitalOcean droplet, reached through a Cloudflare Tunnel.** No host nginx, no systemd unit, no exposed ports. It shares the droplet with CalendarChef (`planner/`), so every host port here is distinct from planner's and bound to `127.0.0.1`.
 
-## 1. Provision
+```
+git push main ──► GitHub Actions ──► ghcr.io/pjj-22/realm-war/{backend,frontend}:latest
+                                              │  (untagged old versions auto-pruned)
+                 droplet: ./deploy.sh  ◄───────┘   docker compose pull + up
+Internet ──► Cloudflare ──► Tunnel ──► localhost:8480 frontend (nginx)
+                                          ├─ /api/, /socket.io/ ──► backend:3001
+                                          └─ postgres:5432 (host 127.0.0.1:5434)
+```
+
+| Service | Image | Host port |
+|---|---|---|
+| frontend (nginx, static build, proxies `/api` + `/socket.io`) | `ghcr.io/pjj-22/realm-war/frontend` | 127.0.0.1:8480 |
+| backend (Node) | `ghcr.io/pjj-22/realm-war/backend` | 127.0.0.1:8481 |
+| postgres 15 | `postgres:15-alpine` | 127.0.0.1:5434 |
+
+Nothing deploys to the droplet automatically - CI publishes images, `./deploy.sh` on the box pulls them.
+
+## Routine deploy
 
 ```bash
-apt update && apt install -y nginx postgresql certbot python3-certbot-nginx
-# Node 20+ via nodesource or nvm
+ssh calendarchef            # the droplet (see ~/.ssh/config)
+cd ~/realmwar && ./deploy.sh
+docker compose logs backend --tail 30   # expect "[db] Migrations complete" then "[tick] Starting"
 ```
 
-## 2. Database
+`deploy.sh` only pulls images. Run `git pull` first **only** if `docker-compose.yml`, `deploy.sh`, `scripts/`, or `server/schema.sql` changed - those aren't baked into images.
+
+## First-time setup (done 2026-09-17; here for a rebuild)
+
+1. **Deploy key** - GitHub deploy keys are one-key-per-repo, so this repo has its own:
+   ```bash
+   ssh-keygen -t ed25519 -f ~/.ssh/realmwar_deploy -C "realmwar-deploy" -N ""
+   printf 'Host github-realmwar\n    HostName github.com\n    User git\n    IdentityFile ~/.ssh/realmwar_deploy\n    IdentitiesOnly yes\n' >> ~/.ssh/config
+   cat ~/.ssh/realmwar_deploy.pub    # add as a read-only deploy key on pjj-22/realm-war
+   git clone git@github-realmwar:pjj-22/realm-war.git ~/realmwar
+   ```
+2. **Secrets** - `cd ~/realmwar && cp .env.example .env`, then fill `JWT_SECRET`, `ADMIN_SECRET`, `POSTGRES_PASSWORD`.
+   - `JWT_SECRET`/`ADMIN_SECRET`: `openssl rand -base64 32`
+   - `POSTGRES_PASSWORD`: **`openssl rand -hex 24`** - it's interpolated into a `postgresql://` URL, and a `/` or `+` from base64 breaks URL parsing (`ERR_INVALID_URL`, backend crash-loops).
+   - `MODE=prod`, `CLIENT_ORIGIN=https://hexnation.app`, `TRUST_PROXY=1` are already the defaults there.
+3. **Start** - `docker compose pull && docker compose up -d`. `server/schema.sql` seeds a fresh volume via `docker-entrypoint-initdb.d`; `runMigrations()` in `index.js` adds everything since, on every boot.
+4. **Tunnel** - add to `/etc/cloudflared/config.yml` **above** the `- service: http_status:404` catch-all (rules are ordered; anything after the catch-all never matches):
+   ```yaml
+   - hostname: hexnation.app
+     service: http://localhost:8480
+   ```
+   then `systemctl restart cloudflared`. Cloudflare terminates TLS; `.app` is HSTS-preloaded so HTTPS is mandatory anyway.
+5. **DNS** - Cloudflare zone `hexnation.app`: `CNAME @ → <tunnel-id>.cfargotunnel.com`, proxied.
+6. **Firewall** - `ufw` already allows only SSH; the tunnel is outbound-only, so nothing else opens.
+
+## Go-live verification
 
 ```bash
-sudo -u postgres createuser realmwar -P        # pick a strong password
-sudo -u postgres createdb realmwar -O realmwar
-psql -U realmwar -d realmwar -f server/schema.sql
+curl -s https://hexnation.app/api/health         # "mode":"prod","devMode":false,"tick_interval_ms":600000
+curl -s -o /dev/null -w "%{http_code}\n" -H "x-admin-secret: wrong" https://hexnation.app/api/admin/stats   # 403
+curl -si -H "Origin: https://evil.example" https://hexnation.app/api/health | grep -i access-control   # nothing echoed
 ```
+Register a test account: 100 gold / 20 troops (not 9999/50 = dev sandbox).
 
-`schema.sql` is the base schema; the server's `runMigrations()` adds the rest
-(`world_events`, `seasons`, `alliances`, `hex_history`, ...) on first boot. Boot the
-server once and check for `[db] Migrations complete` before pointing traffic at it.
+## Backups
 
-## 3. Server environment
-
-`/opt/realmwar/server/.env`:
+`scripts/backup-db.sh` dumps the compose postgres, gzips, keeps 14 days locally, and copies off-box if `RCLONE_REMOTE` is set. Install the nightly job once:
 
 ```bash
-MODE=prod                       # required - boot refuses prod with dev/test balance
-DATABASE_URL=postgresql://realmwar:<password>@localhost:5432/realmwar
-JWT_SECRET=<openssl rand -base64 32>
-ADMIN_SECRET=<openssl rand -base64 32>
-CLIENT_ORIGIN=https://yourdomain.com
-TRUST_PROXY=1                   # nginx is one hop in front
-PORT=3001
-# Web push (optional but recommended - it's the retention hook)
-VAPID_PUBLIC_KEY=...            # npx web-push generate-vapid-keys
-VAPID_PRIVATE_KEY=...
-VAPID_SUBJECT=mailto:you@yourdomain.com
+crontab -e
+15 3 * * * cd /root/realmwar && ./scripts/backup-db.sh >> /var/log/hexnation-backup.log 2>&1
 ```
-
-The server **refuses to start** under `MODE=prod` if `JWT_SECRET`/`ADMIN_SECRET`
-are placeholders, or if `CLIENT_ORIGIN` is unset. That's intentional: fix the
-env, don't bypass the check. `MODE` also controls pacing directly - `dev` (fast,
-generous economy), `test` (half dev speed, for rapid manual testing without the economy running away between sessions), or `prod`
-(real pacing); defaults to `dev` if unset or unrecognized.
-
-## 4. systemd unit
-
-`/etc/systemd/system/realmwar.service`:
-
-```ini
-[Unit]
-Description=RealmWar game server
-After=network.target postgresql.service
-
-[Service]
-Type=simple
-User=realmwar
-WorkingDirectory=/opt/realmwar/server
-ExecStart=/usr/bin/node index.js
-Restart=always
-RestartSec=5
-Environment=MODE=prod
-
-[Install]
-WantedBy=multi-user.target
-```
-
-```bash
-systemctl enable --now realmwar
-journalctl -u realmwar -f      # watch boot: migrations, tick start
-```
-
-## 5. Client build
-
-```bash
-cd client
-cat > .env.production <<EOF
-VITE_API_URL=https://yourdomain.com
-VITE_SOCKET_URL=https://yourdomain.com
-VITE_PUBLIC_URL=https://yourdomain.com
-VITE_CONTACT_EMAIL=privacy@yourdomain.com   # shown in the in-app Privacy Policy / Terms
-EOF
-npm ci && npm run build         # → dist/
-cp -r dist/* /var/www/realmwar/
-```
-
-## 6. nginx
-
-```nginx
-server {
-    server_name yourdomain.com;
-
-    root /var/www/realmwar;
-    index index.html;
-
-    location / {
-        try_files $uri /index.html;      # SPA fallback
-    }
-
-    location /api/ {
-        proxy_pass http://127.0.0.1:3001;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header Host $host;
-    }
-
-    location /socket.io/ {
-        proxy_pass http://127.0.0.1:3001;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    }
-}
-```
-
-```bash
-certbot --nginx -d yourdomain.com   # TLS; push notifications require HTTPS
-```
-
-## 7. Go-live verification
-
-```bash
-curl -s https://yourdomain.com/api/health
-# → {"ok":true,"devMode":false,"tick_interval_ms":600000,...}
-```
-
-- [ ] `devMode: false` and `tick_interval_ms: 600000` in `/api/health`
-- [ ] Register a test account: starts with 100 gold / 20 troops (not 9999/50)
-- [ ] Admin portal (`https://yourdomain.com/#admin`) rejects a wrong secret
-- [ ] `curl -H "Origin: https://evil.example" -i .../api/health` has no `Access-Control-Allow-Origin` echo
-- [ ] Push opt-in works from the dispatches panel (needs HTTPS + VAPID keys)
-- [ ] `journalctl -u realmwar` is quiet between ticks (no per-battle spam)
+Local-only dumps survive a bad migration or wiped volume, **not a dead droplet** - configure `rclone` to a DO Space (or any S3) and set `RCLONE_REMOTE` for real disaster recovery. Restore: `gunzip -c <file> | docker compose exec -T postgres psql -U realmwar realmwar`.
 
 ## Operations notes
 
-- **Backups**: `pg_dump realmwar` on a daily cron; the world is one database.
-- **Rate limits** are per-process and in-memory: fine for one instance, revisit
-  before scaling horizontally (the tick engine also assumes a single process).
-- **Season length** is 90 days in prod (`SEASON_DURATION_MS`); ending a season
-  early is `POST /api/admin/season/end` with the admin secret.
-- **Bots**: 6 bots + Wildlands camps self-seed on first tick; `POST /api/admin/bots/reset` re-seeds.
+- **Push notifications** need `VAPID_PUBLIC_KEY`/`VAPID_PRIVATE_KEY`/`VAPID_SUBJECT` in `.env` (`npx web-push generate-vapid-keys`), then `docker compose up -d backend`. Unset = push silently disabled; the client detects this and won't prompt for permission.
+- **Rate limits are per-process/in-memory**, and `tick.js` assumes a single backend process - don't scale `backend` horizontally without reworking both.
+- **Shared CPU**: the droplet is 1 vCPU / 2GB with planner's prod+dev stacks. If contention shows up (`docker stats`), stop `planner-dev` (`cd ~/planner-dev && docker compose --profile prod down`) before paying to resize.
+- **nginx `client_max_body_size`** is the 1MB default - fine for this API; the one oversized-payload incident (socket.io `watch-regions` at low zoom) was fixed client-side.
+- **Season** is 90 days in prod; end early with `POST /api/admin/season/end` (`x-admin-secret`). Bots + Wildlands camps self-seed on first tick.
+- **Terminal gotcha**: the droplet's SSH session mangles multi-line pastes (nano auto-indent, wrapped long lines). Prefer short single commands / `sed -i`, and `cat -A` a config before restarting the service that reads it.

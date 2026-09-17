@@ -4,11 +4,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Overview
 
-RealmWar is a persistent real-time multiplayer strategy game on a real-world map. An H3 hex grid (resolution 7, ~2.3km hexes) overlays a MapLibre GL map; players claim hexes, build, train troops, and fight. The game runs continuously server-side via timers - there is no "game session".
+HexNation (repo/package name: `realmwar` - only the player-facing brand was renamed at launch) is a persistent real-time multiplayer strategy game on a real-world map, **live at https://hexnation.app**. An H3 hex grid (resolution 7) overlays a MapLibre GL map on OpenFreeMap tiles; players claim hexes, build, train troops, and fight. The game runs continuously server-side via timers - there is no "game session".
 
-Two independent npm packages: `server/` (Node/Express + Socket.io + PostgreSQL, ES modules, no ORM) and `client/` (React 19 + Vite + MapLibre GL). Game design doc: `docs/design.md`.
+Two independent npm packages: `server/` (Node/Express 5 + Socket.io + PostgreSQL, ES modules, no ORM) and `client/` (React 19 + Vite + MapLibre GL 6). Game design doc: `docs/design.md`. Use "HexNation" in any user-facing copy; internal identifiers stay `realmwar`.
 
-**Deploying**: `server/DEPLOY.md` is the droplet guide (systemd, nginx, TLS, env); `PRODTODO.md` tracks go-live status. Production boot (`NODE_ENV=production`) refuses to start unless `DEV_MODE=false`, real (non-placeholder) `JWT_SECRET`/`ADMIN_SECRET`, and `CLIENT_ORIGIN` are set — CORS locks to `CLIENT_ORIGIN`, admin routes are rate-limited with a timing-safe secret compare, and the rate limiter keys off `req.ip` (`TRUST_PROXY=1` behind a proxy).
+**Deploying**: `server/DEPLOY.md` is the real guide - Docker Compose (`docker-compose.yml`, `deploy.sh`) on the shared CalendarChef droplet behind a Cloudflare Tunnel, images built by `.github/workflows/deploy.yml` and pulled manually with `./deploy.sh`. Nothing auto-deploys to the box. `scripts/backup-db.sh` is the nightly `pg_dump`. `PRODTODO.md` tracks what's still open post-launch. Under `MODE=prod` the server refuses to boot with placeholder `JWT_SECRET`/`ADMIN_SECRET` or a missing `CLIENT_ORIGIN`; CORS locks to `CLIENT_ORIGIN`, admin routes are rate-limited behind a timing-safe secret compare, and the rate limiter keys off `req.ip` (`TRUST_PROXY=1` behind the tunnel).
 
 ## Commands
 
@@ -21,51 +21,53 @@ psql -d realmwar -f server/schema.sql
 cd server && npm install
 cp .env.example .env        # DATABASE_URL, JWT_SECRET, ADMIN_SECRET, VAPID_* (web push, optional)
 npm run dev                 # nodemon
+npm test                    # node --test, in-memory Postgres (pg-mem) - no DB needed
 
 # Client - port 5173
 cd client && npm install
-cp .env.example .env        # VITE_MAPBOX_TOKEN (map tiles), VITE_API_URL, VITE_SOCKET_URL
+cp .env.example .env        # VITE_API_URL, VITE_SOCKET_URL
 npm run dev
-npm run lint                # eslint
+npm run lint                # eslint (informational in CI)
 ```
 
-**E2E tests** (Playwright, client only - the server has no tests): require a running server on 3001 with a real database, plus the client served at port **5199** (see `playwright.config.js` baseURL):
+**E2E tests** (Playwright, client only): need the server on 3001 with a **real** database, plus the client on port **5199** (`playwright.config.js` baseURL):
 
 ```bash
 cd client
 npm run dev -- --port 5199   # in one terminal
-npm run test:e2e             # all specs
-npx playwright test tests/e2e/auth.spec.js          # single file
-npx playwright test --grep "login shows daily bonus" # single test
+npm run test:e2e             # all specs - desktop (1440x900) + tests/e2e/mobile.spec.js (Pixel 7 device emulation)
+npx playwright test tests/e2e/mobile.spec.js
 ```
 
-Tests create throwaway accounts (`test_<timestamp>`) directly against the API and never delete them.
+Tests create throwaway accounts (`test_<timestamp>`) against the API and never delete them. Use Chromium-based device descriptors (`devices['Pixel 7']`), not iPhone/WebKit ones - CI installs only Chromium and WebKit needs extra system libs. CI retries e2e once (toast-timing flakes under runner load); locally `retries: 0`. Note `server/.env` in this checkout may carry `MODE=prod` + an old `CLIENT_ORIGIN`; for local e2e start the server as `MODE=dev CLIENT_ORIGIN='' node index.js`.
 
-## DEV_MODE
+## MODE
 
-`server/config.js` derives `DEV_MODE` from the environment (`DEV_MODE=false` for prod speeds; defaults to true). Every game constant (tick interval, costs, training/march times, gold caps) branches on it - dev values are ~100× faster/cheaper. It is currently `true`; set to `false` for production speeds. All balance tuning lives in `config.js` and `strategic.js`; don't hardcode game numbers elsewhere.
+`server/config.js` derives pacing from `MODE`: `dev` (default when unset/unrecognized - fast clock, inflated sandbox economy), `test` (fast clock, real economy), `prod` (real pacing + the boot guards above). `IS_DEV` controls pacing, `IS_SANDBOX` controls economy - keep that distinction. Every game constant (tick interval, costs, training/march times, gold caps, decay thresholds) branches on these; all balance tuning lives in `config.js` and `strategic.js` - don't hardcode game numbers elsewhere. `/api/health` reports `mode` and the live constants.
 
 ## Architecture
 
 ### Server: REST for actions, timers for simulation, sockets for invalidation
 
-- **`index.js`** mounts routes under `/api/*`, runs lightweight migrations (`runMigrations()` - ad-hoc DDL; it detects whether `players.id` is UUID (older DBs) or SERIAL (fresh `schema.sql` installs) and builds foreign keys to match), then calls `initPush()` and `startTick()`.
-- **`tick.js`** is the game engine. `startTick()` registers `setInterval` loops: `runTick` (economy: per-hex gold, mine income, strategic bonuses, territory capital bonus, country-crown evaluation, gold cap enforcement, hex history snapshots) on `TICK_INTERVAL_MS`, plus `processDecay` (border decay for empires above `DECAY_HEX_THRESHOLD`), and 15-second loops for `processTraining`, `processCombat` (army arrivals → reinforce own/ally / claim / start battle, with entrenchment + fort + strategic defense multipliers), `processBattleRounds` (deterministic 15%-damage rounds; camp plunder payouts; capital-fall handling), and `processUpgrades`. All game-state mutation from time passing happens here, not in routes.
-- **NPC players**: bots (`bots.js`, `BOT_` username prefix) play each tick; the Wildlands player (`wild.js`, `WILD_Marauders`) owns neutral camps seeded around new capitals and never acts. Code distinguishes NPCs only by username prefix - leaderboards/income exclude `WILD_`, events/pushes skip both.
-- **Notifications**: `push.js` (web-push, VAPID keys from env, silently disabled if unset) + `notify.js` (`notifyIncomingAttack` - called from the march route and bot marches). Battle-start, capital-fall, and incoming-march warnings insert personal events and send pushes.
-- **Alliances**: `players.alliance_id` is the membership model. Combat treats same-alliance as friendly (deposit instead of attack; third parties allied with the defender join the defender side) via `sameAlliance()` in tick.js. Client gets shared fog-of-war vision from `/api/alliance/mine` member ids.
-- **Seasons** (`season.js`): timed ages (`SEASON_DURATION_MS`, 5 min in dev). `processSeason` on the 15s loop ends an expired season: snapshots top-10 standings to `seasons.snapshot`, crowns the champion, wipes hexes/troops/buildings/armies/battles/queues/crowns, resets player gold/capitals, respawns bots (`respawnBots` in bots.js), starts the next season, and emits `season:update`. Client shows a countdown chip, a season dashboard, and an end-of-season overlay (rollover detected via `localStorage.rw_season`).
-- **World feed**: `world_events` table (`insertWorldEvent` in tick.js) records crowns, battles, capital falls; public via `/api/world/events`; rendered as "The Herald" tab in EventFeed. `country_crowns` tracks rulers (own a country's primary-capital hex + `CROWN_MIN_HEXES` hexes in that country).
-- **Socket.io is a notification bus only.** `socket.js` exports `getIO()`; server code emits bare event names (`hexes:update`, `armies:update`, `battle:update`, `events:new`, `tick`) with no payload. Clients respond by refetching via REST. When a mutation changes shared state, emit the matching event or other clients won't see it.
-- **Database**: raw `pg` pool queries (`db.js`), no transactions or ORM. Queues are tables polled by tick loops (`training_queue`, `upgrade_queue`, `armies` with `status='marching'` and `arrives_at`). Caution: `schema.sql` can lag behind code - e.g. `hex_history` is used by `tick.js`/`routes/players.js` but isn't in `schema.sql`; new columns get added via `runMigrations()` in `index.js`.
-- **Geo data is computed in-process, not in the DB.** `terrain.js` (ocean check via point-in-polygon against world-atlas land-10m topojson; a hex is land if its center or any of its six vertices touches land, with a `LAND_OVERRIDES` whitelist for real islands the dataset omits, e.g. Liberty Island; cached per hex) and `countries.js` (hex → country/continent). `strategic.js` defines named strategic city/chokepoint hexes from lat/lng at module load; `CAPITAL_COUNTRY` drives the per-country territory income bonus.
-- **Bots** (`bots.js`) are ordinary player rows with `BOT_` username prefix, processed at the end of each resource tick. Code distinguishes bots only by that prefix.
-- **Auth**: JWT Bearer tokens (7-day), `requireAuth` middleware sets `req.player = { id, username }`. Admin routes (`routes/admin.js`) use an `x-admin-secret` header checked against `ADMIN_SECRET` instead.
-- Ocean hexes are unclaimable but marchable at `OCEAN_MARCH_MULTIPLIER` (10×) cost.
+- **`index.js`** mounts routes under `/api/*`, runs `runMigrations()` (ad-hoc DDL on every boot; it detects whether `players.id` is UUID (older DBs) or SERIAL and builds FKs to match), then `initPush()` and `startTick()`. `runMigrations()` has no caller-side try/catch - a throwing statement aborts boot before `startTick()`, so wrap anything that can fail on existing data (see the `players_username_lower_idx` example).
+- **`tick.js`** is the game engine: `runTick` (economy, strategic/zone bonuses, crowns, gold caps, hex history) on `TICK_INTERVAL_MS`, `processDecay`, and 15s loops for `processTraining`, `processCombat` (arrivals → reinforce/claim/start battle), `processBattleRounds` (dice clashes - see `combat.js`), `processUpgrades`, `processSeason`. All time-driven mutation lives here, not in routes.
+- **Visibility (`visibility.js`)** - fog of war is enforced **server-side**. `buildVisibleSet(playerId)` = own + allied hexes expanded by a ring (port of the client's `buildVisibleSet`); `isDark(h3)` = outside local 6am-8pm by longitude; `canSeeDetail(h3, set, projected, now, isOwner)` is the one check every data route uses before sending real `troop_count`, buildings, army `quantity`, or battle strength. Guests (`optionalAuth`, no `req.player`) get an empty visible set, not a skipped check. Owners/participants always see their own numbers. There is deliberately no unredacted public hex dump - the admin portal uses `/api/admin/hexes/all` behind `requireAdmin`. When adding a route that returns per-hex/army/battle data, run it through `canSeeDetail`.
+- **Auth**: `requireAuth` (401 without a valid JWT) for mutations; `optionalAuth` (sets `req.player` if a valid token is present, never rejects) for read routes that "Browse as guest" must reach: `/hexes/viewport`, `/battles/*`, `/military/armies`, `/buildings/:h3Index`. Admin routes use `x-admin-secret` against `ADMIN_SECRET`. Usernames are stored as typed but unique case-insensitively (`players_username_lower_idx`); `/login` matches case-insensitively.
+- **NPC players**: bots (`bots.js`, `BOT_` prefix) act each tick and insert armies directly (they bypass `/march` - apply any march-side rule there too); the Wildlands player (`wild.js`, `WILD_Marauders`) owns neutral camps and never acts. Code distinguishes NPCs only by username prefix.
+- **Notifications**: `push.js` (web-push; silently disabled without VAPID env) + `notify.js` (`notifyIncomingAttack`, called from `/march` and bot marches). Incoming-attack events are always about the recipient's own hex, so they're never redacted.
+- **Alliances**: `players.alliance_id`; combat treats same-alliance as friendly (`sameAlliance()` in tick.js); allies share fog-of-war vision.
+- **Seasons** (`season.js`): timed ages; `processSeason` snapshots standings, crowns the champion, wipes the map, respawns bots, emits `season:update`.
+- **World feed**: `world_events` (`insertWorldEvent`) → `/api/world/events` → "The Herald" tab. `country_crowns` tracks rulers.
+- **Socket.io is a notification bus only.** Bare event names, no payload; clients refetch via REST. Prefer `emitToRegion(h3, event)` (rooms at `REGION_RESOLUTION`) over global emits. Clients send `watch-regions` (capital regions always; viewport regions only at zoom ≥ 8 - at low zoom the viewport spans thousands of regions and blew request-size limits) and the server caps it at 3000. **When a mutation changes shared state, emit the matching event or other clients won't see it** (the flag-save route once didn't - stale flags until refresh).
+- **Database**: raw `pg` pool (`db.js`), `withTransaction` for the few multi-statement paths, queues are tables polled by tick loops. `schema.sql` is the base for a fresh install; `runMigrations()` is authoritative for anything added since - keep both in sync (`battle_rounds` and the username index were migration-only until 2026-09-17).
+- **Geo is in-process**: `terrain.js` (ocean check via land-10m topojson + `LAND_OVERRIDES`), `countries.js` (hex → country), `strategic.js` (named cities/chokepoints, `CAPITAL_COUNTRY`), `marchPath.js` (weighted A* with 10× ocean cost).
 
 ### Client: GameMap is the hub
 
-- **`App.jsx`** handles auth/FTUE/modal shell, then renders `GameMap`. URL hash `#admin` swaps the whole app for `AdminPortal`.
-- **`components/GameMap.jsx`** (~1100 lines) owns the MapLibre map, all game state fetching, hex rendering, and selection; the panels (`BottomDrawer`, `ArmiesHUD`, `BattlePanel`, `LeaderboardPanel`, `EventFeed`) are its children. Rendering is zoom-dependent: zoom ≥ 8 renders res-7 viewport hexes; zoom 3–8 renders coarser parent-hex "overview" colored by dominant owner. Fog of war is computed client-side (`buildVisibleSet`: own hexes + 1-ring); fogged hexes get `troop_count: -1`.
-- **`api/client.js`** is the single REST wrapper - every endpoint is a named method on the exported `api` object; token comes from `localStorage.rw_token`. Add new endpoints there, not as inline fetches.
-- **`hooks/useSocket.js`** keeps one shared socket; components pass `{ eventName: handler }` maps and typically refetch on events.
+- **`App.jsx`** handles auth/FTUE/modals, then renders `GameMap`; `#admin` swaps in `AdminPortal` (lazy-loaded - keep it out of the main bundle).
+- **`components/GameMap.jsx`** (~2,700 lines) owns the MapLibre map, all game-state fetching, hex rendering, selection, and the topbar; panels (`BottomDrawer`, `ArmiesHUD`, `BattlePanel`, `LeaderboardPanel`, `EventFeed`) are its children. Zoom ≥ 8 renders res-7 viewport hexes (`hexes` source); zoom 3-8 renders the coarser `overview-hexes` layer colored by dominant owner - **a layer added to one source is not on the other** (the night tint, for example, is only on `hexes`). Client-side `fog` (own+ally ring) is now cosmetic on top of server redaction; a server-nulled `troop_count` renders as `-1`/"?" - keep `null` distinct from `0` (`hexToGeoJSONFeature` is called for *unclaimed* cells too, where `claimed` is `undefined`). Interval-driven map updates (army positions, pulses) must skip while `map.isMoving()` - concurrent `setData`/`setPaintProperty` during a zoom gesture races MapLibre's render loop.
+- **MapLibre 6**: ESM-only (`import * as maplibregl`), WebGL2 required, `icon-offset` no longer scales with `icon-size` (offsets in code are pre-scaled), `GeoJSONSource.setData` returns nothing.
+- **`daylight.js`** mirrors the server's day/night rule for *display only* (night tint, topbar sun/moon, "Daylight here" in the drawer) - never for gating data.
+- **`api/client.js`** is the single REST wrapper; token from `localStorage.rw_token`, attached when present. Add endpoints there.
+- **`hooks/useSocket.js`** keeps one shared socket; components pass `{ eventName: handler }` maps and refetch on events.
+- **Mobile**: `useIsMobile()` (768px) drives layout in JS; `100dvh`, `env(safe-area-inset-*)`, a horizontally scrolling topbar, `overscroll-behavior: none`, and a phone-only 16px input rule (iOS auto-zoom) live in `index.css`. Icons are hand-drawn SVGs in `Icons.jsx` - CI rejects pictographic emoji in source.

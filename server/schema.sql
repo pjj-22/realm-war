@@ -85,6 +85,23 @@ CREATE TABLE IF NOT EXISTS battle_participants (
   joined_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- Per-clash dice log for a battle (admin Battle Log drill-down)
+CREATE TABLE IF NOT EXISTS battle_rounds (
+  id                        SERIAL      PRIMARY KEY,
+  battle_id                 INTEGER     NOT NULL REFERENCES battles(id) ON DELETE CASCADE,
+  round_number              INTEGER     NOT NULL,
+  defender_advantage_troops INTEGER     NOT NULL,
+  atk_frontline_before      INTEGER     NOT NULL,
+  def_frontline_before      INTEGER     NOT NULL,
+  atk_dice                  INTEGER[]   NOT NULL,
+  def_dice                  INTEGER[]   NOT NULL,
+  atk_losses                INTEGER     NOT NULL,
+  def_losses                INTEGER     NOT NULL,
+  atk_troops_after          NUMERIC     NOT NULL,
+  def_troops_after          NUMERIC     NOT NULL,
+  created_at                TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 CREATE TABLE IF NOT EXISTS training_queue (
   id           SERIAL      PRIMARY KEY,
   owner_id     INTEGER     NOT NULL REFERENCES players(id) ON DELETE CASCADE,
