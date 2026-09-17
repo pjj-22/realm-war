@@ -9,11 +9,13 @@ import * as maplibregl from 'maplibre-gl'
 // (/assets/maplibre-gl-worker.mjs), which the production build never emits
 // - nginx's SPA fallback then serves index.html as the worker, the browser
 // rejects the text/html MIME type, and the map never renders (all-black
-// screen after the 5->6 upgrade). Importing it with ?url makes Vite emit
-// the real file as a hashed asset and hands MapLibre that path. Only the
-// built bundle is affected; `vite dev` served it fine, which is why the
-// e2e suite didn't catch it - CI now tests the built bundle via preview.
-import maplibreWorkerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url'
+// screen after the 5->6 upgrade). `?worker&url` makes Vite bundle the
+// worker as its own entry - together with the `./maplibre-gl-shared.mjs`
+// it imports, which a plain `?url` copy left dangling as a 404 - and hands
+// MapLibre the hashed path. Only the built bundle is affected; `vite dev`
+// served it fine, which is why the e2e suite didn't catch it - CI now tests
+// the built bundle via preview.
+import maplibreWorkerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url'
 maplibregl.setWorkerUrl(maplibreWorkerUrl)
 import { polygonToCells, cellToBoundary, cellToLatLng, cellToParent, gridDisk, getHexagonEdgeLengthAvg, getHexagonAreaAvg } from 'h3-js'
 import 'maplibre-gl/dist/maplibre-gl.css'

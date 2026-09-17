@@ -42,8 +42,9 @@ test.describe('UI labels and layout', () => {
     await expect(page.locator('text=Strategic capitals')).toBeVisible()
   })
 
-  test('no JS errors on load', async ({ page }) => {
+  test('no JS errors on load, and the map worker actually fetches tiles', async ({ page }) => {
     const errors = []
+    let tiles = 0
     page.on('pageerror', e => errors.push(e.message))
     // A failed MapLibre worker load (wrong MIME type / missing asset) is a
     // console error, not a pageerror - and it leaves the map silently black.
@@ -51,10 +52,17 @@ test.describe('UI labels and layout', () => {
     page.on('console', msg => {
       if (msg.type() === 'error' && /worker|mime/i.test(msg.text())) errors.push(msg.text())
     })
+    // The worker is what requests vector tiles. A dead one (the .mjs served
+    // as octet-stream, or its bundled-away `./maplibre-gl-shared.mjs` import
+    // 404ing) still gets the style and sprite over the main thread and then
+    // stops - no error that matches above, just zero .pbf requests and a
+    // black map. Counting tiles is the check that can't be fooled.
+    page.on('response', r => { if (/\.pbf(\?|$)/.test(r.url())) tiles++ })
     await page.goto('/')
     await page.click('text=Browse as guest')
     await page.waitForTimeout(3000)
     expect(errors).toHaveLength(0)
+    expect(tiles).toBeGreaterThan(0)
   })
 
   test('zooming from world view to street level never sends an oversized viewport request', async ({ page }) => {

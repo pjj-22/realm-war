@@ -24,17 +24,21 @@ async function zoomToHexGridMobile(page, steps = 12) {
 }
 
 test.describe('Mobile layout', () => {
-  test('no JS errors on load, guest browse', async ({ page }) => {
+  test('no JS errors on load, guest browse, map worker fetches tiles', async ({ page }) => {
     const errors = []
+    let tiles = 0
     page.on('pageerror', e => errors.push(e.message))
-    // Failed worker loads are console errors, not pageerrors (see ui.spec.js)
+    // Failed worker loads are console errors, not pageerrors, and a dead
+    // worker never requests a single vector tile (see ui.spec.js)
     page.on('console', msg => {
       if (msg.type() === 'error' && /worker|mime/i.test(msg.text())) errors.push(msg.text())
     })
+    page.on('response', r => { if (/\.pbf(\?|$)/.test(r.url())) tiles++ })
     await page.goto('/')
     await page.click('text=Browse as guest')
     await page.waitForTimeout(3000)
     expect(errors).toHaveLength(0)
+    expect(tiles).toBeGreaterThan(0)
   })
 
   test('login screen: inputs and guest button all visible, nothing clipped', async ({ page }) => {
