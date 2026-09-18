@@ -47,7 +47,7 @@ const S = {
   legalLink: { color: theme.accentStrong, textDecoration: 'underline', cursor: 'pointer' },
 }
 
-export default function AccountModal({ username, onClose, onDeleted }) {
+export default function AccountModal({ username, onClose, onDeleted, onLogout }) {
   const overlayRef = useViewportOverlayFix()
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState(null)
@@ -55,6 +55,14 @@ export default function AccountModal({ username, onClose, onDeleted }) {
   const [confirmText, setConfirmText] = useState('')
   const [showConfirm, setShowConfirm] = useState(false)
   const [legalTab, setLegalTab] = useState(null)
+
+  // Just clears the token client-side - there's no server-side session to
+  // end (JWTs are stateless), so this is the same as the token silently
+  // expiring, just on purpose.
+  function logout() {
+    localStorage.removeItem('rw_token')
+    onLogout()
+  }
 
   async function exportData() {
     setErr(null); setMsg(null); setBusy(true)
@@ -99,6 +107,8 @@ export default function AccountModal({ username, onClose, onDeleted }) {
         </button>
         <div style={S.title}>Account</div>
         <div style={S.sub}>{username}</div>
+
+        <button style={S.btn} onClick={logout}>Log out</button>
 
         <div style={S.h}>Export your data</div>
         <p style={S.p}>

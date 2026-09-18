@@ -97,6 +97,13 @@ export default function App() {
             setShowAuth(true)
             toast('Your account has been deleted.', 'success')
           }}
+          onLogout={() => {
+            setShowAccount(false)
+            setPlayer(null)
+            setAuthMode('login')
+            setShowAuth(true)
+            toast('Signed out.', 'success')
+          }}
         />
       )}
       <ToastContainer />

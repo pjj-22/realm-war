@@ -57,4 +57,28 @@ test.describe('Auth', () => {
     // under CI load (see git history).
     await expect(page.locator('text=Invalid credentials')).toBeVisible({ timeout: 10000 })
   })
+
+  test('log out clears the session and returns to login, without deleting the account', async ({ page }) => {
+    const { username, password } = await createTestAccount()
+    await page.goto('/')
+    await page.fill('input[placeholder="Username"]', username)
+    await page.fill('input[placeholder="Password"]', password)
+    await page.click('button:has-text("Enter the War")')
+    await page.waitForTimeout(2500)
+
+    await page.click('button[title="Account & privacy"]')
+    await page.click('button:has-text("Log out")')
+    await page.waitForTimeout(800)
+
+    await expect(page.locator('text=Browse as guest')).toBeVisible()
+    expect(await page.evaluate(() => localStorage.getItem('rw_token'))).toBeNull()
+
+    // The account itself must still exist - logout is not delete.
+    const res = await fetch('http://localhost:3001/api/players/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password }),
+    })
+    expect(res.status).toBe(200)
+  })
 })
