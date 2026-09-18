@@ -1,6 +1,8 @@
 import { cellToLatLng, cellToBoundary, latLngToCell, getResolution } from 'h3-js'
 import { createRequire } from 'module'
+import { createLogger } from './logger.js'
 
+const log = createLogger('terrain')
 const require = createRequire(import.meta.url)
 const { feature } = require('topojson-client')
 const topo = require('world-atlas/land-10m.json')
@@ -69,7 +71,7 @@ for (const poly of polys) {
   landPolygons.push({ coords: poly, minLng, maxLng, minLat, maxLat })
 }
 
-console.log(`[terrain] Loaded ${landPolygons.length} land polygons`)
+log.info('Loaded land polygons', { polygons: landPolygons.length })
 
 function pointOnLand(lng, lat) {
   return landPolygons.some(({ coords, minLng, maxLng, minLat, maxLat }) => {

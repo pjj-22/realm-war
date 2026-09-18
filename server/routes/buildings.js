@@ -3,6 +3,9 @@ import { pool, withTransaction, httpError } from '../db.js'
 import { requireAuth, optionalAuth } from '../auth.js'
 import { BUILDING_COSTS, UPGRADE_COST, UPGRADE_MINUTES, MAX_UPGRADE_LEVEL, BUILDING_TIME_SECONDS, TICK_INTERVAL_MS, PROJECTION_GARRISON, PROJECTION_EMPIRE } from '../config.js'
 import { buildVisibleSet, canSeeDetail } from '../visibility.js'
+import { createLogger } from '../logger.js'
+
+const log = createLogger('buildings')
 
 const router = Router()
 const VALID_TYPES = Object.keys(BUILDING_COSTS)
@@ -48,7 +51,7 @@ router.get('/:h3Index', optionalAuth, async (req, res) => {
       upgrading: upgradeRow.rows[0] || null,
     })
   } catch (err) {
-    console.error('[buildings] GET /:h3Index failed:', err.message)
+    log.error('GET /:h3Index failed', { err })
     res.status(500).json({ error: 'Server error' })
   }
 })
@@ -87,7 +90,7 @@ router.post('/', requireAuth, async (req, res) => {
     res.json({ success: true, building, player: { gold } })
   } catch (err) {
     if (err.status) return res.status(err.status).json({ error: err.message })
-    console.error('[buildings] POST / failed:', err.message)
+    log.error('POST / failed', { err })
     res.status(500).json({ error: 'Server error' })
   }
 })
@@ -101,7 +104,7 @@ router.delete('/:id', requireAuth, async (req, res) => {
     await pool.query('DELETE FROM buildings WHERE id=$1', [req.params.id])
     res.json({ success: true })
   } catch (err) {
-    console.error('[buildings] DELETE /:id failed:', err.message)
+    log.error('DELETE /:id failed', { err })
     res.status(500).json({ error: 'Server error' })
   }
 })
@@ -139,7 +142,7 @@ router.post('/:h3Index/upgrade', requireAuth, async (req, res) => {
     res.json({ upgrade, player: { gold } })
   } catch (err) {
     if (err.status) return res.status(err.status).json({ error: err.message })
-    console.error('[buildings] POST /:h3Index/upgrade failed:', err.message)
+    log.error('POST /:h3Index/upgrade failed', { err })
     res.status(500).json({ error: 'Server error' })
   }
 })

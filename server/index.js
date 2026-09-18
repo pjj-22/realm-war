@@ -23,8 +23,13 @@ import { FRONTLINE_CAP, MAX_ADVANTAGED_DEFENDERS } from './combat.js'
 import { pool } from './db.js'
 import { requireAuth } from './auth.js'
 import { initSocket } from './socket.js'
+import { createLogger, currentLogLevel } from './logger.js'
+import { requestLogger } from './requestLogger.js'
 
 dotenv.config()
+
+const log = createLogger('boot')
+const dbLog = createLogger('db')
 
 // ─── Boot-time environment guards ─────────────────────────────────────────────
 // Fail fast on misconfiguration instead of silently running with dev settings.
@@ -42,8 +47,7 @@ function assertEnv() {
     if (!process.env.CLIENT_ORIGIN) problems.push('CLIENT_ORIGIN is not set (CORS would be wide open)')
   }
   if (problems.length) {
-    console.error('[boot] Refusing to start:')
-    for (const p of problems) console.error(`  - ${p}`)
+    log.error('Refusing to start', { problems: problems.join(' | ') })
     process.exit(1)
   }
 }
@@ -62,6 +66,7 @@ app.use(cors({ origin: CORS_ORIGIN }))
 // express's 100kb default - the extra headroom keeps a slightly oversized
 // viewport request from failing outright with a 413 instead of being sliced.
 app.use(express.json({ limit: '256kb' }))
+app.use(requestLogger())
 
 app.use('/api/players', playerRoutes)
 app.use('/api/hexes', hexRoutes)
@@ -229,7 +234,7 @@ async function runMigrations() {
   // game engine, not just registration, going down over a duplicate
   // username. Logs and self-heals on a later boot once resolved instead.
   await pool.query('CREATE UNIQUE INDEX IF NOT EXISTS players_username_lower_idx ON players (LOWER(username))')
-    .catch(err => console.error('[db] players_username_lower_idx not created (likely an existing case-only username collision) - will retry next boot:', err.message))
+    .catch(err => dbLog.error('players_username_lower_idx not created (likely an existing case-only username collision) - will retry next boot', { err }))
   await pool.query(`
     CREATE TABLE IF NOT EXISTS chat_messages (
       id SERIAL PRIMARY KEY,
@@ -324,12 +329,12 @@ async function runMigrations() {
       END IF;
     END $$;`)
 
-  console.log('[db] Migrations complete')
+  dbLog.info('Migrations complete')
 }
 
 const PORT = process.env.PORT || 3001
 httpServer.listen(PORT, async () => {
-  console.log(`Server running on port ${PORT}`)
+  log.info('Server running', { port: PORT, mode: MODE, logLevel: currentLogLevel() })
   await runMigrations()
   initPush()
   startTick()

@@ -8,6 +8,9 @@ import { seedCapitalGarrisons } from './wild.js'
 import { setActiveResolution } from './worldState.js'
 import { rebuildStrategicData } from './strategic.js'
 import { rebuildWonders } from './wonders.js'
+import { createLogger } from './logger.js'
+
+const log = createLogger('season')
 
 let current = null // cached active season row
 
@@ -46,12 +49,12 @@ export async function ensureSeason() {
     setActiveResolution(resolution)
     rebuildStrategicData(resolution)
     rebuildWonders(resolution)
-    console.log(`[season] Season ${current.number} begins at resolution ${resolution} - ends ${ends.toISOString()}`)
+    log.info('Season begins', { number: current.number, resolution, ends: ends.toISOString() })
     await seedCapitalGarrisons()
     getIO()?.emit('season:update')
     return current
   } catch (err) {
-    console.error('[season] ensure error:', err.message)
+    log.error('ensure error', { err })
     return null
   }
 }
@@ -118,7 +121,7 @@ export async function processSeason() {
       "UPDATE seasons SET status='ended', ended_at=NOW(), winner_id=$1, snapshot=$2, stats=$3 WHERE id=$4",
       [winner?.id || null, JSON.stringify(standings), JSON.stringify(stats), season.id]
     )
-    console.log(`[season] Season ${season.number} ENDED - Champion: ${winner?.username || 'nobody'}`)
+    log.info('Season ended', { number: season.number, champion: winner?.username || null })
 
     await pool.query(
       'INSERT INTO world_events (type, message, player_id) VALUES ($1,$2,$3)',
@@ -183,6 +186,6 @@ export async function processSeason() {
       io.emit('tick')
     }
   } catch (err) {
-    console.error('[season] process error:', err.message)
+    log.error('process error', { err })
   }
 }

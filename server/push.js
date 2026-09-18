@@ -1,22 +1,24 @@
 import webpush from 'web-push'
 import { pool } from './db.js'
 import { NOTIFICATIONS_ENABLED } from './config.js'
+import { createLogger } from './logger.js'
 
+const log = createLogger('push')
 let enabled = false
 
 export function initPush() {
   if (!NOTIFICATIONS_ENABLED) {
-    console.log('[push] Notifications disabled via NOTIFICATIONS_ENABLED=false')
+    log.info('Notifications disabled via NOTIFICATIONS_ENABLED=false')
     return
   }
   const { VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY, VAPID_SUBJECT } = process.env
   if (!VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY) {
-    console.log('[push] VAPID keys not set - push notifications disabled')
+    log.info('VAPID keys not set - push notifications disabled')
     return
   }
   webpush.setVapidDetails(VAPID_SUBJECT || 'mailto:admin@realmwar.local', VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY)
   enabled = true
-  console.log('[push] Web push enabled')
+  log.info('Web push enabled')
 }
 
 export function pushEnabled() {
@@ -40,6 +42,6 @@ export async function sendPush(playerId, title, body, data = {}) {
       }
     }))
   } catch (err) {
-    console.error('[push] send error:', err.message)
+    log.error('send error', { err })
   }
 }

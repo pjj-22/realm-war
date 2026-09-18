@@ -1,10 +1,12 @@
 import { pool } from './db.js'
 import { latLngToCell, gridDisk, gridDistance } from 'h3-js'
 import { getIO } from './socket.js'
-import { IS_DEV, STARTING_GOLD, STARTING_MANA, STARTING_TROOPS, TROOP_STATS, BUILDING_COSTS, BUILDING_TIME_SECONDS, TICK_INTERVAL_MS } from './config.js'
+import { STARTING_GOLD, STARTING_MANA, STARTING_TROOPS, TROOP_STATS, BUILDING_COSTS, BUILDING_TIME_SECONDS, TICK_INTERVAL_MS } from './config.js'
+import { createLogger } from './logger.js'
 
-// Per-tick bot chatter is dev-only; creation/respawn logs stay
-const log = IS_DEV ? console.log : () => {}
+// Per-tick bot chatter is debug level; creation/respawn/errors stay at
+// their normal level (info/error) so they're visible in prod by default.
+const log = createLogger('bot')
 import { isOcean } from './terrain.js'
 import { notifyIncomingAttack } from './notify.js'
 import { WILD_USERNAME } from './wild.js'
@@ -464,11 +466,11 @@ export async function ensureBots(seasonNumber) {
           )
           await pool.query('UPDATE players SET capital_hex=$1 WHERE id=$2', [startHex, botId])
           await depositTroops(botId, startHex, 'troop', STARTING_TROOPS)
-          console.log(`[bot] Created ${def.username} at ${startHex}`)
+          log.info('Created bot', { username: def.username, hex: startHex })
         }
       }
     } catch (err) {
-      console.error(`[bot] Failed to ensure ${def.username}:`, err.message)
+      log.error('Failed to ensure bot', { username: def.username, err })
     }
   }
 }
@@ -493,9 +495,9 @@ export async function respawnBots(seasonNumber) {
       await pool.query('UPDATE players SET capital_hex=$1, gold=GREATEST(gold,$2) WHERE id=$3',
         [startHex, STARTING_GOLD, bot.id])
       await depositTroops(bot.id, startHex, 'troop', STARTING_TROOPS)
-      console.log(`[bot] ${def.username} respawned at ${startHex}`)
+      log.info('Bot respawned', { username: def.username, hex: startHex })
     } catch (err) {
-      console.error(`[bot] respawn failed for ${def.username}:`, err.message)
+      log.error('Respawn failed', { username: def.username, err })
     }
   }
 }
@@ -515,7 +517,7 @@ async function botClaim(bot) {
         'INSERT INTO hexes (h3_index, owner_id, claimed_at) VALUES ($1,$2,NOW()) ON CONFLICT DO NOTHING',
         [h3_index, bot.id]
       )
-      log(`[bot] ${bot.username} claimed ${h3_index}`)
+      log.debug(`${bot.username} claimed ${h3_index}`)
     }
   }
 }
@@ -559,7 +561,7 @@ async function botBuild(bot, profile) {
       if (!inserted.rows[0]) break  // another process beat us - skip this hex
       await pool.query('UPDATE players SET gold=gold-$1 WHERE id=$2', [cost.gold, bot.id])
       gold -= cost.gold
-      log(`[bot] ${bot.username} built ${type} at ${h3_index}`)
+      log.debug(`${bot.username} built ${type} at ${h3_index}`)
       break
     }
   }
@@ -595,7 +597,7 @@ async function botTrain(bot, profile) {
     'INSERT INTO training_queue (owner_id, h3_index, type, quantity, started_at, completes_at) VALUES ($1,$2,$3,$4,NOW(),$5)',
     [bot.id, bot.capital_hex, 'troop', qty, completesAt]
   )
-  log(`[bot] ${bot.username} queued ${qty} troops`)
+  log.debug(`${bot.username} queued ${qty} troops`)
 }
 
 async function botMarch(bot, profile, ctx) {
@@ -762,7 +764,7 @@ async function botMarch(bot, profile, ctx) {
       [bot.id, source.h3_index, target, 'troop', sendQty, arrivesAt, path]
     )
     notifyIncomingAttack(bot.id, target, sendQty, arrivesAt)
-    log(`[bot] ${bot.username} (${profile.name}) marching ${sendQty} troops → ${target}`)
+    log.debug(`${bot.username} (${profile.name}) marching ${sendQty} troops → ${target}`)
     marchesLaunched++
   }
 }
@@ -789,6 +791,6 @@ export async function processBots() {
     getIO()?.emit('hexes:update')
     getIO()?.emit('armies:update')
   } catch (err) {
-    console.error('[bot] Error in processBots:', err.message)
+    log.error('Error in processBots', { err })
   }
 }

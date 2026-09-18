@@ -3,6 +3,9 @@ import { pool } from '../db.js'
 import { CITY_ZONE_LIST, ZONE_BONUS_PER_HEX } from '../strategic.js'
 import { WONDERS } from '../wonders.js'
 import { WONDER_INCOME_GOLD } from '../config.js'
+import { createLogger } from '../logger.js'
+
+const log = createLogger('world')
 
 const router = Router()
 
@@ -43,7 +46,7 @@ router.get('/wonders', async (req, res) => {
       }
     }))
   } catch (err) {
-    console.error('[world] GET /wonders failed:', err.message)
+    log.error('GET /wonders failed', { err })
     res.status(500).json({ error: 'Server error' })
   }
 })
@@ -56,7 +59,7 @@ router.get('/monuments', async (req, res) => {
     )
     res.json(result.rows)
   } catch (err) {
-    console.error('[world] GET /monuments failed:', err.message)
+    log.error('GET /monuments failed', { err })
     res.status(500).json({ error: 'Server error' })
   }
 })
@@ -73,7 +76,7 @@ router.get('/events', async (req, res) => {
     `)
     res.json(result.rows)
   } catch (err) {
-    console.error('[world] GET /events failed:', err.message)
+    log.error('GET /events failed', { err })
     res.status(500).json({ error: 'Server error' })
   }
 })
@@ -88,7 +91,7 @@ router.get('/crowns', async (req, res) => {
     `)
     res.json(result.rows)
   } catch (err) {
-    console.error('[world] GET /crowns failed:', err.message)
+    log.error('GET /crowns failed', { err })
     res.status(500).json({ error: 'Server error' })
   }
 })

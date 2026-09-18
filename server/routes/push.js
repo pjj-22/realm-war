@@ -2,6 +2,9 @@ import { Router } from 'express'
 import { pool } from '../db.js'
 import { requireAuth } from '../auth.js'
 import { pushEnabled } from '../push.js'
+import { createLogger } from '../logger.js'
+
+const log = createLogger('push')
 
 const router = Router()
 
@@ -24,7 +27,7 @@ router.post('/subscribe', requireAuth, async (req, res) => {
     )
     res.json({ success: true })
   } catch (err) {
-    console.error('[push] POST /subscribe failed:', err.message)
+    log.error('POST /subscribe failed', { err })
     res.status(500).json({ error: 'Server error' })
   }
 })
@@ -36,7 +39,7 @@ router.delete('/subscribe', requireAuth, async (req, res) => {
     await pool.query('DELETE FROM push_subscriptions WHERE endpoint=$1 AND player_id=$2', [endpoint, req.player.id])
     res.json({ success: true })
   } catch (err) {
-    console.error('[push] DELETE /subscribe failed:', err.message)
+    log.error('DELETE /subscribe failed', { err })
     res.status(500).json({ error: 'Server error' })
   }
 })

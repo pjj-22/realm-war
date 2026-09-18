@@ -1,4 +1,7 @@
 import jwt from 'jsonwebtoken'
+import { createLogger } from './logger.js'
+
+const log = createLogger('auth')
 
 export function signToken(player) {
   return jwt.sign(
@@ -15,7 +18,7 @@ export function requireAuth(req, res, next) {
     req.player = jwt.verify(header.slice(7), process.env.JWT_SECRET)
     next()
   } catch (err) {
-    console.error('[auth] token verification failed:', err.message)
+    log.error('token verification failed', { err })
     res.status(401).json({ error: 'Invalid token' })
   }
 }

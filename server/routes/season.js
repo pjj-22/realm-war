@@ -2,6 +2,9 @@ import { Router } from 'express'
 import { getNumCells } from 'h3-js'
 import { pool } from '../db.js'
 import { getCurrentSeason, computeStandings } from '../season.js'
+import { createLogger } from '../logger.js'
+
+const log = createLogger('season')
 
 const router = Router()
 
@@ -24,7 +27,7 @@ router.get('/current', async (req, res) => {
       standings,
     })
   } catch (err) {
-    console.error('[season] GET /current failed:', err.message)
+    log.error('GET /current failed', { err })
     res.status(500).json({ error: 'Server error' })
   }
 })
@@ -43,7 +46,7 @@ router.get('/history', async (req, res) => {
     `, [limit])
     res.json(r.rows.map(row => ({ ...row, world_hex_count: getNumCells(row.hex_resolution) })))
   } catch (err) {
-    console.error('[season] GET /history failed:', err.message)
+    log.error('GET /history failed', { err })
     res.status(500).json({ error: 'Server error' })
   }
 })

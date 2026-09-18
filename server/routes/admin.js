@@ -13,6 +13,13 @@ import { GM_EVENTS, triggerEvent } from '../gmEvents.js'
 import { STRATEGIC_HEXES, STRATEGIC_BONUS_GOLD, CITY_ZONES, ZONE_BONUS_PER_HEX } from '../strategic.js'
 import { WONDERS } from '../wonders.js'
 import { currentMarchHex, findMarchPath, pathStepCosts } from '../marchPath.js'
+import { createLogger } from '../logger.js'
+import { clientIp } from '../ratelimit.js'
+
+const log = createLogger('admin')
+// Every mutating route below logs who (client IP - there's no per-admin
+// identity, just the shared secret) did what, since these bypass every
+// normal player-facing check and nothing else records that they happened.
 
 const router = Router()
 
@@ -34,6 +41,7 @@ function requireAdmin(req, res, next) {
   const secret = process.env.ADMIN_SECRET
   if (!secret) return res.status(503).json({ error: 'Admin not configured (set ADMIN_SECRET)' })
   if (!secretsMatch(req.headers['x-admin-secret'], secret)) {
+    log.warn('Wrong admin secret', { ip: clientIp(req), path: req.originalUrl })
     return failedSecretLimit(req, res, () => res.status(403).json({ error: 'Forbidden' }))
   }
   next()
@@ -72,7 +80,7 @@ router.get('/hexes/all', async (req, res) => {
     `)
     res.json(r.rows)
   } catch (err) {
-    console.error('[admin] GET /hexes/all failed:', err.message)
+    log.error('GET /hexes/all failed', { err })
     res.status(500).json({ error: 'Server error' })
   }
 })
@@ -104,7 +112,7 @@ router.get('/overview', async (req, res) => {
       alliances: alliances.rows[0].n,
     })
   } catch (err) {
-    console.error('[admin] GET /overview failed:', err.message)
+    log.error('GET /overview failed', { err })
     res.status(500).json({ error: 'Server error' })
   }
 })
@@ -123,7 +131,7 @@ router.get('/activity', async (req, res) => {
     `, [limit])
     res.json(result.rows)
   } catch (err) {
-    console.error('[admin] GET /activity failed:', err.message)
+    log.error('GET /activity failed', { err })
     res.status(500).json({ error: 'Server error' })
   }
 })
@@ -144,7 +152,7 @@ router.get('/battles', async (req, res) => {
     `)
     res.json(result.rows)
   } catch (err) {
-    console.error('[admin] GET /battles failed:', err.message)
+    log.error('GET /battles failed', { err })
     res.status(500).json({ error: 'Server error' })
   }
 })
@@ -169,7 +177,7 @@ router.get('/battles/recent', async (req, res) => {
     `, [limit])
     res.json(result.rows)
   } catch (err) {
-    console.error('[admin] GET /battles/recent failed:', err.message)
+    log.error('GET /battles/recent failed', { err })
     res.status(500).json({ error: 'Server error' })
   }
 })
@@ -187,7 +195,7 @@ router.get('/battles/:id/rounds', async (req, res) => {
     `, [req.params.id])
     res.json(result.rows)
   } catch (err) {
-    console.error('[admin] GET /battles/:id/rounds failed:', err.message)
+    log.error('GET /battles/:id/rounds failed', { err })
     res.status(500).json({ error: 'Server error' })
   }
 })
@@ -209,7 +217,7 @@ router.get('/armies', async (req, res) => {
       return { ...a, current_hex: currentMarchHex(a, path, pathStepCosts(path)) }
     }))
   } catch (err) {
-    console.error('[admin] GET /armies failed:', err.message)
+    log.error('GET /armies failed', { err })
     res.status(500).json({ error: 'Server error' })
   }
 })
@@ -243,7 +251,7 @@ router.get('/system', async (req, res) => {
       country_crowns: crowns.rows[0].n,
     })
   } catch (err) {
-    console.error('[admin] GET /system failed:', err.message)
+    log.error('GET /system failed', { err })
     res.status(500).json({ error: err.message })
   }
 })
@@ -293,7 +301,7 @@ router.get('/retention', async (req, res) => {
       },
     })
   } catch (err) {
-    console.error('[admin] GET /retention failed:', err.message)
+    log.error('GET /retention failed', { err })
     res.status(500).json({ error: err.message })
   }
 })
@@ -337,7 +345,7 @@ router.get('/players', async (req, res) => {
     const rows = result.rows.map(p => ({ ...p, income_per_harvest: incomeByOwner.get(p.id) || 0 }))
     res.json(rows)
   } catch (err) {
-    console.error('[admin] GET /players failed:', err.message)
+    log.error('GET /players failed', { err })
     res.status(500).json({ error: 'Server error' })
   }
 })
@@ -351,9 +359,10 @@ router.post('/players/:id/gold', async (req, res) => {
       [delta, req.params.id]
     )
     if (!result.rows[0]) return res.status(404).json({ error: 'Player not found' })
+    log.info('Gold adjusted', { playerId: req.params.id, delta, newGold: result.rows[0].gold, ip: clientIp(req) })
     res.json({ gold: result.rows[0].gold })
   } catch (err) {
-    console.error('[admin] POST /players/:id/gold failed:', err.message)
+    log.error('POST /players/:id/gold failed', { err })
     res.status(500).json({ error: 'Server error' })
   }
 })
@@ -373,9 +382,10 @@ router.delete('/players/:id', async (req, res) => {
     }
     await pool.query('DELETE FROM players WHERE id=$1', [req.params.id])
     getIO()?.emit('hexes:update')
+    log.warn('Player deleted', { playerId: req.params.id, username, ip: clientIp(req) })
     res.json({ deleted: username })
   } catch (err) {
-    console.error('[admin] DELETE /players/:id failed:', err.message)
+    log.error('DELETE /players/:id failed', { err })
     res.status(500).json({ error: 'Server error' })
   }
 })
@@ -384,9 +394,10 @@ router.post('/tick', async (req, res) => {
   try {
     await runTick()
     getIO()?.emit('tick')
+    log.info('Forced tick', { ip: clientIp(req) })
     res.json({ ok: true })
   } catch (err) {
-    console.error('[admin] POST /tick failed:', err.message)
+    log.error('POST /tick failed', { err })
     res.status(500).json({ error: err.message })
   }
 })
@@ -399,9 +410,10 @@ router.post('/season/end', async (req, res) => {
     await pool.query('UPDATE seasons SET ends_at=NOW() WHERE id=$1', [season.id])
     season.ends_at = new Date(0) // force the cached row past its deadline
     await processSeason()
+    log.warn('Season force-ended', { number: season.number, ip: clientIp(req) })
     res.json({ ok: true, ended: season.number })
   } catch (err) {
-    console.error('[admin] POST /season/end failed:', err.message)
+    log.error('POST /season/end failed', { err })
     res.status(500).json({ error: err.message })
   }
 })
@@ -423,9 +435,10 @@ router.post('/season/next-resolution', async (req, res) => {
       'INSERT INTO season_config (id, next_hex_resolution) VALUES (1, $1) ON CONFLICT (id) DO UPDATE SET next_hex_resolution=$1',
       [resolution]
     )
+    log.info('Next-season resolution queued', { resolution, ip: clientIp(req) })
     res.json({ ok: true, next_hex_resolution: resolution })
   } catch (err) {
-    console.error('[admin] POST /season/next-resolution failed:', err.message)
+    log.error('POST /season/next-resolution failed', { err })
     res.status(500).json({ error: err.message })
   }
 })
@@ -435,7 +448,7 @@ router.get('/season/next-resolution', async (req, res) => {
     const r = await pool.query('SELECT next_hex_resolution FROM season_config WHERE id=1')
     res.json({ next_hex_resolution: r.rows[0]?.next_hex_resolution ?? null })
   } catch (err) {
-    console.error('[admin] GET /season/next-resolution failed:', err.message)
+    log.error('GET /season/next-resolution failed', { err })
     res.status(500).json({ error: err.message })
   }
 })
@@ -453,9 +466,10 @@ router.post('/season/next-duration', async (req, res) => {
       'INSERT INTO season_config (id, next_season_days) VALUES (1, $1) ON CONFLICT (id) DO UPDATE SET next_season_days=$1',
       [days]
     )
+    log.info('Next-season duration queued', { days, ip: clientIp(req) })
     res.json({ ok: true, next_season_days: days })
   } catch (err) {
-    console.error('[admin] POST /season/next-duration failed:', err.message)
+    log.error('POST /season/next-duration failed', { err })
     res.status(500).json({ error: err.message })
   }
 })
@@ -465,7 +479,7 @@ router.get('/season/next-duration', async (req, res) => {
     const r = await pool.query('SELECT next_season_days FROM season_config WHERE id=1')
     res.json({ next_season_days: r.rows[0]?.next_season_days ?? null })
   } catch (err) {
-    console.error('[admin] GET /season/next-duration failed:', err.message)
+    log.error('GET /season/next-duration failed', { err })
     res.status(500).json({ error: err.message })
   }
 })
@@ -491,9 +505,10 @@ router.post('/bots/reset', async (req, res) => {
     }
     await ensureBots(getCurrentSeason()?.number)
     getIO()?.emit('hexes:update')
+    log.warn('Bots reset', { count: bots.rows.length, ip: clientIp(req) })
     res.json({ ok: true, reset: bots.rows.length })
   } catch (err) {
-    console.error('[admin] POST /bots/reset failed:', err.message)
+    log.error('POST /bots/reset failed', { err })
     res.status(500).json({ error: err.message })
   }
 })
@@ -510,9 +525,10 @@ router.post('/event', async (req, res) => {
     io?.emit('events:new')
     io?.emit('world:new')
     io?.emit('tick') // gold/troops changed (famine, gold rush, plague) - refresh the resource bar
+    log.info('GM event triggered', { type, param, ip: clientIp(req) })
     res.json(result)
   } catch (err) {
-    console.error('[admin] POST /event failed:', err.message)
+    log.error('POST /event failed', { err })
     res.status(400).json({ error: err.message })
   }
 })

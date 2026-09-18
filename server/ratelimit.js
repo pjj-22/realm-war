@@ -1,6 +1,8 @@
 // Tiny in-memory rate limiter - per-process, resets on restart.
 // Good enough until there's more than one server instance.
+import { createLogger } from './logger.js'
 
+const log = createLogger('ratelimit')
 const buckets = new Map()
 
 setInterval(() => {
@@ -34,7 +36,13 @@ export function rateLimit({ windowMs, max, key, message = 'Slow down - too many 
       buckets.set(k, bucket)
     }
     bucket.count++
-    if (bucket.count > max) return res.status(429).json({ error: message })
+    if (bucket.count > max) {
+      // Log only the request that first tips a bucket over, not every one
+      // rejected while it stays over - a client hammering a 429'd route
+      // would otherwise make this the noisiest thing in the log.
+      if (bucket.count === max + 1) log.warn('Limit exceeded', { key: k, max, path: req.originalUrl, message })
+      return res.status(429).json({ error: message })
+    }
     next()
   }
 }

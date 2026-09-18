@@ -12,6 +12,9 @@ import { seedCampsAround } from '../wild.js'
 import { foundCapital } from '../founding.js'
 import { findMarchPath } from '../marchPath.js'
 import { buildVisibleSet, canSeeDetail } from '../visibility.js'
+import { createLogger } from '../logger.js'
+
+const log = createLogger('hexes')
 
 const router = Router()
 
@@ -71,7 +74,7 @@ router.post('/viewport', optionalAuth, async (req, res) => {
   try {
     res.json(await queryEnrichedHexes('h.h3_index = ANY($1)', [h3Indexes.slice(0, 4000)], { viewerId: req.player?.id ?? null }))
   } catch (err) {
-    console.error('[hexes] POST /viewport failed:', err.message)
+    log.error('POST /viewport failed', { err })
     res.status(500).json({ error: 'Server error' })
   }
 })
@@ -90,7 +93,7 @@ router.get('/mine', requireAuth, async (req, res) => {
     const ownerIds = [req.player.id, ...allies.rows.map(r => r.id)]
     res.json(await queryEnrichedHexes('h.owner_id = ANY($1)', [ownerIds], { viewerId: req.player.id }))
   } catch (err) {
-    console.error('[hexes] GET /mine failed:', err.message)
+    log.error('GET /mine failed', { err })
     res.status(500).json({ error: 'Server error' })
   }
 })
@@ -111,7 +114,7 @@ router.get('/search', async (req, res) => {
     if (!result.rows[0]) return res.status(404).json({ error: 'No hex found' })
     res.json({ h3Index: result.rows[0].h3_index })
   } catch (err) {
-    console.error('[hexes] GET /search failed:', err.message)
+    log.error('GET /search failed', { err })
     res.status(500).json({ error: 'Server error' })
   }
 })
@@ -132,7 +135,7 @@ router.get('/strategic', async (req, res) => {
     })
     res.json(result)
   } catch (err) {
-    console.error('[hexes] GET /strategic failed:', err.message)
+    log.error('GET /strategic failed', { err })
     res.status(500).json({ error: 'Server error' })
   }
 })
@@ -164,7 +167,7 @@ router.get('/suggest-start', async (req, res) => {
     }
     res.status(404).json({ error: 'No suggestion available' })
   } catch (err) {
-    console.error('[hexes] GET /suggest-start failed:', err.message)
+    log.error('GET /suggest-start failed', { err })
     res.status(500).json({ error: 'Server error' })
   }
 })
@@ -193,7 +196,7 @@ router.post('/route', requireAuth, rateLimit({ windowMs: 60 * 1000, max: IS_DEV 
   try {
     res.json(findMarchPath(fromHex, toHex))
   } catch (err) {
-    console.error('[hexes] POST /route failed:', err.message)
+    log.error('POST /route failed', { err })
     res.status(500).json({ error: 'Server error' })
   }
 })
@@ -270,7 +273,7 @@ router.post('/claim', requireAuth, async (req, res) => {
     emitToRegion(h3Index, 'hexes:update')
     res.json({ success: true, isCapital: isBootstrapping || needsNewCapital })
   } catch (err) {
-    console.error('[hexes] POST /claim failed:', err.message)
+    log.error('POST /claim failed', { err })
     res.status(500).json({ error: 'Server error' })
   }
 })
@@ -308,7 +311,7 @@ router.post('/set-capital', requireAuth, async (req, res) => {
     emitToRegion(h3Index, 'hexes:update')
     res.json({ success: true })
   } catch (err) {
-    console.error('[hexes] POST /set-capital failed:', err.message)
+    log.error('POST /set-capital failed', { err })
     res.status(500).json({ error: 'Server error' })
   }
 })
@@ -346,7 +349,7 @@ router.get('/overview', async (req, res) => {
     }
     res.json(summary)
   } catch (err) {
-    console.error('[hexes] GET /overview failed:', err.message)
+    log.error('GET /overview failed', { err })
     res.status(500).json({ error: 'Server error' })
   }
 })

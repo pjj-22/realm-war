@@ -1,6 +1,8 @@
 import { cellToLatLng } from 'h3-js'
 import { createRequire } from 'module'
+import { createLogger } from './logger.js'
 
+const log = createLogger('countries')
 const require = createRequire(import.meta.url)
 const { feature } = require('topojson-client')
 const topo = require('world-atlas/countries-50m.json')
@@ -275,7 +277,7 @@ for (const feature of countriesFC.features) {
   }
 }
 
-console.log(`[countries] Loaded ${countriesFC.features.length} countries (${countryPolygons.length} polygons)`)
+log.info('Loaded country polygons', { countries: countriesFC.features.length, polygons: countryPolygons.length })
 
 // ─── Public API ───────────────────────────────────────────────────────────────
 

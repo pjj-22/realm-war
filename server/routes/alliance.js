@@ -3,6 +3,9 @@ import crypto from 'crypto'
 import { pool } from '../db.js'
 import { requireAuth } from '../auth.js'
 import { ALLIANCE_CREATE_COST } from '../config.js'
+import { createLogger } from '../logger.js'
+
+const log = createLogger('alliance')
 
 const router = Router()
 
@@ -22,7 +25,7 @@ router.get('/mine', requireAuth, async (req, res) => {
     if (a.created_by !== req.player.id) delete a.code
     res.json({ ...a, members: members.rows })
   } catch (err) {
-    console.error('[alliance] GET /mine failed:', err.message)
+    log.error('GET /mine failed', { err })
     res.status(500).json({ error: 'Server error' })
   }
 })
@@ -49,7 +52,7 @@ router.post('/create', requireAuth, async (req, res) => {
     res.json(result.rows[0])
   } catch (err) {
     if (err.code === '23505') return res.status(409).json({ error: 'Name or tag already taken' })
-    console.error('[alliance] POST /create failed:', err.message)
+    log.error('POST /create failed', { err })
     res.status(500).json({ error: 'Server error' })
   }
 })
@@ -67,7 +70,7 @@ router.post('/join', requireAuth, async (req, res) => {
     await pool.query('UPDATE players SET alliance_id=$1 WHERE id=$2', [alliance.rows[0].id, req.player.id])
     res.json(alliance.rows[0])
   } catch (err) {
-    console.error('[alliance] POST /join failed:', err.message)
+    log.error('POST /join failed', { err })
     res.status(500).json({ error: 'Server error' })
   }
 })
@@ -77,7 +80,7 @@ router.post('/leave', requireAuth, async (req, res) => {
     await pool.query('UPDATE players SET alliance_id=NULL WHERE id=$1', [req.player.id])
     res.json({ success: true })
   } catch (err) {
-    console.error('[alliance] POST /leave failed:', err.message)
+    log.error('POST /leave failed', { err })
     res.status(500).json({ error: 'Server error' })
   }
 })

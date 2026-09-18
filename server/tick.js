@@ -21,9 +21,11 @@ import { sendPush } from './push.js'
 import { STRATEGIC_HEXES, STRATEGIC_BONUS_GOLD, STRATEGIC_ADVANTAGE_TROOPS, CAPITAL_COUNTRY, CITY_ZONES, ZONE_BONUS_PER_HEX } from './strategic.js'
 import { getCountry } from './countries.js'
 import { advantagedDefenderCount, resolveBattleClash, FRONTLINE_CAP } from './combat.js'
+import { createLogger } from './logger.js'
 
-// Per-tick/per-battle chatter is dev-only; errors always log via console.error
-const log = IS_DEV ? console.log : () => {}
+// Per-tick/per-battle chatter is debug level (on by default in dev/test,
+// LOG_LEVEL=debug to see it in prod); errors always log via log.error.
+const log = createLogger('tick')
 
 function isNPC(username) {
   return username?.startsWith('BOT_') || username?.startsWith('WILD_')
@@ -59,7 +61,7 @@ export async function insertEvent(playerId, type, message, hexIndex = null) {
     // traffic in the game once bots are numerous.
     getIO()?.to(`player-${playerId}`).emit('events:new')
   } catch (err) {
-    console.error('[event] Failed to insert event:', err.message)
+    log.error('Failed to insert event', { err })
   }
 }
 
@@ -72,7 +74,7 @@ export async function insertWorldEvent(type, message, hexIndex = null, playerId 
     )
     getIO()?.emit('world:new')
   } catch (err) {
-    console.error('[world] Failed to insert world event:', err.message)
+    log.error('Failed to insert world event', { err })
   }
 }
 
@@ -83,7 +85,7 @@ async function sameAlliance(aId, bId, client = pool) {
     if (r.rows.length < 2) return false
     return r.rows[0].alliance_id != null && r.rows[0].alliance_id === r.rows[1].alliance_id
   } catch (err) {
-    console.error('[tick] sameAlliance check failed:', err.message)
+    log.error('sameAlliance check failed', { err })
     return false
   }
 }
@@ -93,7 +95,7 @@ const TRAINING_INTERVAL_MS = 15 * 1000
 const BASE_RATE = { gold: 1 }
 
 export async function runTick() {
-  log('[tick] Running resource tick...')
+  log.debug('Running resource tick...')
   try {
     const result = await pool.query(`
       SELECT
@@ -118,7 +120,7 @@ export async function runTick() {
       goldGain += Number(sRes.rows[0].cnt) * STRATEGIC_BONUS_GOLD
       await pool.query('UPDATE players SET gold=gold+$1 WHERE id=$2', [goldGain, row.id])
     }
-    log(`[tick] Resources updated for ${result.rows.length} players.`)
+    log.debug(`Resources updated for ${result.rows.length} players.`)
 
     // Record hex history - only when count changes, 30-day retention
     const lastSnaps = await pool.query(
@@ -202,7 +204,7 @@ export async function runTick() {
     `, [GOLD_CAP_BASE, GOLD_CAP_PER_HEX, GOLD_CAP_PER_MINE])
     getIO()?.emit('tick')
   } catch (err) {
-    console.error('[tick] Resource error:', err.message)
+    log.error('Resource error', { err })
   }
 }
 
@@ -266,7 +268,7 @@ export async function processTraining() {
         emitToRegion(job.h3_index, 'armies:update')
         emitToRegion(job.rally_hex, 'armies:update')
         await insertEvent(job.owner_id, 'training_complete', `${job.quantity} troops marching to rally point`, job.h3_index)
-        log(`[training] ${job.quantity} troops auto-marching to rally ${job.rally_hex}`)
+        log.debug(`[training] ${job.quantity} troops auto-marching to rally ${job.rally_hex}`)
       } else {
         const remaining = job.quantity - (job.delivered || 0)
         if (remaining > 0) {
@@ -274,7 +276,7 @@ export async function processTraining() {
           depositedHexes.add(job.h3_index)
         }
         await insertEvent(job.owner_id, 'training_complete', `${job.quantity} troops finished training at ${job.h3_index}`, job.h3_index)
-        log(`[training] ${job.quantity} troops ready at ${job.h3_index}`)
+        log.debug(`[training] ${job.quantity} troops ready at ${job.h3_index}`)
       }
     }
 
@@ -284,7 +286,7 @@ export async function processTraining() {
       emitToRegion(hex, 'armies:update')
     }
   } catch (err) {
-    console.error('[training] Error:', err.message)
+    log.error('Training error', { err })
   }
 }
 
@@ -328,7 +330,7 @@ export async function processCombat() {
       "SELECT id FROM armies WHERE arrives_at <= NOW() AND status='marching'"
     )
   } catch (err) {
-    console.error('[combat] Error:', err.message)
+    log.error('Combat error', { err })
     return
   }
 
@@ -378,7 +380,7 @@ export async function processCombat() {
           afterCommit.push(() => {
             emitToRegion(battle.h3_index, 'battle:update')
             emitToRegion(battle.h3_index, 'armies:update')
-            log(`[battle] reinforcement joined battle ${battle.id} as ${side} (+${army.quantity} troops to reserve)`)
+            log.debug(`[battle] reinforcement joined battle ${battle.id} as ${side} (+${army.quantity} troops to reserve)`)
           })
 
         } else if (targetHex?.owner_id === army.owner_id) {
@@ -388,7 +390,7 @@ export async function processCombat() {
           afterCommit.push(() => {
             emitToRegion(army.to_hex, 'armies:update')
             emitToRegion(army.to_hex, 'hexes:update')
-            log(`[combat] ${army.owner_id} reinforced own hex ${army.to_hex}`)
+            log.debug(`[combat] ${army.owner_id} reinforced own hex ${army.to_hex}`)
           })
 
         } else if (!targetHex || !targetHex.owner_id) {
@@ -416,7 +418,7 @@ export async function processCombat() {
           afterCommit.push(() => {
             if (claimed) {
               emitToRegion(army.to_hex, 'hexes:update')
-              log(`[combat] ${army.owner_id} auto-claimed ${army.to_hex}`)
+              log.debug(`[combat] ${army.owner_id} auto-claimed ${army.to_hex}`)
             }
             emitToRegion(army.to_hex, 'armies:update')
           })
@@ -428,7 +430,7 @@ export async function processCombat() {
           afterCommit.push(() => {
             emitToRegion(army.to_hex, 'armies:update')
             emitToRegion(army.to_hex, 'hexes:update')
-            log(`[combat] ${army.owner_id} reinforced ally hex ${army.to_hex}`)
+            log.debug(`[combat] ${army.owner_id} reinforced ally hex ${army.to_hex}`)
           })
 
         } else {
@@ -475,7 +477,7 @@ export async function processCombat() {
               }
               emitToRegion(army.to_hex, 'hexes:update')
               emitToRegion(army.to_hex, 'armies:update')
-              log(`[combat] ${army.to_hex} taken unopposed`)
+              log.debug(`[combat] ${army.to_hex} taken unopposed`)
             })
           } else {
             const atkFrontline = Math.min(FRONTLINE_CAP, attackStr)
@@ -524,13 +526,13 @@ export async function processCombat() {
               }
               emitToRegion(army.to_hex, 'battle:update')
               emitToRegion(army.to_hex, 'armies:update')
-              log(`[battle] started at ${army.to_hex}: ${attackStr} atk vs ${defTroopCount} def (${advantagedDefenders} defenders rolling with advantage)`)
+              log.debug(`[battle] started at ${army.to_hex}: ${attackStr} atk vs ${defTroopCount} def (${advantagedDefenders} defenders rolling with advantage)`)
             })
           }
         }
       })
     } catch (err) {
-      console.error('[combat] Error processing army', row.id, ':', err.message)
+      log.error('Error processing army', { armyId: row.id, err })
       continue
     }
     for (const fn of afterCommit) fn()
@@ -549,7 +551,7 @@ export async function processBattleRounds() {
   try {
     active = await pool.query("SELECT id FROM battles WHERE status='active'")
   } catch (err) {
-    console.error('[battle] Error:', err.message)
+    log.error('Battle error', { err })
     return
   }
 
@@ -616,7 +618,7 @@ export async function processBattleRounds() {
             const atkSurvivors = Math.round(atkTotal)
             if (atkSurvivors > 0) await depositTroops(battle.attacker_id, battle.h3_index, 'troop', atkSurvivors, tx)
             afterCommit.push(() => {
-              log(atkSurvivors > 0
+              log.debug(atkSurvivors > 0
                 ? `[battle] ${battle.id} ATTACKER WINS at ${battle.h3_index} (${atkSurvivors} troops survive)`
                 : `[battle] ${battle.id} ATTACKER WINS at ${battle.h3_index} (no survivors)`)
             })
@@ -626,7 +628,7 @@ export async function processBattleRounds() {
             const defSurvivors = Math.round(defTotal)
             if (defSurvivors > 0) await depositTroops(battle.defender_id, battle.h3_index, 'troop', defSurvivors, tx)
             afterCommit.push(() => {
-              log(defSurvivors > 0
+              log.debug(defSurvivors > 0
                 ? `[battle] ${battle.id} DEFENDER WINS at ${battle.h3_index} (${defSurvivors} troops survive)`
                 : `[battle] ${battle.id} DEFENDER WINS at ${battle.h3_index} (no survivors)`)
             })
@@ -651,7 +653,7 @@ export async function processBattleRounds() {
                 insertEvent(battle.defender_id, 'capital_lost', `Your capital has fallen! All is not lost - claim any free hex to found a new capital and rebuild.`, battle.h3_index)
                 insertWorldEvent('capital', `${defName}'s capital has fallen to ${atkName}!`, battle.h3_index, battle.attacker_id)
                 sendPush(battle.defender_id, 'Your capital has fallen!', 'All is not lost - claim any free hex to found a new capital and rebuild.', { hex: battle.h3_index })
-                log(`[battle] ${battle.defender_id} lost their capital at ${battle.h3_index}`)
+                log.debug(`[battle] ${battle.defender_id} lost their capital at ${battle.h3_index}`)
               })
             } else if (!isWild(defName) && !(isNPC(atkName) && isNPC(defName))) {
               // Routine bot-vs-bot skirmishes are the overwhelming majority of
@@ -713,12 +715,12 @@ export async function processBattleRounds() {
               result.atkLosses, result.defLosses, battle.id])
           afterCommit.push(() => {
             emitToRegion(battle.h3_index, 'battle:update')
-            log(`[battle] clash ${battle.round_number + 1} at ${battle.h3_index}: ${atkTotal.toFixed(0)} vs ${defTotal.toFixed(0)} (-${result.atkLosses} atk, -${result.defLosses} def)`)
+            log.debug(`[battle] clash ${battle.round_number + 1} at ${battle.h3_index}: ${atkTotal.toFixed(0)} vs ${defTotal.toFixed(0)} (-${result.atkLosses} atk, -${result.defLosses} def)`)
           })
         }
       })
     } catch (err) {
-      console.error('[battle] Error processing battle', row.id, ':', err.message)
+      log.error('Error processing battle', { battleId: row.id, err })
       continue
     }
     for (const fn of afterCommit) fn()
@@ -732,10 +734,10 @@ export async function processUpgrades() {
       await pool.query('UPDATE hexes SET upgrade_level=upgrade_level+1 WHERE h3_index=$1', [job.h3_index])
       await pool.query('DELETE FROM upgrade_queue WHERE id=$1', [job.id])
       const newLevel = await pool.query('SELECT upgrade_level FROM hexes WHERE h3_index=$1', [job.h3_index])
-      log(`[upgrade] ${job.h3_index} upgraded to level ${newLevel.rows[0]?.upgrade_level ?? '?'}`)
+      log.debug(`[upgrade] ${job.h3_index} upgraded to level ${newLevel.rows[0]?.upgrade_level ?? '?'}`)
     }
   } catch (err) {
-    console.error('[upgrade] Error:', err.message)
+    log.error('Upgrade error', { err })
   }
 }
 
@@ -788,19 +790,19 @@ export async function processDecay() {
       }
       if (lost > 0) {
         insertEvent(player.id, 'decay', `${lost} border hex${lost > 1 ? 'es' : ''} slipped from your control - at your empire's size, a hex needs ${requiredGarrison}+ troops or a building to hold. Garrison or build to hold the frontier.`)
-        log(`[decay] ${player.username} lost ${lost} border hexes (required garrison was ${requiredGarrison})`)
+        log.debug(`[decay] ${player.username} lost ${lost} border hexes (required garrison was ${requiredGarrison})`)
       }
     }
     for (const hex of lostHexes) emitToRegion(hex, 'hexes:update')
   } catch (err) {
-    console.error('[decay] Error:', err.message)
+    log.error('Decay error', { err })
   }
 }
 
 export let nextTickAt = Date.now() + TICK_INTERVAL_MS
 
 export async function startTick() {
-  console.log(`[tick] Starting resource tick every ${TICK_INTERVAL_MS / 60000} minutes`)
+  log.info('Starting resource tick', { everyMinutes: TICK_INTERVAL_MS / 60000 })
 
   async function wrappedTick() {
     await runTick()
@@ -821,5 +823,5 @@ export async function startTick() {
   setInterval(processSeason, TRAINING_INTERVAL_MS)
   setInterval(() => processWonders(pool, { announce: insertWorldEvent })
     .then(seized => { if (seized.length > 0) getIO()?.emit('wonder:update') })
-    .catch(err => console.error('[wonder] poll failed:', err.message)), COMBAT_INTERVAL_MS)
+    .catch(err => log.error('Wonder poll failed', { err })), COMBAT_INTERVAL_MS)
 }

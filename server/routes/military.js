@@ -7,6 +7,9 @@ import { isOcean } from '../terrain.js'
 import { notifyIncomingAttack } from '../notify.js'
 import { currentMarchHex, findMarchPath, pathStepCosts } from '../marchPath.js'
 import { buildVisibleSet, canSeeDetail } from '../visibility.js'
+import { createLogger } from '../logger.js'
+
+const log = createLogger('military')
 
 const router = Router()
 
@@ -21,7 +24,7 @@ router.get('/hex/:h3Index', requireAuth, async (req, res) => {
     ])
     res.json({ troops: troops.rows, training: training.rows, armies: armies.rows, rally_hex: hexRow.rows[0]?.rally_hex || null })
   } catch (err) {
-    console.error('[military] GET /hex/:h3Index failed:', err.message)
+    log.error('GET /hex/:h3Index failed', { err })
     res.status(500).json({ error: 'Server error' })
   }
 })
@@ -73,7 +76,7 @@ router.post('/train', requireAuth, async (req, res) => {
     res.json({ training, player: { gold } })
   } catch (err) {
     if (err.status) return res.status(err.status).json({ error: err.message })
-    console.error('[military] POST /train failed:', err.message)
+    log.error('POST /train failed', { err })
     res.status(500).json({ error: 'Server error' })
   }
 })
@@ -130,7 +133,7 @@ router.post('/march', requireAuth, async (req, res) => {
     res.json({ army })
   } catch (err) {
     if (err.status) return res.status(err.status).json({ error: err.message })
-    console.error('[military] POST /march failed:', err.message)
+    log.error('POST /march failed', { err })
     res.status(500).json({ error: 'Server error' })
   }
 })
@@ -155,7 +158,7 @@ router.delete('/armies/:id', requireAuth, async (req, res) => {
     emitToRegion(a.from_hex, 'armies:update')
     res.json({ success: true })
   } catch (err) {
-    console.error('[military] DELETE /armies/:id failed:', err.message)
+    log.error('DELETE /armies/:id failed', { err })
     res.status(500).json({ error: 'Server error' })
   }
 })
@@ -171,7 +174,7 @@ router.post('/rally', requireAuth, async (req, res) => {
     await pool.query('UPDATE hexes SET rally_hex=$1 WHERE h3_index=$2', [rallyHex, fromHex])
     res.json({ success: true, rally_hex: rallyHex })
   } catch (err) {
-    console.error('[military] POST /rally failed:', err.message)
+    log.error('POST /rally failed', { err })
     res.status(500).json({ error: 'Server error' })
   }
 })
@@ -182,7 +185,7 @@ router.delete('/rally/:h3Index', requireAuth, async (req, res) => {
     await pool.query('UPDATE hexes SET rally_hex=NULL WHERE h3_index=$1 AND owner_id=$2', [h3Index, req.player.id])
     res.json({ success: true })
   } catch (err) {
-    console.error('[military] DELETE /rally/:h3Index failed:', err.message)
+    log.error('DELETE /rally/:h3Index failed', { err })
     res.status(500).json({ error: 'Server error' })
   }
 })
@@ -219,7 +222,7 @@ router.get('/armies', optionalAuth, async (req, res) => {
     })
     res.json(rows)
   } catch (err) {
-    console.error('[military] GET /armies failed:', err.message)
+    log.error('GET /armies failed', { err })
     res.status(500).json({ error: 'Server error' })
   }
 })
@@ -245,7 +248,7 @@ router.get('/pending-claims', requireAuth, async (req, res) => {
     `, [req.player.id])
     res.json(result.rows.map(r => ({ ...r, claimable: !isOcean(r.h3_index) })))
   } catch (err) {
-    console.error('[military] GET /pending-claims failed:', err.message)
+    log.error('GET /pending-claims failed', { err })
     res.status(500).json({ error: 'Server error' })
   }
 })

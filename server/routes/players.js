@@ -11,6 +11,10 @@ import { getCountry } from '../countries.js'
 import { STRATEGIC_HEXES, STRATEGIC_BONUS_GOLD, CITY_ZONES, ZONE_BONUS_PER_HEX } from '../strategic.js'
 import { WONDERS } from '../wonders.js'
 import { containsBadWords } from '../moderation.js'
+import { createLogger } from '../logger.js'
+import { clientIp } from '../ratelimit.js'
+
+const log = createLogger('players')
 
 const router = Router()
 
@@ -33,10 +37,14 @@ router.post('/register', rateLimit({ windowMs: 60 * 60 * 1000, max: IS_DEV ? 100
       [username, hash, playerColor, STARTING_GOLD, STARTING_MANA]
     )
     const player = result.rows[0]
+    log.info('Registered', { id: player.id, username: player.username, ip: clientIp(req) })
     res.json({ token: signToken(player), player })
   } catch (err) {
-    if (err.code === '23505') return res.status(409).json({ error: 'Username already taken' })
-    console.error('[players] POST /register failed:', err.message)
+    if (err.code === '23505') {
+      log.debug('Registration rejected - username taken', { username, ip: clientIp(req) })
+      return res.status(409).json({ error: 'Username already taken' })
+    }
+    log.error('POST /register failed', { err })
     res.status(500).json({ error: 'Server error' })
   }
 })
@@ -54,11 +62,21 @@ router.post('/login', rateLimit({ windowMs: 10 * 60 * 1000, max: IS_DEV ? 1000 :
       [username]
     )
     const player = result.rows[0]
-    if (!player || player.deleted_at) return res.status(401).json({ error: 'Invalid credentials' })
+    if (!player || player.deleted_at) {
+      // Same "unknown user" reason for both a nonexistent username and a
+      // deleted one - the response is already the generic 'Invalid
+      // credentials' either way, and the log staying equally generic means
+      // it can't be used to enumerate which usernames exist or once did.
+      log.warn('Login failed - unknown user', { username, ip: clientIp(req) })
+      return res.status(401).json({ error: 'Invalid credentials' })
+    }
     delete player.deleted_at
 
     const valid = await bcrypt.compare(password, player.password_hash)
-    if (!valid) return res.status(401).json({ error: 'Invalid credentials' })
+    if (!valid) {
+      log.warn('Login failed - wrong password', { id: player.id, username: player.username, ip: clientIp(req) })
+      return res.status(401).json({ error: 'Invalid credentials' })
+    }
 
     const { password_hash, last_login_date, login_streak, ...playerData } = player
 
@@ -93,9 +111,10 @@ router.post('/login', rateLimit({ windowMs: 10 * 60 * 1000, max: IS_DEV ? 1000 :
       loginBonus = { gold: bonusGold, streak: newStreak }
     }
 
+    log.info('Login', { id: playerData.id, username: playerData.username, ip: clientIp(req), bonus: !!loginBonus })
     res.json({ token: signToken(playerData), player: playerData, loginBonus })
   } catch (err) {
-    console.error('[players] POST /login failed:', err.message)
+    log.error('POST /login failed', { err })
     res.status(500).json({ error: 'Server error' })
   }
 })
@@ -120,7 +139,7 @@ router.get('/leaderboard', async (req, res) => {
     `)
     res.json(result.rows)
   } catch (err) {
-    console.error('[players] GET /leaderboard failed:', err.message)
+    log.error('GET /leaderboard failed', { err })
     res.status(500).json({ error: 'Server error' })
   }
 })
@@ -150,7 +169,7 @@ router.get('/search', requireAuth, rateLimit({ windowMs: 60 * 1000, max: IS_DEV 
     `, [`%${q}%`])
     res.json(result.rows)
   } catch (err) {
-    console.error('[players] GET /search failed:', err.message)
+    log.error('GET /search failed', { err })
     res.status(500).json({ error: 'Server error' })
   }
 })
@@ -210,7 +229,7 @@ router.get('/stats', requireAuth, async (req, res) => {
 
     res.json(row)
   } catch (err) {
-    console.error('[players] GET /stats failed:', err.message)
+    log.error('GET /stats failed', { err })
     res.status(500).json({ error: 'Server error' })
   }
 })
@@ -223,7 +242,7 @@ router.get('/me', requireAuth, async (req, res) => {
     )
     res.json(result.rows[0])
   } catch (err) {
-    console.error('[players] GET /me failed:', err.message)
+    log.error('GET /me failed', { err })
     res.status(500).json({ error: 'Server error' })
   }
 })
@@ -251,7 +270,7 @@ router.post('/flag', requireAuth, async (req, res) => {
     if (rows[0]?.capital_hex) emitToRegion(rows[0].capital_hex, 'hexes:update')
     res.json({ ok: true })
   } catch (err) {
-    console.error('[players] POST /flag failed:', err.message)
+    log.error('POST /flag failed', { err })
     res.status(500).json({ error: 'Server error' })
   }
 })
@@ -272,7 +291,7 @@ router.get('/history', requireAuth, async (req, res) => {
     const sampled = Array.from({ length: MAX }, (_, i) => data[Math.floor(i * step)])
     res.json(sampled)
   } catch (err) {
-    console.error('[players] GET /history failed:', err.message)
+    log.error('GET /history failed', { err })
     res.status(500).json({ error: 'Server error' })
   }
 })
@@ -301,7 +320,7 @@ router.get('/export', requireAuth, async (req, res) => {
     res.setHeader('Content-Disposition', 'attachment; filename="realmwar-data.json"')
     res.json({ exported_at: new Date().toISOString(), account, alliance, hexes, troops, armies, buildings, events, hex_history: history, push_subscriptions: pushSubs, chat_messages: chat, battles })
   } catch (err) {
-    console.error('[players] GET /export failed:', err.message)
+    log.error('GET /export failed', { err })
     res.status(500).json({ error: 'Server error' })
   }
 })
@@ -343,9 +362,10 @@ router.delete('/me', requireAuth, async (req, res) => {
     })
     getIO()?.emit('hexes:update')
     getIO()?.emit('armies:update')
+    log.info('Account deleted', { id, ip: clientIp(req) })
     res.json({ ok: true })
   } catch (err) {
-    console.error('[players] DELETE /me failed:', err.message)
+    log.error('DELETE /me failed', { err })
     res.status(500).json({ error: 'Server error' })
   }
 })

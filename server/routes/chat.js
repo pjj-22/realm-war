@@ -4,6 +4,9 @@ import { requireAuth } from '../auth.js'
 import { getIO } from '../socket.js'
 import { CHAT_MAX_LENGTH } from '../config.js'
 import { rateLimit } from '../ratelimit.js'
+import { createLogger } from '../logger.js'
+
+const log = createLogger('chat')
 
 const router = Router()
 
@@ -33,7 +36,7 @@ router.get('/', requireAuth, async (req, res) => {
     }
     res.json(result.rows.reverse())
   } catch (err) {
-    console.error('[chat] GET / failed:', err.message)
+    log.error('GET / failed', { err })
     res.status(500).json({ error: 'Server error' })
   }
 })
@@ -58,7 +61,7 @@ router.post('/', requireAuth, rateLimit({ windowMs: 10 * 1000, max: 5, key: req 
     getIO()?.emit('chat:new', { channel: allianceId ? 'alliance' : 'global', allianceId })
     res.json({ success: true })
   } catch (err) {
-    console.error('[chat] POST / failed:', err.message)
+    log.error('POST / failed', { err })
     res.status(500).json({ error: 'Server error' })
   }
 })

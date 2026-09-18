@@ -1,6 +1,9 @@
 import { Router } from 'express'
 import { pool } from '../db.js'
 import { requireAuth } from '../auth.js'
+import { createLogger } from '../logger.js'
+
+const log = createLogger('events')
 
 const router = Router()
 
@@ -20,7 +23,7 @@ router.get('/', requireAuth, async (req, res) => {
     }
     res.json(result.rows)
   } catch (err) {
-    console.error('[events] GET / failed:', err.message)
+    log.error('GET / failed', { err })
     res.status(500).json({ error: 'Server error' })
   }
 })
@@ -33,7 +36,7 @@ router.get('/count', requireAuth, async (req, res) => {
     )
     res.json({ count: result.rows[0].count })
   } catch (err) {
-    console.error('[events] GET /count failed:', err.message)
+    log.error('GET /count failed', { err })
     res.status(500).json({ error: 'Server error' })
   }
 })

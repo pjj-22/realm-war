@@ -1,6 +1,9 @@
 import { pool } from './db.js'
 import { sendPush } from './push.js'
 import { getIO } from './socket.js'
+import { createLogger } from './logger.js'
+
+const log = createLogger('notify')
 
 function isNPC(username) {
   return username?.startsWith('BOT_') || username?.startsWith('WILD_')
@@ -34,6 +37,6 @@ export async function notifyIncomingAttack(attackerId, toHex, quantity, arrivesA
     getIO()?.to(`player-${owner.id}`).emit('events:new')
     sendPush(owner.id, 'Incoming attack!', message, { hex: toHex })
   } catch (err) {
-    console.error('[notify] incoming attack error:', err.message)
+    log.error('incoming attack error', { err })
   }
 }

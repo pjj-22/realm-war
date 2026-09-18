@@ -4,6 +4,9 @@ import { nextBattleRoundAt } from '../tick.js'
 import { optionalAuth } from '../auth.js'
 import { buildVisibleSet, canSeeDetail } from '../visibility.js'
 import { PROJECTION_GARRISON } from '../config.js'
+import { createLogger } from '../logger.js'
+
+const log = createLogger('battles')
 
 const router = Router()
 
@@ -67,7 +70,7 @@ router.get('/hex/:h3Index', optionalAuth, async (req, res) => {
       next_round_at: new Date(nextBattleRoundAt).toISOString(),
     })
   } catch (err) {
-    console.error('[battles] GET /hex/:h3Index failed:', err.message)
+    log.error('GET /hex/:h3Index failed', { err })
     res.status(500).json({ error: 'Server error' })
   }
 })
@@ -88,7 +91,7 @@ router.get('/active', optionalAuth, async (req, res) => {
     const viewerId = req.player?.id ?? null
     res.json(result.rows.map(b => redactBattle(b, visibleSet, viewerId)))
   } catch (err) {
-    console.error('[battles] GET /active failed:', err.message)
+    log.error('GET /active failed', { err })
     res.status(500).json({ error: 'Server error' })
   }
 })

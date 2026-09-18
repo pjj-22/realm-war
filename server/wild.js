@@ -3,6 +3,9 @@ import { gridDisk } from 'h3-js'
 import { isOcean } from './terrain.js'
 import { CAMPS_PER_SPAWN, CAMP_GARRISON_MIN, CAMP_GARRISON_MAX, CAPITAL_GARRISON_MIN, CAPITAL_GARRISON_MAX } from './config.js'
 import { CAPITAL_COUNTRY } from './strategic.js'
+import { createLogger } from './logger.js'
+
+const log = createLogger('wild')
 
 // The Wildlands "player" owns all neutral camps. It never trains, marches,
 // earns income, or appears on leaderboards - it exists so camps can defend.
@@ -22,10 +25,10 @@ export async function ensureWildlands() {
       [WILD_USERNAME, 'WILD_NO_LOGIN', '#6b6354']
     )
     wildId = result.rows[0].id
-    console.log(`[wild] Created ${WILD_USERNAME} (id ${wildId})`)
+    log.info('Created Wildlands player', { username: WILD_USERNAME, id: wildId })
     return wildId
   } catch (err) {
-    console.error('[wild] ensure error:', err.message)
+    log.error('ensure error', { err })
     return null
   }
 }
@@ -70,10 +73,10 @@ export async function seedCampsAround(capitalHex) {
         [wildId, h3, garrison]
       )
     }
-    if (picked.length) console.log(`[wild] Seeded ${picked.length} camps near ${capitalHex}`)
+    if (picked.length) log.info('Seeded camps', { count: picked.length, near: capitalHex })
     return picked
   } catch (err) {
-    console.error('[wild] seed error:', err.message)
+    log.error('seed error', { err })
     return []
   }
 }
@@ -106,10 +109,10 @@ export async function seedCapitalGarrisons() {
         [wildId, h3, garrison]
       )
     }
-    if (free.length) console.log(`[wild] Garrisoned ${free.length} country capitals`)
+    if (free.length) log.info('Garrisoned country capitals', { count: free.length })
     return free
   } catch (err) {
-    console.error('[wild] capital garrison error:', err.message)
+    log.error('capital garrison error', { err })
     return []
   }
 }
