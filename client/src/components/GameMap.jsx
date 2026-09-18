@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { useSocket, identifySocket, watchRegions } from '../hooks/useSocket'
 import { toast } from '../toastBus'
+import { ftueProgress } from '../ftueBus'
 // MapLibre 6 is ESM-only with named exports - no default export anymore.
 import * as maplibregl from 'maplibre-gl'
 // v6 runs its tile/geometry work in a separate module worker file. Left to
@@ -1811,7 +1812,7 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
               return prev
             }
             api.marchArmy(hex.h3, prev.targetHex, 'troop', qty)
-              .then(() => toast(`${qty} troops marching to the battle`, 'success'))
+              .then(() => { toast(`${qty} troops marching to the battle`, 'success'); ftueProgress('march') })
               .catch(err => toast(err.message))
             map.current.getCanvas().style.cursor = ''
             return null
@@ -1820,14 +1821,14 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
             // Multi-type dispatch from the drawer
             const entries = Object.entries(prev.troops).filter(([, qty]) => qty > 0)
             Promise.all(entries.map(([type, qty]) => api.marchArmy(prev.fromHex, hex.h3, type, qty)))
-              .then(() => loadClaimed())
+              .then(() => { loadClaimed(); ftueProgress('march') })
               .catch(err => toast(err.message))
             map.current.getCanvas().style.cursor = ''
             return null
           }
           // Single-type march
           api.marchArmy(prev.fromHex, hex.h3, prev.type, prev.quantity)
-            .then(() => loadClaimed())
+            .then(() => { loadClaimed(); ftueProgress('march') })
             .catch(err => toast(err.message))
           map.current.getCanvas().style.cursor = ''
           return null

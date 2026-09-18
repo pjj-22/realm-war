@@ -5,6 +5,7 @@ import { MineArt, BarracksArt, FortArt, BuildingIcon } from './BuildingArt'
 import { useIsMobile } from '../hooks/useIsMobile'
 import { useSocket } from '../hooks/useSocket'
 import { toast } from '../toastBus'
+import { ftueProgress } from '../ftueBus'
 import { resolveFlag, drawFlagToCanvas } from '../flags'
 import { daylightHoursLocal } from '../daylight'
 import { shortHex } from '../text'
@@ -369,6 +370,7 @@ export default function BottomDrawer({ hex, player, stats, pendingClaims, onClai
     try {
       const r = await api.build(hex.h3, type)
       onBuild?.(r.player, hex.h3, type)
+      ftueProgress('build')
       loadBuildings()
     } catch (err) {
       setBuildingData(prev => prev ? {
@@ -393,6 +395,7 @@ export default function BottomDrawer({ hex, player, stats, pendingClaims, onClai
     try {
       const r = await api.trainTroops(hex.h3, type, qty)
       onPlayerUpdate?.(r.player)
+      ftueProgress('train')
       loadMilitary()
     } catch (err) { toast(err.message) }
     finally { setBusy(false) }

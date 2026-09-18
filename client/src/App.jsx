@@ -25,6 +25,10 @@ export default function App() {
   const [showHelp, setShowHelp] = useState(false)
   const [showAccount, setShowAccount] = useState(false)
   const [showFTUE, setShowFTUE] = useState(false)
+  // The banner editor opens on its own the moment a capital exists - except
+  // while the guide is running, where it's the "Raise your banner" step and
+  // opens from the card instead of cutting in right after the first claim.
+  const [bannerRequested, setBannerRequested] = useState(false)
 
   // Checks stored auth on mount by calling the API - an async fetch, so there's
   // no pure-render substitute for setting player/checking state here.
@@ -72,11 +76,11 @@ export default function App() {
         onShowHelp={() => setShowHelp(true)}
         onShowAccount={() => setShowAccount(true)}
       />
-      {player?.capital_hex && !player?.flag_pixels && (
+      {player?.capital_hex && !player?.flag_pixels && (!showFTUE || bannerRequested) && (
         <FlagOnboardingModal onDone={(pixels, motto) => setPlayer(p => ({ ...p, flag_pixels: pixels, motto }))} />
       )}
       {showFTUE && player && (
-        <FTUEGuide player={player} onDismiss={() => setShowFTUE(false)} />
+        <FTUEGuide player={player} onDismiss={() => setShowFTUE(false)} onDesignBanner={() => setBannerRequested(true)} />
       )}
       {!player && showAuth && (
         <AuthModal key={authMode} initialMode={authMode} onAuth={handleAuth} onDismiss={() => setShowAuth(false)} />

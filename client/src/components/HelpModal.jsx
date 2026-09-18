@@ -94,21 +94,27 @@ export default function HelpModal({ onClose }) {
         </div>
 
         <div style={S.section}>
-          <div style={S.sectionTitle}>Getting Started</div>
-          <Row icon={<b style={{ color: '#b08040' }}>1</b>} label="Claim your first hex"
-            desc="Click any unclaimed hex on the map and claim it. This becomes your capital. You start with troops already stationed there." />
-          <Row icon={<b style={{ color: '#b08040' }}>2</b>} label="Build on your hexes"
-            desc="Your capital comes with a free Mine, and each hex holds one building. As you claim more hexes, add Mines for income, a Barracks for fast training, or Forts for defense." />
-          <Row icon={<b style={{ color: '#b08040' }}>3</b>} label="March your troops"
-            desc="Go to the Military tab. Select how many troops to send, click March, then click the target hex on the map." />
+          <div style={S.sectionTitle}>Quick Start</div>
+          <Row icon={<b style={{ color: '#b08040' }}>1</b>} label="Found your capital"
+            desc="Click any land hex. It comes with troops and a mine." />
+          <Row icon={<b style={{ color: '#b08040' }}>2</b>} label="Train troops"
+            desc="Military tab → Train." />
+          <Row icon={<b style={{ color: '#b08040' }}>3</b>} label="Take the hex next door"
+            desc="Military → March → click a neighbor. 5 troops claim it on arrival." />
+          <Row icon={<b style={{ color: '#b08040' }}>4</b>} label="Build a Barracks on it"
+            desc="Buildings tab → Barracks. Each hex holds one building; your capital's slot is its mine." />
+          <Row icon={<b style={{ color: '#b08040' }}>5</b>} label="Aim for a landmark"
+            desc="Gold-bordered hexes - London, Paris, the Eiffel Tower - are where the gold and the crowns are. Everything below is detail." />
         </div>
 
         <div style={S.section}>
           <div style={S.sectionTitle}>Gold</div>
           <Row icon={<GoldIcon size={15} />} label="Earned every tick"
             desc={`Gold arrives automatically every ${tickLabel}. You earn 1g per hex you own, +3g per Mine.`} />
-          <Row icon="★★" label="Strategic capitals"
-            desc="Gold and glowing-bordered hexes are strategic locations worth +5g per tick, plus +2g per hex you own inside that city's zone. Every country has one primary capital (★★) - own it to compete for that country's crown (see Country Crowns below)." />
+          <Row icon="★★" label="Landmarks: capital cities"
+            desc="Gold and glowing-bordered hexes are strategic cities worth +5g per tick, plus +2g per hex you own inside that city's zone. Every country has one primary capital (★★) - own it to compete for that country's crown (see Country Crowns below)." />
+          <Row icon="★" label="Landmarks: wonders"
+            desc="The Eiffel Tower, the Pyramids, Mount Fuji and a handful of others pay +10g per tick to whoever holds them - and everyone can see who does." />
         </div>
 
         <div style={S.section}>

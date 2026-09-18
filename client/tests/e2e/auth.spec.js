@@ -23,7 +23,8 @@ test.describe('Auth', () => {
     // Should be on the map now
     await expect(page.locator('canvas.maplibregl-canvas')).toBeVisible()
     // FTUE guide should appear for new player
-    await expect(page.locator('text=Claim your first territory')).toBeVisible({ timeout: 5000 })
+    await expect(page.locator('text=Found your capital')).toBeVisible({ timeout: 5000 })
+    await expect(page.locator('button:has-text("Find me a good spot")')).toBeVisible()
   })
 
   test('login shows daily bonus toast', async ({ page }) => {

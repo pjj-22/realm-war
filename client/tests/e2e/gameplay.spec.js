@@ -22,13 +22,19 @@ test.describe('Core gameplay', () => {
       // from the click, generously.
       await expect(page.locator('text=Capital founded')).toBeVisible({ timeout: 10000 })
 
-      // Founding a capital opens the one-time flag onboarding modal, which
-      // otherwise blocks the map canvas for every later test on this account.
+      // The onboarding guide moves to "Train 5 troops" on its own once the
+      // capital exists, and holds the banner editor back until its own
+      // "Raise your banner" step - so it must NOT pop up here.
+      await expect(page.locator('text=Train 5 troops')).toBeVisible({ timeout: 5000 })
+      await expect(page.locator('text=Design Your Banner')).toBeHidden()
+
+      // Skipping the guide releases the banner editor, which would otherwise
+      // block the map canvas for every later test on this account.
+      await page.getByRole('button', { name: 'Skip', exact: true }).click()
       const skipFlagBtn = page.locator('button:has-text("Skip - pick for me")')
-      if (await skipFlagBtn.isVisible({ timeout: 3000 }).catch(() => false)) {
-        await skipFlagBtn.click()
-        await expect(page.locator('text=Design Your Banner')).toBeHidden({ timeout: 5000 })
-      }
+      await expect(skipFlagBtn).toBeVisible({ timeout: 5000 })
+      await skipFlagBtn.click()
+      await expect(page.locator('text=Design Your Banner')).toBeHidden({ timeout: 5000 })
     }
   })
 

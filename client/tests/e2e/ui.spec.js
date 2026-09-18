@@ -39,7 +39,8 @@ test.describe('UI labels and layout', () => {
     await expect(page.locator('text=How to Play')).toBeVisible()
     // Should say "tick" not "harvest" as main term
     await expect(page.locator('text=Earned every tick')).toBeVisible()
-    await expect(page.locator('text=Strategic capitals')).toBeVisible()
+    await expect(page.locator('text=Landmarks: capital cities')).toBeVisible()
+    await expect(page.locator('text=Quick Start')).toBeVisible()
   })
 
   test('no JS errors on load, and the map worker actually fetches tiles', async ({ page }) => {
