@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { api } from '../api/client'
-import { BannerIcon, SwordsIcon, KeepIcon, BoltIcon, TargetIcon, GoldIcon, CrownIcon, TentIcon } from './Icons'
+import { BannerIcon, SwordsIcon, BoltIcon, TargetIcon, GoldIcon, CrownIcon, TentIcon } from './Icons'
 import { useIsMobile } from '../hooks/useIsMobile'
 
 // One verb per step. Action steps advance only when the player actually does
@@ -8,6 +8,12 @@ import { useIsMobile } from '../hooks/useIsMobile'
 // changing), never on a button - the card is a checklist the game ticks off,
 // not a reading assignment next to it. Mechanics (building slots, exact
 // bonuses) are deliberately left to the UI they belong to.
+//
+// No "build a Barracks" step: a barracks needs a hex besides the capital
+// (whose slot is its free Mine), and in prod that hex isn't yours until a
+// march actually arrives - 25 minutes per hex, not something a checklist
+// step should sit blocked on. That tip instead fires as a toast the moment
+// it's actually possible - see GameMap.jsx's loadMyHexes.
 const STEPS = [
   {
     id: 'claim',
@@ -24,14 +30,8 @@ const STEPS = [
   {
     id: 'march',
     title: 'Take the hex next door',
-    body: 'Military → March → click a neighbor. 5 troops claim it on arrival.',
+    body: 'Military → March → click a neighbor. 5 troops claim it on arrival - it can take a while, so feel free to keep going.',
     icon: BoltIcon,
-  },
-  {
-    id: 'build',
-    title: 'Build a Barracks on it',
-    body: 'Buildings tab → Barracks. Troops train 10× faster there.',
-    icon: KeepIcon,
   },
   {
     id: 'banner',
@@ -75,7 +75,7 @@ export default function FTUEGuide({ player, onDismiss, onDesignBanner }) {
   // Train/march/build report in from where they succeed (see ftueBus.js);
   // only the current step's own event moves the card forward.
   useEffect(() => {
-    const NEXT = { train: 'march', march: 'build', build: 'banner' }
+    const NEXT = { train: 'march', march: 'banner' }
     function onProgress(e) {
       if (e.detail === stepId && NEXT[stepId]) advance(NEXT[stepId])
     }

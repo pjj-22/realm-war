@@ -41,6 +41,7 @@ import { theme } from '../theme'
 
 
 const HEX_RESOLUTION = 7
+const BARRACKS_TIP_KEY = 'rw_tip_barracks_shown'
 // Mirrors server/config.js's OCEAN_MARCH_MULTIPLIER - display-only, so keep
 // in sync by hand if that value ever changes (same as HelpModal.jsx's
 // existing "10x longer" copy, which has the same duplication).
@@ -642,6 +643,7 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
   // multi-megabyte and growing all season, refetched on every hexes:update.
   const claimedRef = useRef({})
   const myHexesRef = useRef({})
+  const prevMyHexCountRef = useRef(null) // for the one-time "you can build a Barracks now" tip below
   const viewportHexesRef = useRef({})
   const overviewSummaryRef = useRef({}) // parent-cell -> {color}, for the low-zoom overview layer
   const [selectedHex, setSelectedHex] = useState(null)
@@ -813,6 +815,17 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
       const byIndex = {}
       hexes.forEach(h => { byIndex[h.h3_index] = h })
       myHexesRef.current = byIndex
+      // Barracks needs a hex besides the capital (whose slot is its free
+      // Mine), so it's only actually possible once this count crosses from
+      // 1 to 2+ - which in prod is however long the march that got you there
+      // took. Firing the tip here, right when it stops being impossible,
+      // beats an onboarding step that would otherwise sit blocked for it.
+      const count = hexes.length
+      if (prevMyHexCountRef.current === 1 && count > 1 && !localStorage.getItem(BARRACKS_TIP_KEY)) {
+        localStorage.setItem(BARRACKS_TIP_KEY, '1')
+        toast('New territory! Build a Barracks here - troops train 10× faster.', 'success')
+      }
+      prevMyHexCountRef.current = count
       mergeClaimed()
     } catch { /* map not ready yet, or a transient fetch failure - next tick retries */ }
   }, [mergeClaimed])

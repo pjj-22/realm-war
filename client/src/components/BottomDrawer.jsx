@@ -370,7 +370,6 @@ export default function BottomDrawer({ hex, player, stats, pendingClaims, onClai
     try {
       const r = await api.build(hex.h3, type)
       onBuild?.(r.player, hex.h3, type)
-      ftueProgress('build')
       loadBuildings()
     } catch (err) {
       setBuildingData(prev => prev ? {
