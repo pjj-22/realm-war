@@ -2253,7 +2253,14 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
       const maxAffordable = Math.floor(budget / goldPerTroop)
       if (maxAffordable < 1) break
       const isLast = i === targets.length - 1
-      const qty = isLast ? maxAffordable : Math.max(1, Math.floor(maxAffordable * (0.2 + Math.random() * 0.5)))
+      // Split roughly evenly across however many hexes are left, not a
+      // random 20-70% cut of whatever's left each time - that compounds
+      // into a geometric falloff that dries up the budget after ~10 hexes
+      // no matter how many are actually owned (55 owned hexes only ever
+      // saw ~11 trained at).
+      const remaining = targets.length - i
+      const evenShare = Math.max(1, Math.floor(maxAffordable / remaining))
+      const qty = isLast ? maxAffordable : Math.min(maxAffordable, Math.max(1, Math.round(evenShare * (0.7 + Math.random() * 0.6))))
       try {
         const r = await api.trainTroops(targets[i].h3_index, 'troop', qty)
         budget = r.player.gold

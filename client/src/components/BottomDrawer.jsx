@@ -227,7 +227,6 @@ export default function BottomDrawer({ hex, player, stats, pendingClaims, onClai
   const [buildingData, setBuildingData] = useState(null)
   const [military, setMilitary] = useState(null)
   const [trainQty, setTrainQty] = useState(10)
-  const [dispatchQty, setDispatchQty] = useState({ troop: 0 })
   const [busy, setBusy] = useState(false)
   const [troopGoldCost, setTroopGoldCost] = useState(1)
   const [buildingCosts, setBuildingCosts] = useState({})
@@ -241,6 +240,10 @@ export default function BottomDrawer({ hex, player, stats, pendingClaims, onClai
     entrench_max_neighbors: 4, strategic_advantage_troops: 2, max_advantaged_defenders: 5,
     min_troops_to_claim: 5, decay_hex_threshold: 30, decay_scale_hexes_per_step: 10,
   })
+  // Defaults to the claim threshold, not "all troops" - marching exactly
+  // enough to claim (then leaving the rest garrisoned) is the overwhelmingly
+  // common move, so it shouldn't take an extra click every single time.
+  const [dispatchQty, setDispatchQty] = useState({ troop: gameConfig.min_troops_to_claim })
 
   useEffect(() => {
     api.getConfig().then(cfg => {

@@ -25,9 +25,28 @@ export default function Tooltip({ text, placement = 'top', children, style }) {
     if (!text) return
     const r = anchorRef.current?.getBoundingClientRect()
     if (r) {
-      setPos(placement === 'bottom'
-        ? { top: r.bottom + 6, left: r.left + r.width / 2 }
-        : { top: r.top - 6, left: r.left + r.width / 2 })
+      // Centering the box on the anchor's midpoint (old behavior) pushes it
+      // off-screen whenever the anchor isn't near horizontal center - which
+      // is most of the time on a phone-width screen (e.g. the Income card
+      // in BottomDrawer sits at the left edge of a row of cards). Clamp the
+      // box's left edge to stay within the viewport instead.
+      const margin = 8
+      const boxWidth = Math.min(230, window.innerWidth * 0.75)
+      const center = r.left + r.width / 2
+      const left = Math.min(
+        Math.max(center - boxWidth / 2, margin),
+        Math.max(margin, window.innerWidth - boxWidth - margin)
+      )
+      // A 'top' placement that opens upward too close to the top of the
+      // viewport (e.g. a tag near the top of the BottomDrawer header)
+      // renders mostly above y=0 - flip it downward instead.
+      const effectivePlacement = placement === 'top' && r.top < 100 ? 'bottom' : placement
+      setPos({
+        top: effectivePlacement === 'bottom' ? r.bottom + 6 : r.top - 6,
+        left,
+        width: boxWidth,
+        placement: effectivePlacement,
+      })
     }
     setOpen(true)
   }
@@ -44,10 +63,10 @@ export default function Tooltip({ text, placement = 'top', children, style }) {
       {open && text && pos && createPortal(
         <div style={{
           position: 'fixed', left: pos.left, top: pos.top,
-          transform: `translate(-50%, ${placement === 'bottom' ? '0' : '-100%'})`,
+          transform: pos.placement === 'bottom' ? 'none' : 'translateY(-100%)',
           background: 'rgba(12,8,24,0.98)', border: '1px solid rgba(160,120,220,0.4)',
           borderRadius: 6, padding: '9px 11px', fontSize: 12, color: '#c9b99a',
-          whiteSpace: 'pre-line', width: 230, maxWidth: '75vw', zIndex: 1000,
+          whiteSpace: 'pre-line', width: pos.width, zIndex: 1000,
           boxShadow: '0 4px 20px rgba(0,0,0,0.5)', textAlign: 'left', lineHeight: 1.5,
           fontFamily: 'Georgia, serif', pointerEvents: 'none',
         }}>
