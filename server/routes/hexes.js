@@ -11,6 +11,7 @@ import { STRATEGIC_HEXES, STRATEGIC_BONUS_GOLD } from '../strategic.js'
 import { seedCampsAround } from '../wild.js'
 import { foundCapital } from '../founding.js'
 import { findMarchPath } from '../marchPath.js'
+import { getUnlockState, oceanMultiplierFor } from '../unlocks.js'
 import { buildVisibleSet, canSeeDetail } from '../visibility.js'
 import { createLogger } from '../logger.js'
 
@@ -190,11 +191,12 @@ router.post('/terrain', (req, res) => {
 // MAX_EXPANDED nodes with a linear-scan open set), and the client fires this
 // on every hover over a new hex during march targeting, so it needs a ceiling
 // or a script can pin the event loop.
-router.post('/route', requireAuth, rateLimit({ windowMs: 60 * 1000, max: IS_DEV ? 5000 : 400, message: 'Slow down' }), (req, res) => {
+router.post('/route', requireAuth, rateLimit({ windowMs: 60 * 1000, max: IS_DEV ? 5000 : 400, message: 'Slow down' }), async (req, res) => {
   const { fromHex, toHex } = req.body
   if (!fromHex || !toHex) return res.status(400).json({ error: 'fromHex and toHex required' })
   try {
-    res.json(findMarchPath(fromHex, toHex))
+    const oceanMult = oceanMultiplierFor(await getUnlockState(req.player.id))
+    res.json(findMarchPath(fromHex, toHex, oceanMult))
   } catch (err) {
     log.error('POST /route failed', { err })
     res.status(500).json({ error: 'Server error' })

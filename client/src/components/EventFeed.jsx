@@ -1,4 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
+import { createPortal } from 'react-dom'
+import { cellToLatLng, isValidCell } from 'h3-js'
 import { api } from '../api/client.js'
 import { useSocket } from '../hooks/useSocket'
 import { getPushStatus, enablePush, disablePush } from '../push.js'
@@ -24,6 +26,8 @@ const TYPE_ICONS = {
   crown:             CrownIcon,
   plunder:           GoldIcon,
   decay:             LeafIcon,
+  orders:            SwordsIcon,
+  unlock:            TrophyIcon,
   season:            BannerIcon,
   // World events (The Herald)
   battle:            SwordsIcon,
@@ -48,6 +52,16 @@ function relTime(ts) {
   if (secs < 3600) return `${Math.floor(secs / 60)}m ago`
   if (secs < 86400) return `${Math.floor(secs / 3600)}h ago`
   return `${Math.floor(secs / 86400)}d ago`
+}
+
+// Ask GameMap to fly to and select a hex (same rw:flyto bus the FTUE uses).
+function goToHex(h3) {
+  try {
+    if (!isValidCell(h3)) return false
+    const [lat, lng] = cellToLatLng(h3)
+    window.dispatchEvent(new CustomEvent('rw:flyto', { detail: { lat, lng, zoom: 12, h3 } }))
+    return true
+  } catch { return false }
 }
 
 function PushToggle() {
@@ -204,16 +218,16 @@ export default function EventFeed() {
 
   return (
     <div style={{ position: 'relative' }}>
-      {popups.length > 0 && (
+      {popups.length > 0 && createPortal(
         <div style={{
-          position: 'fixed', top: 56, right: 8, zIndex: 90,
+          position: 'fixed', top: 'calc(56px + env(safe-area-inset-top))', right: 8, zIndex: 400,
           display: 'flex', flexDirection: 'column', gap: 8,
           pointerEvents: 'none',
         }}>
           {popups.map(ev => (
             <div
               key={ev.id}
-              onClick={openFeed}
+              onClick={() => (ev.hex_index && goToHex(ev.hex_index)) || openFeed()}
               style={{
                 pointerEvents: 'auto', cursor: 'pointer',
                 width: 'min(300px, calc(100vw - 16px))',
@@ -231,7 +245,8 @@ export default function EventFeed() {
               </span>
             </div>
           ))}
-        </div>
+        </div>,
+        document.body
       )}
       <button
         onClick={open ? () => setOpen(false) : openFeed}
@@ -268,20 +283,20 @@ export default function EventFeed() {
         )}
       </button>
 
-      {open && (
+      {open && createPortal(
         <div style={{
           position: 'fixed',
-          top: 54,
+          top: 'calc(54px + env(safe-area-inset-top))',
           right: 8,
           background: 'rgba(8,6,20,0.97)',
           border: '1px solid rgba(255,255,255,0.1)',
           borderRadius: 6,
           width: 'min(320px, calc(100vw - 16px))',
-          maxHeight: 420,
+          maxHeight: 'min(420px, calc(100dvh - 72px))',
           display: 'flex',
           flexDirection: 'column',
           boxShadow: '0 8px 32px rgba(0,0,0,0.7)',
-          zIndex: 100,
+          zIndex: 400,
           fontFamily: 'Georgia, serif',
         }}>
           <div style={{
@@ -316,8 +331,13 @@ export default function EventFeed() {
               <div style={{ padding: 16, color: theme.text.tertiary, fontSize: 14, textAlign: 'center' }}>
                 {tab === 'empire' ? 'No dispatches' : 'The world is quiet… for now'}
               </div>
-            ) : rows.map(ev => (
-              <div key={`${tab}-${ev.id}`} style={{
+            ) : rows.map(ev => {
+              const canGo = !!ev.hex_index && isValidCell(ev.hex_index)
+              return (
+              <div key={`${tab}-${ev.id}`}
+                onClick={canGo ? () => { if (goToHex(ev.hex_index)) setOpen(false) } : undefined}
+                style={{
+                cursor: canGo ? 'pointer' : 'default',
                 padding: '9px 12px',
                 borderBottom: '1px solid rgba(255,255,255,0.04)',
                 display: 'flex',
@@ -333,13 +353,15 @@ export default function EventFeed() {
                     {stripEmoji(ev.message)}
                   </div>
                   <div style={{ fontSize: 12, color: theme.text.tertiary, marginTop: 3 }}>
-                    {relTime(ev.created_at)}
+                    {relTime(ev.created_at)}{canGo && ' · tap to view'}
                   </div>
                 </div>
               </div>
-            ))}
+              )
+            })}
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   )

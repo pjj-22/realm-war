@@ -69,6 +69,7 @@ export const BATTLE_INTERVAL_MS = IS_DEV ? (10 * 1000) / SPEED_DIV : 60 * 1000
 
 // ─── Ocean travel ─────────────────────────────────────────────────────────────
 export const OCEAN_MARCH_MULTIPLIER = 10  // ocean hexes cost 10× march time
+export const OCEAN_MARCH_MULTIPLIER_SEA_POWER = 2  // ...for empires with the sea_power unlock (UNLOCKS)
 
 // ─── Building slots ───────────────────────────────────────────────────────────
 export const SLOT_BASE       = 2
@@ -108,6 +109,7 @@ export const ENTRENCH_MAX_NEIGHBORS          = 4  // capped at +4
 export const DECAY_HEX_THRESHOLD = IS_SANDBOX ? 12 : 30  // empires above this size start decaying
 export const DECAY_CHANCE        = 0.15                // per eligible border hex per tick
 export const DECAY_MAX_PER_TICK  = 3                   // at most N hexes lost per player per tick
+export const DECAY_TROOP_RETURN  = 3 / 5               // share of a decayed hex's garrison that makes it back to the capital
 // A hex needs at least this many troops to be decay-safe, and the bar rises
 // as the empire grows: +1 required troop for every DECAY_SCALE_HEXES_PER_STEP
 // hexes owned beyond DECAY_HEX_THRESHOLD. A single token troop only ever
@@ -149,6 +151,24 @@ export const REGION_RESOLUTION = 5
 // this is what actually stops "spread everywhere with 1 troop," rather than
 // just making it decay slowly afterward.
 export const MIN_TROOPS_TO_CLAIM = 5
+
+// Empire-management unlocks, earned by hex count. Every gate on the server and
+// every locked button on the client reads this one list, so moving a feature
+// between tiers is a one-line change. Unlocks go by the most hexes a player
+// has held this season (players.peak_hexes), not their current count - losing
+// a border hex at 198 shouldn't lock features mid-war. The sandbox uses
+// smaller numbers, like the other economy constants.
+export const UNLOCKS = [
+  { id: 'empire',       hexes: IS_SANDBOX ? 5  : 20,  name: 'Empire dashboard',   desc: 'Every hex you own in one list - sort, filter, jump.' },
+  { id: 'mass_march',   hexes: IS_SANDBOX ? 5  : 20,  name: 'Mass march',         desc: 'Send troops from many hexes to one target in a single order.' },
+  { id: 'fan_out',      hexes: IS_SANDBOX ? 12 : 50,  name: 'Fan out',            desc: 'One click sends troops to neighbouring hexes to claim or attack.' },
+  { id: 'orders',       hexes: IS_SANDBOX ? 12 : 50,  name: 'Standing troop orders', desc: 'Hexes keep a minimum garrison, topped up every harvest.' },
+  { id: 'build_orders', hexes: IS_SANDBOX ? 25 : 100, name: 'Standing build orders', desc: 'Hexes raise a fort, barracks or mine on their own.' },
+  { id: 'coordinated',  hexes: IS_SANDBOX ? 50 : 200, name: 'Coordinated arrival', desc: 'Mass marches and fan-outs can hold every army to the slowest one so they all land together.' },
+  { id: 'reinforce',    hexes: IS_SANDBOX ? 50 : 200, name: 'Reinforce threatened', desc: 'One click sends spare troops from nearby hexes to the hexes under attack, if they can arrive in time.' },
+  { id: 'sea_power',    hexes: IS_SANDBOX ? 100 : 500, name: 'Sea power',          desc: 'Your armies cross water at 2x cost instead of 10x.' },
+]
+export const MASS_MARCH_MAX_SOURCES = 500
 
 // ─── Country crowns ───────────────────────────────────────────────────────────
 export const CROWN_MIN_HEXES = IS_SANDBOX ? 3 : 10  // hexes in-country (plus its capital) to be crowned

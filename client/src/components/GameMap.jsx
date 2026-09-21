@@ -18,10 +18,11 @@ import * as maplibregl from 'maplibre-gl'
 // the built bundle via preview.
 import maplibreWorkerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url'
 maplibregl.setWorkerUrl(maplibreWorkerUrl)
-import { polygonToCells, cellToBoundary, cellToLatLng, cellToParent, gridDisk, getHexagonEdgeLengthAvg, getHexagonAreaAvg } from 'h3-js'
+import { polygonToCells, cellToBoundary, cellToLatLng, isValidCell, cellToParent, gridDisk, getHexagonEdgeLengthAvg, getHexagonAreaAvg } from 'h3-js'
 import 'maplibre-gl/dist/maplibre-gl.css'
 import BottomDrawer from './BottomDrawer'
 import ArmiesHUD from './ArmiesHUD'
+import EmpirePanel from './EmpirePanel'
 import LeaderboardPanel from './LeaderboardPanel'
 import EventFeed from './EventFeed'
 import BattlePanel from './BattlePanel'
@@ -42,10 +43,6 @@ import { theme } from '../theme'
 
 const HEX_RESOLUTION = 7
 const BARRACKS_TIP_KEY = 'rw_tip_barracks_shown'
-// Mirrors server/config.js's OCEAN_MARCH_MULTIPLIER - display-only, so keep
-// in sync by hand if that value ever changes (same as HelpModal.jsx's
-// existing "10x longer" copy, which has the same duplication).
-const OCEAN_MARCH_MULTIPLIER = 10
 // Chat ships behind a flag until there's moderation (see server config.js)
 const CHAT_ON = import.meta.env.VITE_CHAT_ENABLED === 'true'
 
@@ -186,6 +183,23 @@ const MONUMENT_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="${44 * DPR}
     <rect x="6.8" y="16.4" width="8.4" height="1.9"/>
   </g>
 </svg>`
+
+// Makes a [lat, lng] sequence continuous across the antimeridian by shifting
+// longitudes by +/-360 wherever neighbours jump more than 180 degrees, so a
+// route from Russia to Alaska runs 179 -> 181 across the Bering Strait
+// instead of 179 -> -179 (which draws, and interpolates, the long way round
+// the whole globe). MapLibre renders longitudes past +/-180 on its world copies.
+function unwrapLatLngs(latlngs) {
+  let offset = 0
+  return latlngs.map(([lat, lng], i) => {
+    if (i > 0) {
+      const prev = latlngs[i - 1][1]
+      if (lng - prev > 180) offset -= 360
+      else if (lng - prev < -180) offset += 360
+    }
+    return [lat, lng + offset]
+  })
+}
 
 // Wraps a longitude into [-180, 180).
 function wrapLng(lng) {
@@ -1177,13 +1191,47 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
   // External fly-to requests (e.g. FTUE "take me to the front")
   useEffect(() => {
     const handler = (e) => {
-      const { lat, lng, zoom: z } = e.detail || {}
+      const { lat, lng, zoom: z, h3 } = e.detail || {}
       if (lat == null || lng == null) return
       map.current?.flyTo({ center: [lng, lat], zoom: z || 9, speed: 1.2 })
+      if (h3) selectHexByIndex(h3)
     }
     window.addEventListener('rw:flyto', handler)
     return () => window.removeEventListener('rw:flyto', handler)
+  }, [selectHexByIndex])
+
+  // Clicking a push notification: the service worker either messages this
+  // already-open tab, or opens a fresh one at /?hex=<h3>. Both end up as a
+  // normal rw:flyto once our own hexes have loaded (selection reads them).
+  const [showEmpire, setShowEmpire] = useState(false)
+  const flyToOwnHex = useCallback((h3) => {
+    try {
+      const [lat, lng] = cellToLatLng(h3)
+      map.current?.flyTo({ center: [lng, lat], zoom: 12, speed: 1.5 })
+      selectHexByIndex(h3)
+    } catch { /* bad h3 index - skip */ }
+  }, [selectHexByIndex])
+  const goToPushHex = useCallback((h3) => {
+    try {
+      if (!isValidCell(h3)) return
+      const [lat, lng] = cellToLatLng(h3)
+      window.dispatchEvent(new CustomEvent('rw:flyto', { detail: { lat, lng, zoom: 12, h3 } }))
+    } catch { /* malformed hex in the payload - stay put */ }
   }, [])
+  useEffect(() => {
+    if (!('serviceWorker' in navigator)) return
+    const onMessage = (e) => { if (e.data?.type === 'goto-hex' && e.data.hex) goToPushHex(e.data.hex) }
+    navigator.serviceWorker.addEventListener('message', onMessage)
+    return () => navigator.serviceWorker.removeEventListener('message', onMessage)
+  }, [goToPushHex])
+  const pendingUrlHexRef = useRef(new URLSearchParams(window.location.search).get('hex'))
+  useEffect(() => {
+    const h3 = pendingUrlHexRef.current
+    if (!h3 || !player?.id) return
+    pendingUrlHexRef.current = null
+    window.history.replaceState(null, '', window.location.pathname + window.location.hash)
+    loadClaimed().then(() => goToPushHex(h3))
+  }, [player?.id, loadClaimed, goToPushHex])
 
   useEffect(() => { loadSeason() }, [loadSeason])
 
@@ -1610,7 +1658,7 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
         id: 'march-preview-label', type: 'symbol', source: 'march-preview', minzoom: 5,
         filter: ['==', ['get', 'labelPoint'], true],
         layout: {
-          'text-field': `⚓ ${OCEAN_MARCH_MULTIPLIER}× slower over water`,
+          'text-field': '⚓ slower over water',
           'text-size': 12, 'text-offset': [0, -1.2], 'text-anchor': 'bottom',
         },
         paint: { 'text-color': '#5ac9ff', 'text-halo-color': 'rgba(0,0,0,0.85)', 'text-halo-width': 1.4 },
@@ -1830,6 +1878,19 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
             map.current.getCanvas().style.cursor = ''
             return null
           }
+          if (prev.mass) {
+            // Mass march from the Empire panel: everything spare on the chosen hexes
+            const { sources, keep, sync } = prev.mass
+            api.marchMany(sources, hex.h3, keep, sync)
+              .then(r => {
+                toast(r.armies ? `${r.troops} troops marching from ${r.armies} hexes` : 'No troops were free to send', r.armies ? 'success' : 'error')
+                loadClaimed(); ftueProgress('march')
+                api.getArmies().then(setArmies).catch(() => {})
+              })
+              .catch(err => toast(err.message))
+            map.current.getCanvas().style.cursor = ''
+            return null
+          }
           if (prev.troops) {
             // Multi-type dispatch from the drawer
             const entries = Object.entries(prev.troops).filter(([, qty]) => qty > 0)
@@ -1878,7 +1939,7 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
         crossesOcean = route.stepCosts.some(c => c > 1)
       } catch { return clearMarchPreview() }
       if (myToken !== previewToken) return // a newer hover has since taken over
-      const coords = path.map(h => { const [lat, lng] = cellToLatLng(h); return [lng, lat] })
+      const coords = unwrapLatLngs(path.map(cellToLatLng)).map(([lat, lng]) => [lng, lat])
 
       const features = [
         { type: 'Feature', properties: { crossesOcean }, geometry: { type: 'LineString', coordinates: coords } },
@@ -2044,7 +2105,7 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
       let cached = pathCache.get(a.id)
       if (!cached) {
         if (!a.path?.length) return null
-        cached = { latlngs: a.path.map(cellToLatLng), stepCosts: a.stepCosts || [] }
+        cached = { latlngs: unwrapLatLngs(a.path.map(cellToLatLng)), stepCosts: a.stepCosts || [] }
         pathCache.set(a.id, cached)
       }
       const { latlngs, stepCosts } = cached
@@ -2501,6 +2562,8 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
           claimedRef={claimedRef}
           onRefresh={() => api.getArmies().then(setArmies).catch(() => {})}
           onAutoTrain={handleAutoTrain}
+          onOpenEmpire={() => setShowEmpire(true)}
+          unlocks={stats?.unlocks}
           onFlyTo={(h3) => {
             try {
               const [lat, lng] = cellToLatLng(h3)
@@ -2508,6 +2571,19 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
               selectHexByIndex(h3)
             } catch { /* bad/foreign h3 index - just skip the fly-to */ }
           }}
+        />
+      )}
+
+      {showEmpire && player && (
+        <EmpirePanel
+          player={player}
+          armies={armies}
+          activeBattles={activeBattles}
+          onFlyTo={flyToOwnHex}
+          unlocks={stats?.unlocks}
+          onMassMarch={({ sources, keep, sync }) => { setShowEmpire(false); setMarchMode({ mass: { sources, keep, sync } }) }}
+          onSent={() => { loadClaimed(); ftueProgress('march'); api.getArmies().then(setArmies).catch(() => {}) }}
+          onClose={() => setShowEmpire(false)}
         />
       )}
 
@@ -2662,6 +2738,8 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
               ? 'Click an owned hex to set as rally point'
               : marchMode?.battleMode && !marchMode.fromHex
                 ? 'Select source hex to reinforce from'
+                : marchMode?.mass
+                  ? `Mass march: ${marchMode.mass.sources.length} hexes, leaving ${marchMode.mass.keep} each${marchMode.mass.sync ? ', arriving together' : ''} - click destination`
                 : marchMode?.troops
                   ? `Marching ${Object.values(marchMode.troops).reduce((s, n) => s + n, 0)} troops - click destination`
                   : 'Select target hex'}

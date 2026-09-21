@@ -112,7 +112,7 @@ function MarchRow({ army, isOwn, canRecall, onRecall, showDistance }) {
 }
 
 // ── Main component ────────────────────────────────────────────────────────────
-export default function ArmiesHUD({ armies, activeBattles = [], player, claimedRef, onRefresh, onFlyTo, onAutoTrain }) {
+export default function ArmiesHUD({ armies, activeBattles = [], player, claimedRef, onRefresh, onFlyTo, onAutoTrain, onOpenEmpire, unlocks }) {
   const isMobile = useIsMobile()
   const [open, setOpen] = useState(false)
   const [training, setTraining] = useState(false)
@@ -123,6 +123,7 @@ export default function ArmiesHUD({ armies, activeBattles = [], player, claimedR
   // practice because this component is re-rendered by the same events that
   // refresh `armies`, which land on the same tick as claimedRef mutations.
   const claimed = claimedRef.current
+  const empireTier = unlocks?.tiers.find(t => t.id === 'empire')
 
   const myArmies = armies.filter(a => a.owner_id === player?.id)
   const threats  = armies.filter(a =>
@@ -156,6 +157,7 @@ export default function ArmiesHUD({ armies, activeBattles = [], player, claimedR
 
   return (
     <div style={{ position: 'absolute', top: 56, left: 16, fontFamily: 'Georgia, serif', zIndex: 10 }}>
+      <div style={{ display: 'flex', gap: 6 }}>
       <button onClick={() => setOpen(o => !o)} style={{
         display: 'flex', alignItems: 'center', gap: 8, padding: '8px 14px',
         background: 'rgba(10,8,25,0.85)',
@@ -172,6 +174,17 @@ export default function ArmiesHUD({ armies, activeBattles = [], player, claimedR
         {threats.length > 0 && <span style={{ color: '#ff6060', fontSize: 12 }}><WarningIcon size={12} color="#ff6060" />{threats.length}</span>}
         {activeBattles.length > 0 && <span style={{ color: '#ff4444', fontSize: 12 }}><SwordsIcon size={11} color="#ff4444" />{activeBattles.length}</span>}
       </button>
+      {onOpenEmpire && ownedHexes.length > 0 && (
+        <button onClick={empireTier && !empireTier.unlocked ? undefined : onOpenEmpire}
+          title={empireTier && !empireTier.unlocked ? `Empire dashboard unlocks at ${empireTier.hexes} hexes` : 'Every hex you own - sort, filter, jump'}
+          style={{
+          padding: '8px 14px', background: 'rgba(10,8,25,0.85)', border: `1px solid ${theme.border}`,
+          opacity: empireTier && !empireTier.unlocked ? 0.5 : 1,
+          borderRadius: 6, color: theme.text.primary, cursor: empireTier && !empireTier.unlocked ? 'default' : 'pointer', fontSize: 14, letterSpacing: 1,
+          fontFamily: 'Georgia, serif', boxShadow: '0 2px 10px rgba(0,0,0,0.5)',
+        }}>Empire</button>
+      )}
+      </div>
 
       {open && (
         <div style={{

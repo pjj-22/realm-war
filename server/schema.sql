@@ -12,6 +12,7 @@ CREATE TABLE IF NOT EXISTS players (
   capital_hex      TEXT,
   last_login_date  DATE,
   login_streak     INTEGER     NOT NULL DEFAULT 0,
+  peak_hexes       INTEGER     NOT NULL DEFAULT 0,  -- most hexes held this season (unlock tiers)
   created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
@@ -53,7 +54,9 @@ CREATE TABLE IF NOT EXISTS armies (
   -- position/beam rendering always matches exactly what arrives_at was
   -- computed from, and so re-running A* isn't needed every time an army's
   -- current position is queried.
-  path        TEXT[]
+  path        TEXT[],
+  -- Water cost the route was computed with (sea_power marchers pay less)
+  ocean_mult  INTEGER     NOT NULL DEFAULT 10
 );
 
 CREATE TABLE IF NOT EXISTS battles (
@@ -145,6 +148,24 @@ CREATE TABLE IF NOT EXISTS push_subscriptions (
   player_id  INTEGER     NOT NULL REFERENCES players(id) ON DELETE CASCADE,
   endpoint   TEXT        NOT NULL UNIQUE,
   keys       JSONB       NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Standing orders: per-hex rules run at the start of each resource tick
+CREATE TABLE IF NOT EXISTS hex_orders (
+  h3_index   TEXT    PRIMARY KEY,
+  owner_id   INTEGER NOT NULL REFERENCES players(id) ON DELETE CASCADE,
+  min_troops INTEGER NOT NULL DEFAULT 0,
+  build      TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_hex_orders_owner ON hex_orders (owner_id);
+
+-- Player feedback / suggestions (read in the admin portal)
+CREATE TABLE IF NOT EXISTS feedback (
+  id         SERIAL      PRIMARY KEY,
+  player_id  INTEGER     NOT NULL REFERENCES players(id) ON DELETE CASCADE,
+  category   TEXT        NOT NULL DEFAULT 'idea',
+  message    TEXT        NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 

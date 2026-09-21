@@ -11,6 +11,7 @@ import { getCountry } from '../countries.js'
 import { STRATEGIC_HEXES, STRATEGIC_BONUS_GOLD, CITY_ZONES, ZONE_BONUS_PER_HEX } from '../strategic.js'
 import { WONDERS } from '../wonders.js'
 import { containsBadWords } from '../moderation.js'
+import { getUnlockState, requireUnlock } from '../unlocks.js'
 import { createLogger } from '../logger.js'
 import { clientIp } from '../ratelimit.js'
 
@@ -226,10 +227,74 @@ router.get('/stats', requireAuth, async (req, res) => {
     const wonderHexes = new Set(WONDERS.map(w => w.h3))
     row.wonder_income = hexRows.rows.filter(r => wonderHexes.has(r.h3_index)).length * WONDER_INCOME_GOLD
     row.income_per_harvest = row.income_by_country.reduce((s, e) => s + e.income, 0) + row.wonder_income
+    row.unlocks = await getUnlockState(req.player.id)
 
     res.json(row)
   } catch (err) {
     log.error('GET /stats failed', { err })
+    res.status(500).json({ error: 'Server error' })
+  }
+})
+
+// One row per hex you own, everything the Empire dashboard needs to sort and
+// filter a large territory without a request per hex. Income mirrors the
+// per-hex share of tick.js's payout (base + built mine + strategic + city
+// zone + wonder); threats/marching armies come from /military/armies, which
+// the client already holds.
+router.get('/empire', requireAuth, async (req, res) => {
+  try {
+    const id = req.player.id
+    await requireUnlock(id, 'empire')
+    const [hexes, troops, buildings, training, upgrading, player, orders] = await Promise.all([
+      pool.query('SELECT h3_index, upgrade_level, rally_hex, claimed_at FROM hexes WHERE owner_id=$1', [id]),
+      pool.query('SELECT h3_index, SUM(quantity)::int AS qty FROM troops WHERE owner_id=$1 GROUP BY h3_index', [id]),
+      pool.query(`
+        SELECT b.h3_index, b.type, EXTRACT(EPOCH FROM (NOW() - b.created_at)) >= $2 AS ready
+        FROM buildings b JOIN hexes h ON h.h3_index = b.h3_index WHERE h.owner_id = $1
+      `, [id, BUILDING_TIME_SECONDS]),
+      pool.query('SELECT h3_index, SUM(quantity - delivered)::int AS qty FROM training_queue WHERE owner_id=$1 GROUP BY h3_index', [id]),
+      pool.query('SELECT h3_index FROM upgrade_queue WHERE owner_id=$1', [id]),
+      pool.query('SELECT capital_hex FROM players WHERE id=$1', [id]),
+      pool.query('SELECT h3_index, min_troops, build FROM hex_orders WHERE owner_id=$1', [id]),
+    ])
+    const ordersBy = new Map(orders.rows.map(r => [r.h3_index, { min_troops: r.min_troops, build: r.build }]))
+    const troopsBy = new Map(troops.rows.map(r => [r.h3_index, r.qty]))
+    const trainingBy = new Map(training.rows.map(r => [r.h3_index, r.qty]))
+    const upgradingSet = new Set(upgrading.rows.map(r => r.h3_index))
+    const buildingsBy = new Map()
+    for (const b of buildings.rows) {
+      if (!buildingsBy.has(b.h3_index)) buildingsBy.set(b.h3_index, [])
+      buildingsBy.get(b.h3_index).push({ type: b.type, ready: b.ready })
+    }
+    const wonderHexes = new Set(WONDERS.map(w => w.h3))
+    const capital = player.rows[0]?.capital_hex
+    const rows = hexes.rows.map(h => {
+      const blds = buildingsBy.get(h.h3_index) || []
+      let income = 1 + blds.filter(b => b.type === 'mine' && b.ready).length * 3
+      if (STRATEGIC_HEXES.has(h.h3_index)) income += STRATEGIC_BONUS_GOLD
+      if (CITY_ZONES.has(h.h3_index)) income += ZONE_BONUS_PER_HEX
+      if (wonderHexes.has(h.h3_index)) income += WONDER_INCOME_GOLD
+      const info = getCountry(h.h3_index)
+      return {
+        h3_index: h.h3_index,
+        country: info?.name || null,
+        is_capital: h.h3_index === capital,
+        troops: troopsBy.get(h.h3_index) || 0,
+        training: trainingBy.get(h.h3_index) || 0,
+        buildings: blds,
+        upgrade_level: h.upgrade_level,
+        upgrading: upgradingSet.has(h.h3_index),
+        rally_hex: h.rally_hex,
+        order: ordersBy.get(h.h3_index) || null,
+        income,
+        strategic_name: STRATEGIC_HEXES.get(h.h3_index)?.name || null,
+        claimed_at: h.claimed_at,
+      }
+    })
+    res.json(rows)
+  } catch (err) {
+    if (err.status) return res.status(err.status).json({ error: err.message })
+    log.error('GET /empire failed', { err })
     res.status(500).json({ error: 'Server error' })
   }
 })
@@ -303,7 +368,7 @@ router.get('/export', requireAuth, async (req, res) => {
   try {
     const id = req.player.id
     const q = (sql, params = [id]) => pool.query(sql, params).then(r => r.rows)
-    const [account, hexes, troops, armies, buildings, events, history, pushSubs, chat, battles, alliance] = await Promise.all([
+    const [account, hexes, troops, armies, buildings, events, history, pushSubs, chat, battles, alliance, feedback] = await Promise.all([
       q('SELECT id, username, color, gold, mana, capital_hex, flag_pixels, motto, last_login_date, login_streak, created_at, alliance_id FROM players WHERE id=$1').then(r => r[0] || null),
       q('SELECT h3_index, claimed_at, upgrade_level, rally_hex FROM hexes WHERE owner_id=$1'),
       q('SELECT h3_index, type, quantity FROM troops WHERE owner_id=$1'),
@@ -316,9 +381,10 @@ router.get('/export', requireAuth, async (req, res) => {
       q('SELECT id, attacker_id, defender_id, h3_index, created_at FROM battles WHERE attacker_id=$1 OR defender_id=$1 ORDER BY created_at'),
       q(`SELECT a.name, a.tag, a.created_at FROM alliances a
          JOIN players p ON p.alliance_id = a.id WHERE p.id=$1`).then(r => r[0] || null),
+      q('SELECT category, message, created_at FROM feedback WHERE player_id=$1 ORDER BY created_at'),
     ])
     res.setHeader('Content-Disposition', 'attachment; filename="realmwar-data.json"')
-    res.json({ exported_at: new Date().toISOString(), account, alliance, hexes, troops, armies, buildings, events, hex_history: history, push_subscriptions: pushSubs, chat_messages: chat, battles })
+    res.json({ exported_at: new Date().toISOString(), account, alliance, hexes, troops, armies, buildings, events, hex_history: history, push_subscriptions: pushSubs, chat_messages: chat, battles, feedback })
   } catch (err) {
     log.error('GET /export failed', { err })
     res.status(500).json({ error: 'Server error' })
@@ -347,6 +413,7 @@ router.delete('/me', requireAuth, async (req, res) => {
       await tx.query('DELETE FROM push_subscriptions WHERE player_id=$1', [id])
       await tx.query('DELETE FROM events WHERE player_id=$1', [id])
       await tx.query('DELETE FROM hex_history WHERE player_id=$1', [id])
+      await tx.query('DELETE FROM feedback WHERE player_id=$1', [id])
       await tx.query('DELETE FROM chat_messages WHERE player_id=$1', [id]).catch(() => {})
       await tx.query(`
         UPDATE players SET

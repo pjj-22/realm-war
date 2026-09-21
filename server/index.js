@@ -10,6 +10,7 @@ import militaryRoutes from './routes/military.js'
 import battleRoutes from './routes/battles.js'
 import eventRoutes from './routes/events.js'
 import adminRoutes from './routes/admin.js'
+import feedbackRoutes from './routes/feedback.js'
 import pushRoutes from './routes/push.js'
 import worldRoutes from './routes/world.js'
 import allianceRoutes from './routes/alliance.js'
@@ -17,7 +18,7 @@ import chatRoutes from './routes/chat.js'
 import seasonRoutes from './routes/season.js'
 import { initPush } from './push.js'
 import { startTick } from './tick.js'
-import { MODE, IS_DEV, STARTING_GOLD, STARTING_MANA, TICK_INTERVAL_MS, BUILDING_TIME_SECONDS, CHAT_ENABLED, TROOP_STATS, BATTLE_INTERVAL_MS, BUILDING_COSTS, FORT_ADVANTAGE_TROOPS, ENTRENCH_ADVANTAGE_PER_NEIGHBOR, ENTRENCH_MAX_NEIGHBORS, MIN_TROOPS_TO_CLAIM, DECAY_HEX_THRESHOLD, DECAY_SCALE_HEXES_PER_STEP, HEX_RESOLUTION, WORLD_HEX_COUNT, REGION_RESOLUTION } from './config.js'
+import { MODE, IS_DEV, STARTING_GOLD, STARTING_MANA, TICK_INTERVAL_MS, BUILDING_TIME_SECONDS, CHAT_ENABLED, TROOP_STATS, BATTLE_INTERVAL_MS, BUILDING_COSTS, FORT_ADVANTAGE_TROOPS, ENTRENCH_ADVANTAGE_PER_NEIGHBOR, ENTRENCH_MAX_NEIGHBORS, MIN_TROOPS_TO_CLAIM, DECAY_HEX_THRESHOLD, DECAY_SCALE_HEXES_PER_STEP, UNLOCKS, HEX_RESOLUTION, WORLD_HEX_COUNT, REGION_RESOLUTION } from './config.js'
 import { STRATEGIC_ADVANTAGE_TROOPS } from './strategic.js'
 import { FRONTLINE_CAP, MAX_ADVANTAGED_DEFENDERS } from './combat.js'
 import { pool } from './db.js'
@@ -76,6 +77,7 @@ app.use('/api/battles', battleRoutes)
 app.use('/api/events', eventRoutes)
 app.use('/api/admin', adminRoutes)
 app.use('/api/push', pushRoutes)
+app.use('/api/feedback', feedbackRoutes)
 app.use('/api/world', worldRoutes)
 app.use('/api/alliance', allianceRoutes)
 if (CHAT_ENABLED) app.use('/api/chat', chatRoutes)
@@ -105,6 +107,7 @@ app.get('/api/health', (_, res) => res.json({
   world_hex_count: WORLD_HEX_COUNT,
   decay_hex_threshold: DECAY_HEX_THRESHOLD,
   decay_scale_hexes_per_step: DECAY_SCALE_HEXES_PER_STEP,
+  unlocks: UNLOCKS,
   building_costs: {
     mine: BUILDING_COSTS.mine.gold,
     barracks: BUILDING_COSTS.barracks.gold,
@@ -129,6 +132,8 @@ async function runMigrations() {
   // creation and stored so position/beam rendering always matches exactly
   // what arrives_at was computed from.
   await pool.query('ALTER TABLE armies ADD COLUMN IF NOT EXISTS path TEXT[]')
+  // Water cost the army was routed with - marchers with the sea_power unlock pay less, so positions must be derived with the same value
+  await pool.query('ALTER TABLE armies ADD COLUMN IF NOT EXISTS ocean_mult INTEGER NOT NULL DEFAULT 10')
   await pool.query('ALTER TABLE training_queue ADD COLUMN IF NOT EXISTS delivered INTEGER NOT NULL DEFAULT 0')
   // Incoming-attack events store the raw army size here instead of baking it
   // into `message` - the route renders the final text at read time using
@@ -192,6 +197,23 @@ async function runMigrations() {
       player_id ${PID} NOT NULL REFERENCES players(id) ON DELETE CASCADE,
       endpoint TEXT NOT NULL UNIQUE,
       keys JSONB NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`)
+  await pool.query('ALTER TABLE players ADD COLUMN IF NOT EXISTS peak_hexes INTEGER NOT NULL DEFAULT 0')
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS hex_orders (
+      h3_index TEXT PRIMARY KEY,
+      owner_id ${PID} NOT NULL REFERENCES players(id) ON DELETE CASCADE,
+      min_troops INTEGER NOT NULL DEFAULT 0,
+      build TEXT
+    )`)
+  await pool.query('CREATE INDEX IF NOT EXISTS idx_hex_orders_owner ON hex_orders (owner_id)')
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS feedback (
+      id SERIAL PRIMARY KEY,
+      player_id ${PID} NOT NULL REFERENCES players(id) ON DELETE CASCADE,
+      category TEXT NOT NULL DEFAULT 'idea',
+      message TEXT NOT NULL,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )`)
   await pool.query(`

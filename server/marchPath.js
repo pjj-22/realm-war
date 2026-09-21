@@ -46,8 +46,8 @@ function safeGridDistance(a, b) {
   try { return gridDistance(a, b) } catch { return haversineHexEstimate(a, b) }
 }
 
-function stepCost(hex) {
-  return isOcean(hex) ? OCEAN_MARCH_MULTIPLIER : 1
+function stepCost(hex, oceanMult = OCEAN_MARCH_MULTIPLIER) {
+  return isOcean(hex) ? oceanMult : 1
 }
 
 function reconstructPath(cameFrom, current) {
@@ -59,11 +59,11 @@ function reconstructPath(cameFrom, current) {
   return path.reverse()
 }
 
-function fallbackPath(fromHex, toHex) {
+function fallbackPath(fromHex, toHex, oceanMult) {
   let path
   try { path = gridPathCells(fromHex, toHex) } catch { path = null }
   if (path) {
-    const stepCosts = path.slice(1).map(stepCost)
+    const stepCosts = path.slice(1).map(h => stepCost(h, oceanMult))
     return { path, stepCosts, cost: stepCosts.reduce((a, b) => a + b, 0) }
   }
   // h3 can't even compute a straight path between these two (too far apart).
@@ -77,7 +77,10 @@ function fallbackPath(fromHex, toHex) {
   return { path: [fromHex, toHex], stepCosts: [estHexes], cost: estHexes }
 }
 
-export function findMarchPath(fromHex, toHex) {
+// oceanMult is the per-water-hex cost for whoever is marching (an empire with
+// the sea_power unlock pays less - see config.js UNLOCKS); pass the same value
+// to pathStepCosts/currentMarchHex later (armies store it as ocean_mult).
+export function findMarchPath(fromHex, toHex, oceanMult = OCEAN_MARCH_MULTIPLIER) {
   if (fromHex === toHex) return { path: [fromHex], stepCosts: [], cost: 0 }
 
   // If h3 can't even compute the distance between the endpoints, it can't
@@ -90,7 +93,7 @@ export function findMarchPath(fromHex, toHex) {
   // is <1ms instead - no reason to run a search that's already known to be
   // futile just to discover that 4000 nodes later.
   let startHeuristic
-  try { startHeuristic = gridDistance(fromHex, toHex) } catch { return fallbackPath(fromHex, toHex) }
+  try { startHeuristic = gridDistance(fromHex, toHex) } catch { return fallbackPath(fromHex, toHex, oceanMult) }
 
   const open = [fromHex]
   const inOpen = new Set([fromHex])
@@ -112,17 +115,17 @@ export function findMarchPath(fromHex, toHex) {
 
     if (current === toHex) {
       const path = reconstructPath(cameFrom, current)
-      const stepCosts = path.slice(1).map(stepCost)
+      const stepCosts = path.slice(1).map(h => stepCost(h, oceanMult))
       return { path, stepCosts, cost: gScore.get(current) }
     }
 
     closed.add(current)
     expanded++
-    if (expanded > MAX_EXPANDED) return fallbackPath(fromHex, toHex)
+    if (expanded > MAX_EXPANDED) return fallbackPath(fromHex, toHex, oceanMult)
 
     for (const neighbor of gridDisk(current, 1)) {
       if (neighbor === current || closed.has(neighbor)) continue
-      const tentativeG = gScore.get(current) + stepCost(neighbor)
+      const tentativeG = gScore.get(current) + stepCost(neighbor, oceanMult)
       if (tentativeG < (gScore.get(neighbor) ?? Infinity)) {
         cameFrom.set(neighbor, current)
         gScore.set(neighbor, tentativeG)
@@ -133,14 +136,14 @@ export function findMarchPath(fromHex, toHex) {
   }
   // Open set exhausted with no path found (shouldn't happen on a connected
   // grid short of the resolution-0 edge cases) - fall back rather than error.
-  return fallbackPath(fromHex, toHex)
+  return fallbackPath(fromHex, toHex, oceanMult)
 }
 
 // Per-step costs for an already-known path (e.g. one stored on an army row),
 // without re-running the search - just re-derives cost per hop from terrain,
 // which is O(path length) and reuses terrain.js's own isOcean cache.
-export function pathStepCosts(path) {
-  return path.slice(1).map(stepCost)
+export function pathStepCosts(path, oceanMult = OCEAN_MARCH_MULTIPLIER) {
+  return path.slice(1).map(h => stepCost(h, oceanMult))
 }
 
 // Mirrors the client's armyPathPos (GameMap.jsx) - same weighted-progress
@@ -151,7 +154,7 @@ export function pathStepCosts(path) {
 // passing army) have something to hook into.
 export function currentMarchHex(army, path, stepCosts) {
   path ??= army.path
-  stepCosts ??= path ? pathStepCosts(path) : null
+  stepCosts ??= path ? pathStepCosts(path, army.ocean_mult ?? OCEAN_MARCH_MULTIPLIER) : null
   if (!path || path.length === 0) return army.to_hex
   if (path.length === 1 || !stepCosts?.length) return path[0]
 

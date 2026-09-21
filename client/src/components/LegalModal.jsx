@@ -55,6 +55,7 @@ function Privacy() {
         <li style={S.li}><b>Account:</b> the username and password you choose (the password is stored only as a bcrypt hash), your chosen faction colour, and an optional flag design and motto.</li>
         <li style={S.li}><b>Gameplay:</b> the territory, buildings, armies, battles, alliance membership, and event history your account generates by playing.</li>
         <li style={S.li}><b>Technical:</b> your IP address is used transiently for rate-limiting and appears in standard server access logs. Login dates and a login streak counter are stored.</li>
+        <li style={S.li}><b>Feedback:</b> anything you submit through the feedback form, stored with your account so the developer can read it.</li>
         <li style={S.li}><b>Push notifications:</b> if you enable them, the browser push subscription for that device is stored so the game can alert you to attacks. Disable them any time in the dispatches panel.</li>
       </ul>
 
@@ -84,7 +85,7 @@ function Privacy() {
       <div style={S.h}>Retention and your choices</div>
       <ul>
         <li style={S.li}>You can export everything tied to your account as a JSON file from the account panel.</li>
-        <li style={S.li}>You can delete your account from the account panel. This removes your profile details, live game presence, personal events, chat messages, and push subscriptions. De-identified references may remain in historical battle records and season standings.</li>
+        <li style={S.li}>You can delete your account from the account panel. This removes your profile details, live game presence, personal events, chat messages, feedback, and push subscriptions. De-identified references may remain in historical battle records and season standings.</li>
         <li style={S.li}>Server access logs rotate on the host's normal schedule.</li>
       </ul>
 

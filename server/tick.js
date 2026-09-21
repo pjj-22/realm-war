@@ -6,10 +6,12 @@ import {
   TROOP_STATS,
   ENTRENCH_ADVANTAGE_PER_NEIGHBOR, ENTRENCH_MAX_NEIGHBORS,
   CAMP_LOOT_GOLD, CROWN_MIN_HEXES,
-  DECAY_HEX_THRESHOLD, DECAY_CHANCE, DECAY_MAX_PER_TICK, requiredGarrisonForHexCount,
+  DECAY_HEX_THRESHOLD, DECAY_CHANCE, DECAY_MAX_PER_TICK, DECAY_TROOP_RETURN, requiredGarrisonForHexCount,
   WONDER_INCOME_GOLD, MIN_TROOPS_TO_CLAIM,
 } from './config.js'
 import { getIO, emitToRegion } from './socket.js'
+import { processStandingOrders } from './orders.js'
+import { updatePeaks, getUnlockState, oceanMultiplierFor } from './unlocks.js'
 import { ensureBots, processBots } from './bots.js'
 import { ensureWildlands } from './wild.js'
 import { ensureSeason, processSeason } from './season.js'
@@ -259,11 +261,12 @@ export async function processTraining() {
         // gridDistance line, so an auto-reinforcement takes the route that's
         // actually fastest, not just the shortest crow-flies count.
         const stats = TROOP_STATS[job.type] || TROOP_STATS.troop
-        const { path, cost } = findMarchPath(job.h3_index, job.rally_hex)
+        const oceanMult = oceanMultiplierFor(await getUnlockState(job.owner_id))
+        const { path, cost } = findMarchPath(job.h3_index, job.rally_hex, oceanMult)
         const arrivesAt = new Date(Date.now() + Math.max(1, cost) * stats.marchMinutesPerHex * 60 * 1000)
         await pool.query(
-          'INSERT INTO armies (owner_id, from_hex, to_hex, type, quantity, arrives_at, departed_at, path) VALUES ($1,$2,$3,$4,$5,$6,NOW(),$7)',
-          [job.owner_id, job.h3_index, job.rally_hex, job.type, job.quantity, arrivesAt, path]
+          'INSERT INTO armies (owner_id, from_hex, to_hex, type, quantity, arrives_at, departed_at, path, ocean_mult) VALUES ($1,$2,$3,$4,$5,$6,NOW(),$7,$8)',
+          [job.owner_id, job.h3_index, job.rally_hex, job.type, job.quantity, arrivesAt, path, oceanMult]
         )
         emitToRegion(job.h3_index, 'armies:update')
         emitToRegion(job.rally_hex, 'armies:update')
@@ -774,6 +777,7 @@ export async function processDecay() {
       `, [player.id, player.capital_hex, requiredGarrison])
 
       let lost = 0
+      let returned = 0
       for (const { h3_index } of cands.rows) {
         if (lost >= DECAY_MAX_PER_TICK) break
         if (Math.random() > DECAY_CHANCE) continue
@@ -787,9 +791,24 @@ export async function processDecay() {
         await pool.query('DELETE FROM hexes WHERE h3_index=$1 AND owner_id=$2', [h3_index, player.id])
         lostHexes.add(h3_index)
         lost++
+        // The garrison falls back to the capital, minus stragglers (troops are
+        // otherwise orphaned on a hex the player no longer owns)
+        const stranded = await pool.query(
+          'DELETE FROM troops WHERE h3_index=$1 AND owner_id=$2 RETURNING type, quantity',
+          [h3_index, player.id]
+        )
+        if (player.capital_hex) {
+          for (const { type, quantity } of stranded.rows) {
+            const back = Math.round(quantity * DECAY_TROOP_RETURN)
+            if (back <= 0) continue
+            await depositTroops(player.id, player.capital_hex, type, back)
+            returned += back
+          }
+          if (stranded.rows.length > 0) lostHexes.add(player.capital_hex)
+        }
       }
       if (lost > 0) {
-        insertEvent(player.id, 'decay', `${lost} border hex${lost > 1 ? 'es' : ''} slipped from your control - at your empire's size, a hex needs ${requiredGarrison}+ troops or a building to hold. Garrison or build to hold the frontier.`)
+        insertEvent(player.id, 'decay', `${lost} border hex${lost > 1 ? 'es' : ''} slipped from your control - at your empire's size, a hex needs ${requiredGarrison}+ troops or a building to hold. Garrison or build to hold the frontier.${returned > 0 ? ` ${returned} troop${returned > 1 ? 's' : ''} fell back to your capital.` : ''}`)
         log.debug(`[decay] ${player.username} lost ${lost} border hexes (required garrison was ${requiredGarrison})`)
       }
     }
@@ -805,7 +824,9 @@ export async function startTick() {
   log.info('Starting resource tick', { everyMinutes: TICK_INTERVAL_MS / 60000 })
 
   async function wrappedTick() {
+    await processStandingOrders(insertEvent)
     await runTick()
+    await updatePeaks(insertEvent)
     await processDecay()
     await processBots()
     nextTickAt = Date.now() + TICK_INTERVAL_MS

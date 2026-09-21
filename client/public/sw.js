@@ -15,10 +15,14 @@ self.addEventListener('push', (event) => {
 
 self.addEventListener('notificationclick', (event) => {
   event.notification.close()
+  const hex = event.notification.data?.hex
   event.waitUntil(
     clients.matchAll({ type: 'window', includeUncontrolled: true }).then(list => {
-      if (list.length > 0) return list[0].focus()
-      return clients.openWindow('/')
+      if (list.length > 0) {
+        if (hex) list[0].postMessage({ type: 'goto-hex', hex })
+        return list[0].focus()
+      }
+      return clients.openWindow(hex ? `/?hex=${encodeURIComponent(hex)}` : '/')
     })
   )
 })

@@ -1,7 +1,14 @@
 import { Router } from 'express'
 import { pool, withTransaction, httpError } from '../db.js'
+import { rateLimit } from '../ratelimit.js'
 import { requireAuth, optionalAuth } from '../auth.js'
-import { TROOP_STATS, BUILDING_TIME_SECONDS, NO_BARRACKS_TRAIN_MULT, PROJECTION_GARRISON, PROJECTION_EMPIRE } from '../config.js'
+import { TROOP_STATS, BUILDING_COSTS, PROJECTION_GARRISON, PROJECTION_EMPIRE, MASS_MARCH_MAX_SOURCES, MIN_TROOPS_TO_CLAIM } from '../config.js'
+import { gridDisk, gridDistance } from 'h3-js'
+import { gatherFanOut } from '../expansion.js'
+import { launchArmy } from '../march.js'
+import { planReinforce } from '../reinforce.js'
+import { requireUnlock, getUnlockState, oceanMultiplierFor } from '../unlocks.js'
+import { queueTraining } from '../training.js'
 import { emitToRegion } from '../socket.js'
 import { isOcean } from '../terrain.js'
 import { notifyIncomingAttack } from '../notify.js'
@@ -47,30 +54,9 @@ router.post('/train', requireAuth, async (req, res) => {
       const current = player.rows[0].gold
       if (current < totalGold) throw httpError(400, `Need ${totalGold}g, have ${current}g`)
 
-      // Barracks halves train time; without one training runs at
-      // NO_BARRACKS_TRAIN_MULT × base (10× slower than a barracks hex)
-      const building = await tx.query(
-        'SELECT type, created_at FROM buildings WHERE h3_index=$1', [h3Index]
-      )
-      const hasBarracks = building.rows.some(b =>
-        b.type === 'barracks' && (Date.now() - new Date(b.created_at).getTime() >= BUILDING_TIME_SECONDS * 1000)
-      )
-      const trainMinutes = hasBarracks ? stats.trainMinutes / 2 : stats.trainMinutes * NO_BARRACKS_TRAIN_MULT
-
-      // Chain after the last queued job on this hex so jobs don't overlap
-      const lastJob = await tx.query(
-        'SELECT MAX(completes_at) AS last FROM training_queue WHERE owner_id=$1 AND h3_index=$2',
-        [req.player.id, h3Index]
-      )
-      const startedAt  = lastJob.rows[0]?.last ? new Date(lastJob.rows[0].last) : new Date()
-      const completesAt = new Date(startedAt.getTime() + trainMinutes * 60 * 1000 * quantity)
-
       await tx.query('UPDATE players SET gold=gold-$1 WHERE id=$2', [totalGold, req.player.id])
-      const result = await tx.query(
-        'INSERT INTO training_queue (owner_id, h3_index, type, quantity, started_at, completes_at) VALUES ($1,$2,$3,$4,$5,$6) RETURNING *',
-        [req.player.id, h3Index, type, quantity, startedAt, completesAt]
-      )
-      return { training: result.rows[0], gold: current - totalGold }
+      const training = await queueTraining(tx, req.player.id, h3Index, type, quantity)
+      return { training, gold: current - totalGold }
     })
 
     res.json({ training, player: { gold } })
@@ -104,28 +90,11 @@ router.post('/march', requireAuth, async (req, res) => {
     // the same "hexes-equivalent" units the old gridDistance*multiplier
     // formula produced, just accounting for the real route instead of a
     // straight line.
-    const { path, cost } = findMarchPath(fromHex, toHex)
+    const oceanMult = oceanMultiplierFor(await getUnlockState(req.player.id))
+    const { path, cost } = findMarchPath(fromHex, toHex, oceanMult)
     const arrivesAt = new Date(Date.now() + Math.max(1, cost) * stats.marchMinutesPerHex * 60 * 1000)
 
-    const army = await withTransaction(async (tx) => {
-      // Lock the garrison row so concurrent marches can't send the same troops twice
-      const troopsRow = await tx.query(
-        'SELECT quantity FROM troops WHERE owner_id=$1 AND h3_index=$2 AND type=$3 FOR UPDATE',
-        [req.player.id, fromHex, type]
-      )
-      const available = troopsRow.rows[0]?.quantity || 0
-      if (available < quantity) throw httpError(400, `Only ${available} troops available`)
-
-      await tx.query(
-        'UPDATE troops SET quantity=quantity-$1 WHERE owner_id=$2 AND h3_index=$3 AND type=$4',
-        [quantity, req.player.id, fromHex, type]
-      )
-      const result = await tx.query(
-        'INSERT INTO armies (owner_id, from_hex, to_hex, type, quantity, arrives_at, departed_at, path) VALUES ($1,$2,$3,$4,$5,$6,NOW(),$7) RETURNING *',
-        [req.player.id, fromHex, toHex, type, quantity, arrivesAt, path]
-      )
-      return result.rows[0]
-    })
+    const army = await launchArmy(req.player.id, { fromHex, toHex, type, quantity, path, arrivesAt, oceanMult })
 
     notifyIncomingAttack(req.player.id, toHex, quantity, arrivesAt)
     emitToRegion(fromHex, 'armies:update')
@@ -134,6 +103,234 @@ router.post('/march', requireAuth, async (req, res) => {
   } catch (err) {
     if (err.status) return res.status(err.status).json({ error: err.message })
     log.error('POST /march failed', { err })
+    res.status(500).json({ error: 'Server error' })
+  }
+})
+
+// Mass march: send the troops from many of your hexes to one target in a
+// single order, leaving `keep` behind on each. Needs the mass_march
+// unlock (config.js UNLOCKS). Each source gets its own route (and so its own arrival time).
+// Sources that can't send (not yours, nothing spare, the target itself, garrison
+// changed mid-request) are skipped, not fatal. The defender gets one alert for
+// the whole force, not one per source hex.
+router.post('/march-many', requireAuth, rateLimit({ windowMs: 60 * 1000, max: 10, key: req => `march-many:${req.player.id}`, message: 'Slow down - too many mass marches' }), async (req, res) => {
+  const { sources, toHex, keep = 1, sync = false } = req.body
+  if (!Array.isArray(sources) || sources.length === 0 || !toHex) return res.status(400).json({ error: 'Invalid request' })
+  if (!Number.isInteger(keep) || keep < 0 || keep > 500) return res.status(400).json({ error: 'Invalid keep amount' })
+  const type = 'troop'
+  const stats = TROOP_STATS[type]
+
+  try {
+    await requireUnlock(req.player.id, 'mass_march')
+    if (sync) await requireUnlock(req.player.id, 'coordinated')
+    const oceanMult = oceanMultiplierFor(await getUnlockState(req.player.id))
+    const owned = await pool.query('SELECT h3_index FROM hexes WHERE owner_id=$1', [req.player.id])
+    const ownedSet = new Set(owned.rows.map(r => r.h3_index))
+    const wanted = [...new Set(sources)].filter(h => typeof h === 'string' && h !== toHex && ownedSet.has(h)).slice(0, MASS_MARCH_MAX_SOURCES)
+
+    const garrisons = await pool.query(
+      'SELECT h3_index, quantity FROM troops WHERE owner_id=$1 AND type=$2 AND h3_index = ANY($3)',
+      [req.player.id, type, wanted]
+    )
+    const sending = garrisons.rows.map(r => ({ fromHex: r.h3_index, quantity: r.quantity - keep })).filter(o => o.quantity > 0)
+
+    // Route every source first (so `sync` can hold them all to the slowest)
+    const routed = []
+    for (const o of sending) {
+      // Route search is CPU-bound and synchronous - let other requests through
+      // between sources so a big order doesn't stall the whole server.
+      await new Promise(resolve => setImmediate(resolve))
+      const { path, cost } = findMarchPath(o.fromHex, toHex, oceanMult)
+      routed.push({ ...o, path, arrivesAt: new Date(Date.now() + Math.max(1, cost) * stats.marchMinutesPerHex * 60 * 1000) })
+    }
+    if (sync) {
+      const slowest = new Date(Math.max(...routed.map(r => r.arrivesAt.getTime())))
+      for (const r of routed) r.arrivesAt = slowest
+    }
+
+    let armies = 0, troops = 0, earliest = null
+    for (const o of routed) {
+      try {
+        await launchArmy(req.player.id, { fromHex: o.fromHex, toHex, type, quantity: o.quantity, path: o.path, arrivesAt: o.arrivesAt, oceanMult })
+      } catch (err) {
+        if (err.status) continue
+        throw err
+      }
+      armies++; troops += o.quantity
+      if (!earliest || o.arrivesAt < earliest) earliest = o.arrivesAt
+      emitToRegion(o.fromHex, 'armies:update')
+    }
+
+    if (armies > 0) {
+      notifyIncomingAttack(req.player.id, toHex, troops, earliest)
+      emitToRegion(toHex, 'armies:update')
+    }
+    log.info('Mass march', { playerId: req.player.id, toHex, armies, troops, requested: sources.length })
+    res.json({ armies, troops, skipped: sources.length - armies })
+  } catch (err) {
+    if (err.status) return res.status(err.status).json({ error: err.message })
+    log.error('POST /march-many failed', { err })
+    res.status(500).json({ error: 'Server error' })
+  }
+})
+
+// Fan out: one click, and troops from your hexes go to the hexes next to them
+// that aren't yours - unclaimed land to claim (MIN_TROOPS_TO_CLAIM each) and/or
+// enemy hexes to attack. Same unlock and source rules as mass march. Attacks
+// are only planned where the defender's garrison is currently visible (fog of
+// war, night) and are sent at 1.5x that garrison + 2, so this never throws
+// troops at a hex it can't size up. Allies, ocean, hexes already under
+// siege, and hexes one of your armies is already heading for are left alone.
+// dryRun returns the plan without sending anything.
+const FANOUT_MAX_ARMIES = 300
+const FANOUT_MODES = ['claim', 'attack', 'both']
+router.post('/fan-out', requireAuth, rateLimit({ windowMs: 60 * 1000, max: 20, key: req => `fan-out:${req.player.id}`, message: 'Slow down - too many fan-outs' }), async (req, res) => {
+  const { sources, keep = 1, mode = 'both', dryRun = false, sync = false } = req.body
+  if (!Array.isArray(sources) || sources.length === 0) return res.status(400).json({ error: 'Invalid request' })
+  if (!Number.isInteger(keep) || keep < 0 || keep > 500) return res.status(400).json({ error: 'Invalid keep amount' })
+  if (!FANOUT_MODES.includes(mode)) return res.status(400).json({ error: 'Invalid mode' })
+  const type = 'troop'
+  const stats = TROOP_STATS[type]
+  const me = req.player.id
+
+  try {
+    await requireUnlock(me, 'fan_out')
+    if (sync) await requireUnlock(me, 'coordinated')
+    const oceanMult = oceanMultiplierFor(await getUnlockState(me))
+    const plan = (await gatherFanOut(me, { sources, keep, mode })).slice(0, FANOUT_MAX_ARMIES)
+    const summary = {
+      armies: plan.length,
+      troops: plan.reduce((s, p) => s + p.quantity, 0),
+      claims: plan.filter(p => p.kind === 'claim').length,
+      attacks: plan.filter(p => p.kind === 'attack').length,
+    }
+    if (dryRun) return res.json({ dryRun: true, ...summary })
+
+    const routed = plan.map(p => {
+      const { path, cost } = findMarchPath(p.fromHex, p.toHex, oceanMult)
+      return { ...p, path, arrivesAt: new Date(Date.now() + Math.max(1, cost) * stats.marchMinutesPerHex * 60 * 1000) }
+    })
+    if (sync && routed.length) {
+      const slowest = new Date(Math.max(...routed.map(r => r.arrivesAt.getTime())))
+      for (const r of routed) r.arrivesAt = slowest
+    }
+
+    let sent = 0, sentTroops = 0, sentClaims = 0, sentAttacks = 0
+    for (const p of routed) {
+      try {
+        await launchArmy(me, { fromHex: p.fromHex, toHex: p.toHex, type, quantity: p.quantity, path: p.path, arrivesAt: p.arrivesAt, oceanMult })
+      } catch (err) {
+        if (err.status) continue
+        throw err
+      }
+      sent++; sentTroops += p.quantity
+      if (p.kind === 'claim') sentClaims++; else { sentAttacks++; notifyIncomingAttack(me, p.toHex, p.quantity, p.arrivesAt) }
+      emitToRegion(p.fromHex, 'armies:update')
+      emitToRegion(p.toHex, 'armies:update')
+    }
+    log.info('Fan out', { playerId: me, mode, armies: sent, troops: sentTroops, claims: sentClaims, attacks: sentAttacks })
+    res.json({ dryRun: false, armies: sent, troops: sentTroops, claims: sentClaims, attacks: sentAttacks })
+  } catch (err) {
+    if (err.status) return res.status(err.status).json({ error: err.message })
+    log.error('POST /fan-out failed', { err })
+    res.status(500).json({ error: 'Server error' })
+  }
+})
+
+// Reinforce threatened: hexes with enemy armies marching on them (or a battle
+// already raging where you defend) get troops from your other hexes, nearest
+// first, sized to 1.5x the incoming force + 2 (or enough to match the attackers
+// in a live battle). Only armies that can actually arrive before the enemy
+// (or within 30 minutes, for a battle already on) are sent - each route is
+// really computed and late ones dropped. Hexes that are themselves threatened
+// never give troops. Allies' armies aren't threats. dryRun previews.
+const REINFORCE_BATTLE_WINDOW_MS = 30 * 60 * 1000
+router.post('/reinforce', requireAuth, rateLimit({ windowMs: 60 * 1000, max: 20, key: req => `reinforce:${req.player.id}`, message: 'Slow down - too many reinforce orders' }), async (req, res) => {
+  const { keep = 1, dryRun = false } = req.body
+  if (!Number.isInteger(keep) || keep < 0 || keep > 500) return res.status(400).json({ error: 'Invalid keep amount' })
+  const type = 'troop'
+  const stats = TROOP_STATS[type]
+  const me = req.player.id
+  try {
+    const state = await requireUnlock(me, 'reinforce')
+    const oceanMult = oceanMultiplierFor(state)
+    const now = Date.now()
+
+    const [owned, incoming, battles, garrisons, me_] = await Promise.all([
+      pool.query('SELECT h3_index FROM hexes WHERE owner_id=$1', [me]),
+      pool.query(`SELECT a.to_hex, a.quantity, a.arrives_at, p.alliance_id FROM armies a JOIN players p ON p.id = a.owner_id
+                  WHERE a.status='marching' AND a.owner_id <> $1 AND a.to_hex IN (SELECT h3_index FROM hexes WHERE owner_id=$1)`, [me]),
+      pool.query("SELECT h3_index, attacker_troops, defender_troops FROM battles WHERE status='active' AND defender_id=$1", [me]),
+      pool.query('SELECT h3_index, quantity FROM troops WHERE owner_id=$1 AND type=$2', [me, type]),
+      pool.query('SELECT alliance_id FROM players WHERE id=$1', [me]),
+    ])
+    const myAlliance = me_.rows[0]?.alliance_id
+    const garrison = new Map(garrisons.rows.map(r => [r.h3_index, r.quantity]))
+
+    // threat per hex: incoming force and earliest landing, or a battle in progress
+    const byHex = new Map()
+    for (const a of incoming.rows) {
+      if (myAlliance && a.alliance_id === myAlliance) continue
+      const t = byHex.get(a.to_hex) || { incoming: 0, deadline: Infinity, battleShortfall: 0 }
+      t.incoming += a.quantity
+      t.deadline = Math.min(t.deadline, new Date(a.arrives_at).getTime())
+      byHex.set(a.to_hex, t)
+    }
+    for (const b of battles.rows) {
+      const t = byHex.get(b.h3_index) || { incoming: 0, deadline: Infinity, battleShortfall: 0 }
+      t.battleShortfall = Math.max(t.battleShortfall, Math.ceil(Number(b.attacker_troops)) + 2 - Math.floor(Number(b.defender_troops)))
+      t.deadline = Math.min(t.deadline, now + REINFORCE_BATTLE_WINDOW_MS)
+      byHex.set(b.h3_index, t)
+    }
+    const threats = []
+    for (const [h3, t] of byHex) {
+      const have = garrison.get(h3) || 0
+      const need = Math.max(t.incoming ? Math.ceil(t.incoming * 1.5) + 2 - have : 0, t.battleShortfall)
+      if (need > 0) threats.push({ h3, need, deadline: t.deadline })
+    }
+
+    const spare = new Map()
+    for (const o of owned.rows) {
+      if (byHex.has(o.h3_index)) continue
+      const q = (garrison.get(o.h3_index) || 0) - keep
+      if (q > 0) spare.set(o.h3_index, q)
+    }
+    const perHexMs = stats.marchMinutesPerHex * 60 * 1000
+    const travelMs = (a, b) => { try { return gridDistance(a, b) * perHexMs } catch { return Infinity } }
+    const { plan } = planReinforce(threats, spare, travelMs, now)
+
+    // Real routes: drop anything that would still land after its deadline
+    let late = 0
+    const routed = []
+    for (const p of plan) {
+      await new Promise(resolve => setImmediate(resolve))
+      const { path, cost } = findMarchPath(p.fromHex, p.toHex, oceanMult)
+      const arrivesAt = new Date(now + Math.max(1, cost) * perHexMs)
+      if (arrivesAt.getTime() > p.deadline) { late++; continue }
+      routed.push({ ...p, path, arrivesAt })
+    }
+    const troops = routed.reduce((s, r) => s + r.quantity, 0)
+    const covered = new Set(routed.map(r => r.toHex)).size
+    const summary = { threatened: byHex.size, needing: threats.length, covered, armies: routed.length, troops, late }
+    if (dryRun) return res.json({ dryRun: true, ...summary })
+
+    let sent = 0, sentTroops = 0
+    for (const r of routed) {
+      try {
+        await launchArmy(me, { fromHex: r.fromHex, toHex: r.toHex, type, quantity: r.quantity, path: r.path, arrivesAt: r.arrivesAt, oceanMult })
+      } catch (err) {
+        if (err.status) continue
+        throw err
+      }
+      sent++; sentTroops += r.quantity
+      emitToRegion(r.fromHex, 'armies:update')
+      emitToRegion(r.toHex, 'armies:update')
+    }
+    log.info('Reinforce', { playerId: me, armies: sent, troops: sentTroops, threatened: byHex.size })
+    res.json({ dryRun: false, ...summary, armies: sent, troops: sentTroops })
+  } catch (err) {
+    if (err.status) return res.status(err.status).json({ error: err.message })
+    log.error('POST /reinforce failed', { err })
     res.status(500).json({ error: 'Server error' })
   }
 })
@@ -194,6 +391,39 @@ router.delete('/rally/:h3Index', requireAuth, async (req, res) => {
 // hexes: huge forces (or huge empires) can't hide - the client applies its own
 // fog-of-war filtering for everything else, with more leeway than hexes get
 // since a moving column is easier to spot than a quiet border.
+// Standing orders (orders.js) - set or clear the same rule on many hexes at
+// once. min_troops 0 with no build clears the orders on those hexes. Hexes you
+// don't own are ignored rather than failing the whole batch.
+const MAX_ORDER_HEXES = 1000
+const MAX_ORDER_TROOPS = 500
+router.post('/orders', requireAuth, async (req, res) => {
+  const { h3Indexes, min_troops, build = null } = req.body
+  if (!Array.isArray(h3Indexes) || h3Indexes.length === 0 || h3Indexes.length > MAX_ORDER_HEXES) return res.status(400).json({ error: 'Invalid hex list' })
+  if (!Number.isInteger(min_troops) || min_troops < 0 || min_troops > MAX_ORDER_TROOPS) return res.status(400).json({ error: `min_troops must be 0-${MAX_ORDER_TROOPS}` })
+  if (build !== null && !BUILDING_COSTS[build]) return res.status(400).json({ error: 'Invalid building type' })
+  try {
+    // Clearing orders is always allowed; setting them needs the matching unlock
+    if (min_troops > 0) await requireUnlock(req.player.id, 'orders')
+    if (build !== null) await requireUnlock(req.player.id, 'build_orders')
+    const owned = await pool.query('SELECT h3_index FROM hexes WHERE owner_id=$1 AND h3_index = ANY($2)', [req.player.id, h3Indexes])
+    const mine = owned.rows.map(r => r.h3_index)
+    if (min_troops === 0 && build === null) {
+      await pool.query('DELETE FROM hex_orders WHERE owner_id=$1 AND h3_index = ANY($2)', [req.player.id, mine])
+    } else if (mine.length) {
+      await pool.query(`
+        INSERT INTO hex_orders (h3_index, owner_id, min_troops, build)
+        SELECT h, $1, $3, $4 FROM unnest($2::text[]) AS h
+        ON CONFLICT (h3_index) DO UPDATE SET owner_id=$1, min_troops=$3, build=$4
+      `, [req.player.id, mine, min_troops, build])
+    }
+    res.json({ updated: mine.length, skipped: h3Indexes.length - mine.length })
+  } catch (err) {
+    if (err.status) return res.status(err.status).json({ error: err.message })
+    log.error('POST /orders failed', { err })
+    res.status(500).json({ error: 'Server error' })
+  }
+})
+
 router.get('/armies', optionalAuth, async (req, res) => {
   try {
     const result = await pool.query(`
@@ -213,7 +443,7 @@ router.get('/armies', optionalAuth, async (req, res) => {
       // correctly rather than breaking the beam for whatever's still
       // mid-march when this deploys. New armies always have it stored.
       const path = a.path?.length ? a.path : findMarchPath(a.from_hex, a.to_hex).path
-      const stepCosts = pathStepCosts(path)
+      const stepCosts = pathStepCosts(path, a.ocean_mult)
       // You always know your own army's size - only an enemy/bystander's
       // march gets hidden, and only when its destination isn't visible.
       const canSee = (req.player && a.owner_id === req.player.id) || canSeeDetail(a.to_hex, visibleSet, projected)

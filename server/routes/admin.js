@@ -214,7 +214,7 @@ router.get('/armies', async (req, res) => {
     `)
     res.json(result.rows.map(a => {
       const path = a.path?.length ? a.path : findMarchPath(a.from_hex, a.to_hex).path
-      return { ...a, current_hex: currentMarchHex(a, path, pathStepCosts(path)) }
+      return { ...a, current_hex: currentMarchHex(a, path, pathStepCosts(path, a.ocean_mult)) }
     }))
   } catch (err) {
     log.error('GET /armies failed', { err })
@@ -386,6 +386,32 @@ router.delete('/players/:id', async (req, res) => {
     res.json({ deleted: username })
   } catch (err) {
     log.error('DELETE /players/:id failed', { err })
+    res.status(500).json({ error: 'Server error' })
+  }
+})
+
+router.get('/feedback', async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT f.id, f.category, f.message, f.created_at, p.username, p.color
+      FROM feedback f JOIN players p ON p.id = f.player_id
+      ORDER BY f.created_at DESC LIMIT 500
+    `)
+    res.json(result.rows)
+  } catch (err) {
+    log.error('GET /feedback failed', { err })
+    res.status(500).json({ error: 'Server error' })
+  }
+})
+
+router.delete('/feedback/:id', async (req, res) => {
+  try {
+    const result = await pool.query('DELETE FROM feedback WHERE id=$1', [req.params.id])
+    if (!result.rowCount) return res.status(404).json({ error: 'Not found' })
+    log.info('Feedback deleted', { feedbackId: req.params.id, ip: clientIp(req) })
+    res.json({ success: true })
+  } catch (err) {
+    log.error('DELETE /feedback/:id failed', { err })
     res.status(500).json({ error: 'Server error' })
   }
 })

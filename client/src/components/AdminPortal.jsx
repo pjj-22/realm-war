@@ -245,7 +245,7 @@ function RetentionRow({ label, cohort, retained, pct }) {
   )
 }
 
-const TABS = ['Overview', 'Retention', 'Activity', 'Battles', 'Battle Log', 'Armies', 'Events', 'Players', 'Season', 'World Map', 'System']
+const TABS = ['Overview', 'Retention', 'Activity', 'Battles', 'Battle Log', 'Armies', 'Events', 'Feedback', 'Players', 'Season', 'World Map', 'System']
 
 export default function AdminPortal() {
   const [secret, setSecret] = useState(() => sessionStorage.getItem('rw_admin_secret') || '')
@@ -269,6 +269,7 @@ export default function AdminPortal() {
   const [recentBattles, setRecentBattles] = useState([])
   const [recentBusy, setRecentBusy] = useState(false)
   const [selectedBattleId, setSelectedBattleId] = useState(null)
+  const [feedback, setFeedback] = useState([])
   const [battleRounds, setBattleRounds] = useState([])
   const [roundsBusy, setRoundsBusy] = useState(false)
 
@@ -353,10 +354,23 @@ export default function AdminPortal() {
     setRecentBusy(false)
   }, [secret])
 
+  const loadFeedback = useCallback(async () => {
+    try { setFeedback(await adminRequest('GET', '/feedback', null, secret)) }
+    catch (e) { alert(e.message) }
+  }, [secret])
+
+  async function deleteFeedback(id) {
+    try {
+      await adminRequest('DELETE', `/feedback/${id}`, null, secret)
+      setFeedback(f => f.filter(x => x.id !== id))
+    } catch (e) { alert(e.message) }
+  }
+
   // Both effects below fetch admin data keyed on tab/selection changes - there's
   // no pure-render substitute for "go fetch this and show it when it arrives".
   // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { if (authed && tab === 'Battle Log') loadRecentBattles() }, [authed, tab, loadRecentBattles])
+  useEffect(() => { if (authed && tab === 'Feedback') loadFeedback() }, [authed, tab, loadFeedback])
 
   const loadSeasonHistory = useCallback(async () => {
     setHistoryBusy(true)
@@ -781,6 +795,27 @@ export default function AdminPortal() {
                 </tbody>
               </table>
             </div>}
+        </>
+      )}
+
+      {/* ─── Feedback ─── */}
+      {tab === 'Feedback' && (
+        <>
+          <SectionTitle>Player Feedback ({feedback.length})</SectionTitle>
+          {feedback.length === 0
+            ? <Empty>No feedback yet.</Empty>
+            : feedback.map(f => (
+              <div key={f.id} style={{ ...CARD_STYLE, marginBottom: 12 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8, fontSize: 12, color: '#8a7a9a' }}>
+                  {dot(f.color)}
+                  <span style={{ color: '#c9b99a' }}>{f.username}</span>
+                  <span style={{ textTransform: 'uppercase', letterSpacing: 1, color: f.category === 'bug' ? '#ff8a6a' : '#c9a040' }}>{f.category}</span>
+                  <span>{ago(f.created_at)}</span>
+                  <button onClick={() => deleteFeedback(f.id)} style={{ marginLeft: 'auto', background: 'none', border: 'none', color: '#8a7a9a', cursor: 'pointer', fontSize: 12 }}>Delete</button>
+                </div>
+                <div style={{ fontSize: 14, lineHeight: 1.5, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{f.message}</div>
+              </div>
+            ))}
         </>
       )}
 

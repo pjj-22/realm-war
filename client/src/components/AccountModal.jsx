@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { api } from '../api/client'
 import { useViewportOverlayFix } from '../hooks/useViewportOverlayFix'
 import LegalModal from './LegalModal'
+import FeedbackModal from './FeedbackModal'
 import { theme } from '../theme'
 
 const S = {
@@ -55,6 +56,7 @@ export default function AccountModal({ username, onClose, onDeleted, onLogout })
   const [confirmText, setConfirmText] = useState('')
   const [showConfirm, setShowConfirm] = useState(false)
   const [legalTab, setLegalTab] = useState(null)
+  const [showFeedback, setShowFeedback] = useState(false)
 
   // Just clears the token client-side - there's no server-side session to
   // end (JWTs are stateless), so this is the same as the token silently
@@ -110,6 +112,10 @@ export default function AccountModal({ username, onClose, onDeleted, onLogout })
 
         <button style={S.btn} onClick={logout}>Log out</button>
 
+        <div style={S.h}>Feedback</div>
+        <p style={S.p}>Found a bug or have an idea? Send it straight to the developer.</p>
+        <button style={S.btn} onClick={() => setShowFeedback(true)}>Send feedback</button>
+
         <div style={S.h}>Export your data</div>
         <p style={S.p}>
           Download everything tied to this account - profile, territory,
@@ -120,7 +126,7 @@ export default function AccountModal({ username, onClose, onDeleted, onLogout })
         <div style={S.h}>Delete your account</div>
         <p style={S.p}>
           This permanently removes your profile, current territory and armies,
-          personal alerts, chat messages, and push notifications. Past battles
+          personal alerts, chat messages, feedback, and push notifications. Past battles
           and season standings keep a de-identified reference only. This cannot
           be undone.
         </p>
@@ -157,6 +163,7 @@ export default function AccountModal({ username, onClose, onDeleted, onLogout })
           <span style={S.legalLink} onClick={() => setLegalTab('terms')}>Terms of Service</span>
         </div>
       </div>
+      {showFeedback && <FeedbackModal onClose={() => setShowFeedback(false)} />}
       {legalTab && <LegalModal initialTab={legalTab} onClose={() => setLegalTab(null)} />}
     </div>
   )

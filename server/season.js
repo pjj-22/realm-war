@@ -163,6 +163,7 @@ export async function processSeason() {
     await pool.query('DELETE FROM troops')
     await pool.query('DELETE FROM buildings')
     await pool.query('DELETE FROM hexes')
+    await pool.query('UPDATE players SET peak_hexes = 0')
     await pool.query('DELETE FROM country_crowns')
     await pool.query('DELETE FROM wonder_holders')
     await pool.query('UPDATE players SET capital_hex=NULL, gold=$1', [STARTING_GOLD])
