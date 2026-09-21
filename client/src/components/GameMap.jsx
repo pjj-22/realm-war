@@ -435,7 +435,7 @@ function buildVisibleSet(claimedHexes, playerId, allyIds, ring = 1) {
 
 // requiredGarrison/playerId are optional - only your own hexes ever show the
 // decay warning, and only once your empire is big enough to be at risk at all.
-function buildClaimedPoints(claimedHexes, visibleSet, playerId, requiredGarrison = 0) {
+function buildClaimedPoints(claimedHexes, visibleSet, playerId, requiredGarrison = 0, buildingValue = 5) {
   const features = Object.entries(claimedHexes).map(([cell, claimed]) => {
     const [lat, lng] = cellToLatLng(cell)
     const isVisible = !visibleSet || visibleSet.has(cell) || claimed.projected
@@ -445,13 +445,15 @@ function buildClaimedPoints(claimedHexes, visibleSet, playerId, requiredGarrison
     // falsely trigger a decay warning below.
     const troopCount = claimed.troop_count
 
-    // Mirrors BottomDrawer's atDecayRisk exactly: own, undeveloped, border,
-    // under-garrisoned hex, once the empire is past the decay threshold. Skips
+    // Mirrors BottomDrawer's atDecayRisk: own, border, under-garrisoned hex
+    // (a building counts as buildingValue troops - completion isn't known here,
+    // so an unfinished one is counted too), once the empire is past the decay
+    // threshold. Skips
     // entirely while masked by darkness - better no warning than a wrong one.
     let decayRisk = false
     if (playerId && requiredGarrison > 0 && claimed.owner_id === playerId
-      && claimed.capital_hex !== cell && troopCount != null && troopCount < requiredGarrison
-      && parseTypes(claimed.building_types).length === 0) {
+      && claimed.capital_hex !== cell && troopCount != null
+      && troopCount + (parseTypes(claimed.building_types).length ? buildingValue : 0) < requiredGarrison) {
       const neighbors = gridDisk(cell, 1).filter(n => n !== cell)
       const friendlyCount = neighbors.filter(n => claimedHexes[n]?.owner_id === playerId).length
       decayRisk = friendlyCount < neighbors.length // border hex only - interior never decays
@@ -708,7 +710,7 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
   // Decay-scaling formula constants, for the on-map warning badge below -
   // mirrors config.js's requiredGarrisonForHexCount() exactly. Also carries
   // min_troops_to_claim for the pending-claim "3/5" indicator.
-  const decayConfigRef = useRef({ decay_hex_threshold: 30, decay_scale_hexes_per_step: 10, min_troops_to_claim: 5 })
+  const decayConfigRef = useRef({ decay_hex_threshold: 30, decay_scale_hexes_per_step: 10, min_troops_to_claim: 5, building_garrison_value: 5 })
 
   // The active season's H3 resolution - a ref (not state) because it only
   // ever changes at a season boundary, which already forces a full page
@@ -794,7 +796,7 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
         requiredGarrison = 1 + Math.floor((myHexCount - decay_hex_threshold) / decay_scale_hexes_per_step)
       }
     }
-    map.current.getSource('claimed-points')?.setData(buildClaimedPoints(claimedRef.current, visibleSet, p?.id, requiredGarrison))
+    map.current.getSource('claimed-points')?.setData(buildClaimedPoints(claimedRef.current, visibleSet, p?.id, requiredGarrison, decayConfigRef.current.building_garrison_value))
     map.current.getSource('building-pips')?.setData(buildPipFeatures(claimedRef.current))
     if (map.current.getSource('capitals')) {
       ensureFlagImages(map.current, claimedRef.current)
@@ -885,6 +887,7 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
         decay_hex_threshold: cfg.decay_hex_threshold ?? 30,
         decay_scale_hexes_per_step: cfg.decay_scale_hexes_per_step ?? 10,
         min_troops_to_claim: cfg.min_troops_to_claim ?? 5,
+        building_garrison_value: cfg.building_garrison_value ?? 5,
         troop_gold_cost: cfg.troop_gold_cost ?? 10,
       }
       // Must match server/config.js's REGION_RESOLUTION exactly, or the

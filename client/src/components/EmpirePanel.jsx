@@ -104,6 +104,7 @@ export default function EmpirePanel({ player, armies, activeBattles, onFlyTo, on
   const [sync, setSync] = useState(false)
   const [tab, setTab] = useState('hexes')
   const [perTarget, setPerTarget] = useState('')
+  const [reach, setReach] = useState('1')
   const [minClaim, setMinClaim] = useState(5)
   const [reinPlan, setReinPlan] = useState(null)
   const [reinBusy, setReinBusy] = useState(false)
@@ -209,18 +210,24 @@ export default function EmpirePanel({ player, armies, activeBattles, onFlyTo, on
   // moves), the second confirms it. Changing anything in between drops the preview.
   const perTargetN = parseInt(perTarget, 10) || 0
   const perTargetOk = perTargetN >= minClaim
-  const fanKey = `${fanMode}|${keepN}|${perTargetN}|${sync}|${filter}|${country}|${query}|${visible.length}`
+  const reachN = Math.min(10, Math.max(1, parseInt(reach, 10) || 1))
+  const fanKey = `${fanMode}|${keepN}|${perTargetN}|${reachN}|${sync}|${filter}|${country}|${query}|${visible.length}`
   const plan = fanPlan?.key === fanKey ? fanPlan : null
   async function fanOut() {
     setFanBusy(true)
     try {
       const sources = visible.map(h => h.h3_index)
       if (!plan) {
-        const preview = await api.fanOut(sources, keepN, fanMode, perTargetN, true, sync && !syncLabel)
-        if (!preview.armies) toast(`Nothing to send - no hex can send ${perTargetN} and stay at ${keepN}, or there are no neighbouring targets`)
-        else setFanPlan({ ...preview, key: fanKey })
+        const preview = await api.fanOut(sources, keepN, fanMode, perTargetN, reachN, true, sync && !syncLabel)
+        if (!preview.armies) {
+          toast(preview.senders === 0
+            ? `No hex can send ${perTargetN} and still keep ${keepN} - the most any hex could send is ${preview.maxSpare}. Lower the number or the minimum.`
+            : preview.targets === 0
+              ? 'No neighbouring hexes to claim or attack with that many troops'
+              : 'Nothing to send')
+        } else setFanPlan({ ...preview, key: fanKey })
       } else {
-        const r = await api.fanOut(sources, keepN, fanMode, perTargetN, false, sync && !syncLabel)
+        const r = await api.fanOut(sources, keepN, fanMode, perTargetN, reachN, false, sync && !syncLabel)
         toast(r.armies ? `${r.troops} troops sent: ${r.claims} to claim, ${r.attacks} to attack` : 'No troops were free to send', r.armies ? 'success' : 'error')
         setFanPlan(null)
         onSent?.()
@@ -426,7 +433,7 @@ export default function EmpirePanel({ player, armies, activeBattles, onFlyTo, on
 
             <div style={card}>
               <div style={cardTitle}>Fan out{fanLabel ? <span style={{ color: theme.text.tertiary, fontSize: 12 }}> - {fanLabel}</span> : null}</div>
-              <div style={cardDesc}>Sends an army of exactly the size you set from each hex to a neighbouring hex you don't own, to claim it or attack it. A hex sends only if it can afford that and stay at your minimum. Attacks only go where your army beats the visible garrison.</div>
+              <div style={cardDesc}>Sends an army of exactly the size you set to each hex next to your land that you don't own, to claim it or attack it. Each target is supplied by the nearest hex within your reach that can afford it and stay at your minimum, so rich interior hexes can feed the border. Attacks only go where your army beats the visible garrison.</div>
               <div style={{ ...row, marginBottom: 10 }}>
                 <span style={{ fontSize: 13, color: theme.text.secondary }}>Send</span>
                 <input
@@ -438,6 +445,13 @@ export default function EmpirePanel({ player, armies, activeBattles, onFlyTo, on
                     Decay-safe ({decayMin})
                   </button>
                 )}
+              </div>
+              <div style={{ ...row, marginBottom: 10 }}>
+                <span style={{ fontSize: 13, color: theme.text.secondary }}>Pull troops from up to</span>
+                <input
+                  style={{ ...S.input, width: 56 }} inputMode="numeric" value={reach}
+                  onChange={e => setReach(e.target.value.replace(/\D/g, '').slice(0, 2))} />
+                <span style={{ fontSize: 13, color: theme.text.secondary }}>hexes away (1-10) - each hex of travel is a full march step, so far sources arrive later</span>
               </div>
               <div style={row}>
                 <select style={S.input} value={fanMode} onChange={e => setFanMode(e.target.value)}>

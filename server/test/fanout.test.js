@@ -40,3 +40,17 @@ test('every army carries exactly the target cost, and a source will not drop bel
   assert.ok(plan.every(p => p.quantity === 5))
   assert.equal(plan.length, 2)
 })
+
+test('with a reach above 1, the nearest hex that can afford the target sends', () => {
+  // a is the target; b (1 away) is too poor, c (2 away) and d (3 away) can afford it
+  const reach = h => 'bcd'.split('').map((x, i) => ({ h3: x, d: i + 1 })).filter(() => h === 'a')
+  const plan = planFanOut(new Map([['b', 2], ['c', 30], ['d', 90]]), [{ h3: 'a', cost: 20, kind: 'claim' }], reach)
+  assert.deepEqual(plan.map(p => p.fromHex), ['c'])
+})
+
+test('with a reach above 1, one rich interior hex can supply several targets', () => {
+  const reach = () => [{ h3: 'x', d: 3 }]
+  const plan = planFanOut(new Map([['x', 65]]), [{ h3: 'a', cost: 20, kind: 'claim' }, { h3: 'b', cost: 20, kind: 'claim' }, { h3: 'c', cost: 20, kind: 'claim' }, { h3: 'd', cost: 20, kind: 'claim' }], reach)
+  assert.equal(plan.length, 3)
+  assert.ok(plan.every(p => p.fromHex === 'x'))
+})

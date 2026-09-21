@@ -160,7 +160,7 @@ export default function HelpModal({ onClose }) {
           <Row icon={<AllianceIcon size={15} />} label="Alliances"
             desc="Found or join an alliance (banner button, top-right). Allies can't attack each other, share map vision, reinforce each other's battles, and get a private chat." />
           <Row icon={<LeafIcon size={15} />} label="Border decay"
-            desc="Large empires slowly lose unguarded, undeveloped border hexes. Garrison troops or build to hold the frontier." />
+            desc="Large empires slowly lose under-garrisoned border hexes: past 30 hexes each one needs a growing number of troops. A finished building counts as 5 of them." />
           <Row icon={<FlameIcon size={15} />} label="Power projection"
             desc="Massive forces can't hide. A hex garrisoning a huge army stays visible through fog of war, and once your total troop count grows large enough, your whole empire is exposed to everyone." />
           <Row icon={<BellIcon size={15} />} label="Attack alerts"

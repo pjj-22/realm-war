@@ -45,7 +45,7 @@ export const api = {
   setOrders: (h3Indexes, min_troops, build = null) => request('POST', '/military/orders', { h3Indexes, min_troops, build }),
   marchMany: (sources, toHex, keep, sync = false) => request('POST', '/military/march-many', { sources, toHex, keep, sync }),
   reinforce: (keep, dryRun = false) => request('POST', '/military/reinforce', { keep, dryRun }),
-  fanOut: (sources, keep, mode, perTarget, dryRun = false, sync = false) => request('POST', '/military/fan-out', { sources, keep, mode, perTarget, dryRun, sync }),
+  fanOut: (sources, keep, mode, perTarget, range, dryRun = false, sync = false) => request('POST', '/military/fan-out', { sources, keep, mode, perTarget, range, dryRun, sync }),
   getArmies: () => request('GET', '/military/armies'),
   getPendingClaims: () => request('GET', '/military/pending-claims'),
   recallArmy: (id) => request('DELETE', `/military/armies/${id}`),

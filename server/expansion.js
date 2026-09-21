@@ -1,4 +1,4 @@
-import { gridDisk } from 'h3-js'
+import { gridDisk, gridDiskDistances } from 'h3-js'
 import { pool } from './db.js'
 import { MIN_TROOPS_TO_CLAIM, MASS_MARCH_MAX_SOURCES } from './config.js'
 import { isOcean } from './terrain.js'
@@ -6,15 +6,20 @@ import { buildVisibleSet, canSeeDetail } from './visibility.js'
 import { planFanOut } from './fanout.js'
 
 // Which of `sources` (hexes the player owns) should send troops where, for a
-// fan-out. Every army carries exactly `perTarget` troops - the player's number,
+// fan-out. `range` is how many hexes away a target may pull troops from (1 =
+// only hexes touching it); the nearest hex that can afford it sends. Every
+// army carries exactly `perTarget` troops - the player's number,
 // no auto-sizing - and a source only sends if that still leaves it at or above
 // `keep`. perTarget goes to each unclaimed neighbour (to claim; it must be at
 // least MIN_TROOPS_TO_CLAIM) and, in 'attack'/'both' mode, to each visible enemy
 // neighbour, but only where perTarget covers 1.5x the garrison + 2 (a smaller
 // force would just die). mode is 'claim' | 'attack' | 'both'. Allies, ocean,
 // hexes under siege and hexes one of the player's armies is already heading for
-// are skipped. Returns the plan (see fanout.js planFanOut); nothing is sent.
-export async function gatherFanOut(me, { sources, keep, mode, perTarget }) {
+// are skipped. Returns { plan, senders, maxSpare, targets }: the plan (see
+// fanout.js planFanOut), how many hexes could afford perTarget, the most any
+// one hex could spare, and how many targets qualified - so an empty plan can
+// say why. Nothing is sent.
+export async function gatherFanOut(me, { sources, keep, mode, perTarget, range = 1 }) {
   const type = 'troop'
   const owned = await pool.query('SELECT h3_index FROM hexes WHERE owner_id=$1', [me])
   const ownedSet = new Set(owned.rows.map(r => r.h3_index))
@@ -22,12 +27,16 @@ export async function gatherFanOut(me, { sources, keep, mode, perTarget }) {
 
   const garrisons = await pool.query(
     'SELECT h3_index, quantity FROM troops WHERE owner_id=$1 AND type=$2 AND h3_index = ANY($3)', [me, type, wanted])
-  const spare = new Map(garrisons.rows.map(r => [r.h3_index, r.quantity - keep]).filter(([, q]) => q >= perTarget))
-  if (spare.size === 0) return []
+  const allSpare = garrisons.rows.map(r => [r.h3_index, r.quantity - keep])
+  const maxSpare = allSpare.reduce((m, [, q]) => Math.max(m, q), 0)
+  const spare = new Map(allSpare.filter(([, q]) => q >= perTarget))
+  if (spare.size === 0) return { plan: [], senders: 0, maxSpare, targets: 0 }
 
-  // Candidate targets: neighbours of the sources that can actually afford something
+  // Candidate targets: every non-owned hex next to any hex you own. (Not just
+  // next to the sources - with a reach above 1, an interior hex can supply a
+  // border target it doesn't touch.)
   const candidates = new Set()
-  for (const h of spare.keys()) for (const n of gridDisk(h, 1)) if (n !== h && !ownedSet.has(n)) candidates.add(n)
+  for (const h of ownedSet) for (const n of gridDisk(h, 1)) if (!ownedSet.has(n)) candidates.add(n)
   const candList = [...candidates].filter(h => !isOcean(h))
 
   const [hexRows, garr, battles, mine, alliance] = await Promise.all([
@@ -56,5 +65,7 @@ export async function gatherFanOut(me, { sources, keep, mode, perTarget }) {
       if (perTarget >= needed) targets.push({ h3: h, cost: perTarget, kind: 'attack' })
     }
   }
-  return planFanOut(spare, targets, h => gridDisk(h, 1))
+  // Sources in reach of a target: every hex within `range` steps, with its distance
+  const inReach = (h3) => gridDiskDistances(h3, range).flatMap((ring, d) => (d === 0 ? [] : ring.map(cell => ({ h3: cell, d }))))
+  return { plan: planFanOut(spare, targets, inReach), senders: spare.size, maxSpare, targets: targets.length }
 }

@@ -239,6 +239,7 @@ export default function BottomDrawer({ hex, player, stats, pendingClaims, onClai
     fort_advantage_troops: 3, entrench_advantage_per_neighbor: 1,
     entrench_max_neighbors: 4, strategic_advantage_troops: 2, max_advantaged_defenders: 5,
     min_troops_to_claim: 5, decay_hex_threshold: 30, decay_scale_hexes_per_step: 10,
+    building_garrison_value: 5,
   })
   // Defaults to the claim threshold, not "all troops" - marching exactly
   // enough to claim (then leaving the rest garrisoned) is the overwhelmingly
@@ -468,10 +469,11 @@ export default function BottomDrawer({ hex, player, stats, pendingClaims, onClai
     const requiredGarrison = ownedHexCount > gameConfig.decay_hex_threshold
       ? 1 + Math.floor((ownedHexCount - gameConfig.decay_hex_threshold) / gameConfig.decay_scale_hexes_per_step)
       : 0
-    const isUndeveloped = !buildingData?.buildings?.length
+    // A finished building counts as building_garrison_value troops toward the decay bar
+    const buildingBonus = buildingData?.buildings?.some(b => b.is_complete) ? gameConfig.building_garrison_value : 0
     const isCapitalHex = hex.capital_hex === hex.h3
     const isBorderHex = friendlyNeighbors < 6 // fully-surrounded interior hexes never decay
-    const atDecayRisk = isOwn && !isCapitalHex && isUndeveloped && isBorderHex && requiredGarrison > 0 && totalTroops < requiredGarrison
+    const atDecayRisk = isOwn && !isCapitalHex && isBorderHex && requiredGarrison > 0 && totalTroops + buildingBonus < requiredGarrison
 
     const hasBarracks = buildingData?.buildings?.some(b => b.type === 'barracks')
 
@@ -640,7 +642,7 @@ export default function BottomDrawer({ hex, player, stats, pendingClaims, onClai
                 garrison is below what your current empire size requires */}
             <Tooltip
               style={{ flex: 1 }}
-              text={atDecayRisk ? `Empires above ${gameConfig.decay_hex_threshold} hexes need a bigger garrison per hex - yours needs ${requiredGarrison}+ here (or a building) to avoid decay.` : null}
+              text={atDecayRisk ? `Empires above ${gameConfig.decay_hex_threshold} hexes need a bigger garrison per hex - yours needs ${requiredGarrison}+ here to avoid decay (a finished building counts as ${gameConfig.building_garrison_value} troops).` : null}
             >
               <div style={{
                 padding: '14px 16px', cursor: atDecayRisk ? 'help' : 'default',

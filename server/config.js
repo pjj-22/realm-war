@@ -109,6 +109,9 @@ export const ENTRENCH_MAX_NEIGHBORS          = 4  // capped at +4
 export const DECAY_HEX_THRESHOLD = IS_SANDBOX ? 12 : 30  // empires above this size start decaying
 export const DECAY_CHANCE        = 0.15                // per eligible border hex per tick
 export const DECAY_MAX_PER_TICK  = 3                   // at most N hexes lost per player per tick
+// A finished building counts as this many troops toward a hex's decay-safe
+// garrison (it no longer exempts the hex outright).
+export const BUILDING_GARRISON_VALUE = 5
 export const DECAY_TROOP_RETURN  = 3 / 5               // share of a decayed hex's garrison that makes it back to the capital
 // A hex needs at least this many troops to be decay-safe, and the bar rises
 // as the empire grows: +1 required troop for every DECAY_SCALE_HEXES_PER_STEP

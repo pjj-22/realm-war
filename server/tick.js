@@ -6,12 +6,13 @@ import {
   TROOP_STATS,
   ENTRENCH_ADVANTAGE_PER_NEIGHBOR, ENTRENCH_MAX_NEIGHBORS,
   CAMP_LOOT_GOLD, CROWN_MIN_HEXES,
-  DECAY_HEX_THRESHOLD, DECAY_CHANCE, DECAY_MAX_PER_TICK, DECAY_TROOP_RETURN, requiredGarrisonForHexCount,
+  DECAY_HEX_THRESHOLD, DECAY_CHANCE, DECAY_MAX_PER_TICK, DECAY_TROOP_RETURN, BUILDING_GARRISON_VALUE, requiredGarrisonForHexCount,
   WONDER_INCOME_GOLD, MIN_TROOPS_TO_CLAIM,
 } from './config.js'
 import { getIO, emitToRegion } from './socket.js'
 import { processStandingOrders } from './orders.js'
 import { updatePeaks, getUnlockState, oceanMultiplierFor } from './unlocks.js'
+import { decayCandidates } from './decay.js'
 import { ensureBots, processBots } from './bots.js'
 import { ensureWildlands } from './wild.js'
 import { ensureSeason, processSeason } from './season.js'
@@ -762,19 +763,28 @@ export async function processDecay() {
       // only stays decay-safe for a genuinely small empire (see config.js).
       const requiredGarrison = requiredGarrisonForHexCount(player.hex_count)
 
-      // Candidates: garrison below the required bar, no buildings, not the
-      // capital - random sample to bound work
-      const cands = await pool.query(`
-        SELECT h.h3_index, COALESCE(SUM(t.quantity), 0)::int AS garrison
-        FROM hexes h
-        LEFT JOIN troops t ON t.h3_index = h.h3_index
-        WHERE h.owner_id = $1
-          AND h.h3_index IS DISTINCT FROM $2
-          AND NOT EXISTS (SELECT 1 FROM buildings b WHERE b.h3_index = h.h3_index)
-        GROUP BY h.h3_index
-        HAVING COALESCE(SUM(t.quantity), 0) < $3
-        ORDER BY RANDOM() LIMIT 30
-      `, [player.id, player.capital_hex, requiredGarrison])
+      // Candidates: garrison below the required bar (a finished building counts
+      // as BUILDING_GARRISON_VALUE troops - see decay.js), not the capital -
+      // random sample of 30 to bound work
+      const [garrisons, builtRows] = await Promise.all([
+        pool.query(`
+          SELECT h.h3_index, COALESCE(SUM(t.quantity), 0)::int AS garrison
+          FROM hexes h
+          LEFT JOIN troops t ON t.h3_index = h.h3_index
+          WHERE h.owner_id = $1
+          GROUP BY h.h3_index
+        `, [player.id]),
+        pool.query(`
+          SELECT DISTINCT b.h3_index
+          FROM buildings b JOIN hexes h ON h.h3_index = b.h3_index
+          WHERE h.owner_id = $1 AND EXTRACT(EPOCH FROM (NOW() - b.created_at)) >= $2
+        `, [player.id, BUILDING_TIME_SECONDS]),
+      ])
+      const cands = {
+        rows: decayCandidates(garrisons.rows, new Set(builtRows.rows.map(r => r.h3_index)), {
+          required: requiredGarrison, buildingValue: BUILDING_GARRISON_VALUE, capitalHex: player.capital_hex,
+        }).sort(() => Math.random() - 0.5).slice(0, 30),
+      }
 
       let lost = 0
       let returned = 0
@@ -808,7 +818,7 @@ export async function processDecay() {
         }
       }
       if (lost > 0) {
-        insertEvent(player.id, 'decay', `${lost} border hex${lost > 1 ? 'es' : ''} slipped from your control - at your empire's size, a hex needs ${requiredGarrison}+ troops or a building to hold. Garrison or build to hold the frontier.${returned > 0 ? ` ${returned} troop${returned > 1 ? 's' : ''} fell back to your capital.` : ''}`)
+        insertEvent(player.id, 'decay', `${lost} border hex${lost > 1 ? 'es' : ''} slipped from your control - at your empire's size, a hex needs ${requiredGarrison}+ troops to hold (a finished building counts as ${BUILDING_GARRISON_VALUE}). Garrison or build to hold the frontier.${returned > 0 ? ` ${returned} troop${returned > 1 ? 's' : ''} fell back to your capital.` : ''}`)
         log.debug(`[decay] ${player.username} lost ${lost} border hexes (required garrison was ${requiredGarrison})`)
       }
     }
