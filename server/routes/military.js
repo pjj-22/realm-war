@@ -7,6 +7,7 @@ import { gridDisk, gridDistance } from 'h3-js'
 import { gatherFanOut } from '../expansion.js'
 import { launchArmy } from '../march.js'
 import { planReinforce } from '../reinforce.js'
+import { planRedistribute } from '../redistribute.js'
 import { requireUnlock, getUnlockState, oceanMultiplierFor } from '../unlocks.js'
 import { queueTraining } from '../training.js'
 import { emitToRegion } from '../socket.js'
@@ -338,6 +339,72 @@ router.post('/reinforce', requireAuth, rateLimit({ windowMs: 60 * 1000, max: 20,
   } catch (err) {
     if (err.status) return res.status(err.status).json({ error: err.message })
     log.error('POST /reinforce failed', { err })
+    res.status(500).json({ error: 'Server error' })
+  }
+})
+
+// Redistribute troops: evens out garrisons between neighbouring hexes in the
+// filter (redistribute.js) - full hexes hand troops to thinner neighbours, one
+// army per neighbouring pair, all landing one march step later. Never takes a
+// hex below `keep`; hexes with an enemy army inbound or a battle on hold their
+// troops (they can still receive). dryRun previews the result.
+const REDISTRIBUTE_MAX_ARMIES = 400
+router.post('/redistribute', requireAuth, rateLimit({ windowMs: 60 * 1000, max: 20, key: req => `redistribute:${req.player.id}`, message: 'Slow down - too many redistributions' }), async (req, res) => {
+  const { sources, keep = 1, dryRun = false } = req.body
+  if (!Array.isArray(sources) || sources.length === 0) return res.status(400).json({ error: 'Invalid request' })
+  if (!Number.isInteger(keep) || keep < 0 || keep > 500) return res.status(400).json({ error: 'Invalid keep amount' })
+  const type = 'troop'
+  const stats = TROOP_STATS[type]
+  const me = req.player.id
+  try {
+    const state = await requireUnlock(me, 'redistribute')
+    const oceanMult = oceanMultiplierFor(state)
+
+    const owned = await pool.query('SELECT h3_index FROM hexes WHERE owner_id=$1', [me])
+    const ownedSet = new Set(owned.rows.map(r => r.h3_index))
+    const scope = [...new Set(sources)].filter(h => typeof h === 'string' && ownedSet.has(h)).slice(0, MASS_MARCH_MAX_SOURCES)
+    if (scope.length < 2) return res.json({ dryRun: !!dryRun, armies: 0, troops: 0, hexes: scope.length, before: { min: 0, max: 0 }, after: { min: 0, max: 0 } })
+
+    const [garrisons, incoming, battles] = await Promise.all([
+      pool.query('SELECT h3_index, quantity FROM troops WHERE owner_id=$1 AND type=$2 AND h3_index = ANY($3)', [me, type, scope]),
+      pool.query("SELECT DISTINCT to_hex FROM armies WHERE status='marching' AND owner_id <> $1 AND to_hex = ANY($2)", [me, scope]),
+      pool.query("SELECT h3_index FROM battles WHERE status='active' AND defender_id=$1 AND h3_index = ANY($2)", [me, scope]),
+    ])
+    const troops = new Map(scope.map(h => [h, 0]))
+    for (const r of garrisons.rows) troops.set(r.h3_index, r.quantity)
+    const holding = new Set([...incoming.rows.map(r => r.to_hex), ...battles.rows.map(r => r.h3_index)])
+
+    const result = planRedistribute(troops, h => gridDisk(h, 1), { keep, canSend: h => !holding.has(h) })
+    const moves = result.moves.slice(0, REDISTRIBUTE_MAX_ARMIES)
+    const summary = {
+      armies: moves.length,
+      troops: moves.reduce((s, m) => s + m.quantity, 0),
+      hexes: scope.length,
+      before: result.before,
+      after: result.after,
+      holding: holding.size,
+    }
+    if (dryRun) return res.json({ dryRun: true, ...summary })
+
+    let sent = 0, sentTroops = 0
+    for (const m of moves) {
+      const { path, cost } = findMarchPath(m.fromHex, m.toHex, oceanMult)
+      const arrivesAt = new Date(Date.now() + Math.max(1, cost) * stats.marchMinutesPerHex * 60 * 1000)
+      try {
+        await launchArmy(me, { fromHex: m.fromHex, toHex: m.toHex, type, quantity: m.quantity, path, arrivesAt, oceanMult })
+      } catch (err) {
+        if (err.status) continue
+        throw err
+      }
+      sent++; sentTroops += m.quantity
+      emitToRegion(m.fromHex, 'armies:update')
+      emitToRegion(m.toHex, 'armies:update')
+    }
+    log.info('Redistribute', { playerId: me, armies: sent, troops: sentTroops, hexes: scope.length })
+    res.json({ dryRun: false, ...summary, armies: sent, troops: sentTroops })
+  } catch (err) {
+    if (err.status) return res.status(err.status).json({ error: err.message })
+    log.error('POST /redistribute failed', { err })
     res.status(500).json({ error: 'Server error' })
   }
 })

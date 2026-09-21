@@ -169,6 +169,7 @@ export const UNLOCKS = [
   { id: 'build_orders', hexes: IS_SANDBOX ? 25 : 100, name: 'Standing build orders', desc: 'Hexes raise a fort, barracks or mine on their own.' },
   { id: 'coordinated',  hexes: IS_SANDBOX ? 50 : 200, name: 'Coordinated arrival', desc: 'Mass marches and fan-outs can hold every army to the slowest one so they all land together.' },
   { id: 'reinforce',    hexes: IS_SANDBOX ? 50 : 200, name: 'Reinforce threatened', desc: 'One click sends spare troops from nearby hexes to the hexes under attack, if they can arrive in time.' },
+  { id: 'redistribute', hexes: IS_SANDBOX ? 100 : 500, name: 'Redistribute troops', desc: 'Even out garrisons between neighbouring hexes, so full hexes top up thin ones.' },
   { id: 'sea_power',    hexes: IS_SANDBOX ? 100 : 500, name: 'Sea power',          desc: 'Your armies cross water at 2x cost instead of 10x.' },
 ]
 export const MASS_MARCH_MAX_SOURCES = 500

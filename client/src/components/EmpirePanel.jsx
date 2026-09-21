@@ -108,6 +108,8 @@ export default function EmpirePanel({ player, armies, activeBattles, onFlyTo, on
   const [minClaim, setMinClaim] = useState(5)
   const [reinPlan, setReinPlan] = useState(null)
   const [reinBusy, setReinBusy] = useState(false)
+  const [redPlan, setRedPlan] = useState(null)
+  const [redBusy, setRedBusy] = useState(false)
 
   const load = useCallback(() => {
     api.getEmpire().then(setRows).catch(err => toast(err.message))
@@ -203,6 +205,7 @@ export default function EmpirePanel({ player, armies, activeBattles, onFlyTo, on
   const buildLabel = lockedLabel('build_orders')
   const syncLabel = lockedLabel('coordinated')
   const reinLabel = lockedLabel('reinforce')
+  const redLabel = lockedLabel('redistribute')
   const massLocked = !!massLabel
   const fanLocked = !!fanLabel
 
@@ -237,6 +240,30 @@ export default function EmpirePanel({ player, armies, activeBattles, onFlyTo, on
       toast(err.message)
     }
     setFanBusy(false)
+  }
+
+  // Same two-step flow as fan out: preview, then confirm
+  const redKey = `${keepN}|${filter}|${country}|${query}|${visible.length}`
+  const red = redPlan?.key === redKey ? redPlan : null
+  async function redistribute() {
+    setRedBusy(true)
+    try {
+      const sources = visible.map(h => h.h3_index)
+      if (!red) {
+        const preview = await api.redistribute(sources, keepN, true)
+        if (!preview.armies) toast(preview.hexes < 2 ? 'Redistribute needs at least two hexes in the filter' : 'Already about even - nothing worth moving')
+        else setRedPlan({ ...preview, key: redKey })
+      } else {
+        const r = await api.redistribute(sources, keepN, false)
+        toast(r.armies ? `${r.troops} troops moving between ${r.hexes} hexes` : 'No troops were free to move', r.armies ? 'success' : 'error')
+        setRedPlan(null)
+        onSent?.()
+        load()
+      }
+    } catch (err) {
+      toast(err.message)
+    }
+    setRedBusy(false)
   }
 
   const reinKey = `${keepN}`
@@ -428,6 +455,21 @@ export default function EmpirePanel({ player, armies, activeBattles, onFlyTo, on
                   onClick={() => onMassMarch({ sources: marchSources.map(h => h.h3_index), keep: keepN, sync: sync && !syncLabel })}>
                   {massLocked ? massLabel : `Send ${marchTroops} troops from ${marchSources.length} hexes...`}
                 </button>
+              </div>
+            </div>
+
+            <div style={card}>
+              <div style={cardTitle}>Redistribute troops{redLabel ? <span style={{ color: theme.text.tertiary, fontSize: 12 }}> - {redLabel}</span> : null}</div>
+              <div style={cardDesc}>Evens out garrisons between neighbouring hexes in your filter: a hex with 60 next to one with 30 sends 15, and a hex in the middle of a slope both receives and passes some on. It's approximate, and you can run it again once the armies land (one march step). Hexes under attack hold their troops, and none drop below your minimum. Moves under 5 troops are skipped.</div>
+              <div style={row}>
+                <button
+                  style={{ ...S.chip(true), opacity: !!redLabel || redBusy || visible.length < 2 ? 0.5 : 1 }}
+                  disabled={!!redLabel || redBusy || visible.length < 2} onClick={redistribute}>
+                  {redLabel ? redLabel
+                    : red ? `Confirm: move ${red.troops} troops in ${red.armies} armies (${red.before.min}-${red.before.max} becomes about ${red.after.min}-${red.after.max})`
+                    : 'Redistribute...'}
+                </button>
+                {red && <button style={S.chip(false)} onClick={() => setRedPlan(null)}>Cancel</button>}
               </div>
             </div>
 
