@@ -102,6 +102,9 @@ export default function EmpirePanel({ player, armies, activeBattles, onFlyTo, on
   const [fanPlan, setFanPlan] = useState(null)
   const [fanBusy, setFanBusy] = useState(false)
   const [sync, setSync] = useState(false)
+  const [tab, setTab] = useState('hexes')
+  const [perTarget, setPerTarget] = useState('')
+  const [minClaim, setMinClaim] = useState(5)
   const [reinPlan, setReinPlan] = useState(null)
   const [reinBusy, setReinBusy] = useState(false)
 
@@ -122,6 +125,7 @@ export default function EmpirePanel({ player, armies, activeBattles, onFlyTo, on
       const threshold = cfg.decay_hex_threshold ?? 30
       const step = cfg.decay_scale_hexes_per_step ?? 10
       setDecayMin(hexTotal <= threshold ? 0 : 1 + Math.floor((hexTotal - threshold) / step))
+      setMinClaim(cfg.min_troops_to_claim ?? 5)
     }).catch(() => {})
   }, [hexTotal])
 
@@ -200,22 +204,23 @@ export default function EmpirePanel({ player, armies, activeBattles, onFlyTo, on
   const reinLabel = lockedLabel('reinforce')
   const massLocked = !!massLabel
   const fanLocked = !!fanLabel
-  const nextTier = unlocks?.tiers.find(t => !t.unlocked)
 
   // Two steps: the first click asks the server what it would send (nothing
   // moves), the second confirms it. Changing anything in between drops the preview.
-  const fanKey = `${fanMode}|${keepN}|${sync}|${filter}|${country}|${query}|${visible.length}`
+  const perTargetN = parseInt(perTarget, 10) || 0
+  const perTargetOk = perTargetN >= minClaim
+  const fanKey = `${fanMode}|${keepN}|${perTargetN}|${sync}|${filter}|${country}|${query}|${visible.length}`
   const plan = fanPlan?.key === fanKey ? fanPlan : null
   async function fanOut() {
     setFanBusy(true)
     try {
       const sources = visible.map(h => h.h3_index)
       if (!plan) {
-        const preview = await api.fanOut(sources, keepN, fanMode, true, sync && !syncLabel)
-        if (!preview.armies) toast('Nothing to send - no neighbouring hexes you can claim or beat with the troops available')
+        const preview = await api.fanOut(sources, keepN, fanMode, perTargetN, true, sync && !syncLabel)
+        if (!preview.armies) toast(`Nothing to send - no hex can send ${perTargetN} and stay at ${keepN}, or there are no neighbouring targets`)
         else setFanPlan({ ...preview, key: fanKey })
       } else {
-        const r = await api.fanOut(sources, keepN, fanMode, false, sync && !syncLabel)
+        const r = await api.fanOut(sources, keepN, fanMode, perTargetN, false, sync && !syncLabel)
         toast(r.armies ? `${r.troops} troops sent: ${r.claims} to claim, ${r.attacks} to attack` : 'No troops were free to send', r.armies ? 'success' : 'error')
         setFanPlan(null)
         onSent?.()
@@ -259,10 +264,27 @@ export default function EmpirePanel({ player, armies, activeBattles, onFlyTo, on
     </span>
   )
 
+  const TABS = [
+    { id: 'hexes', label: `Hexes ${all.length}` },
+    { id: 'actions', label: 'Actions' },
+    { id: 'orders', label: 'Orders' },
+    { id: 'unlocks', label: 'Unlocks' },
+  ]
+  const card = { border: `1px solid ${theme.border}`, borderRadius: 6, padding: '12px 14px', marginBottom: 12, background: 'rgba(255,255,255,0.02)' }
+  const cardTitle = { fontSize: 14, color: theme.text.primary, marginBottom: 2 }
+  const cardDesc = { fontSize: 12, color: theme.text.tertiary, marginBottom: 10, lineHeight: 1.5 }
+  const row = { display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }
+  const scopeBar = (
+    <div style={{ ...row, justifyContent: 'space-between', fontSize: 12, color: theme.text.secondary, marginBottom: 12 }}>
+      <span>Applies to the <b style={{ color: theme.text.primary }}>{visible.length}</b> hex{visible.length === 1 ? '' : 'es'} in your current filter{filter !== 'all' || country || query ? '' : ' (all of them)'}</span>
+      <button style={S.chip(false)} onClick={() => setTab('hexes')}>Change filter</button>
+    </div>
+  )
+
   return (
     <div ref={overlayRef} style={S.overlay} onClick={onClose}>
       <div style={S.box} onClick={e => e.stopPropagation()}>
-        <div style={{ padding: '16px 20px 12px', borderBottom: `1px solid ${theme.border}` }}>
+        <div style={{ padding: '16px 20px 0', borderBottom: `1px solid ${theme.border}` }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
             <span style={{ fontSize: 18, letterSpacing: 4, textTransform: 'uppercase', fontFamily: theme.headerFont }}>Empire</span>
             <button onClick={onClose} style={{ background: 'none', border: 'none', color: theme.text.secondary, fontSize: 22, cursor: 'pointer', lineHeight: 1 }}>×</button>
@@ -274,167 +296,234 @@ export default function EmpirePanel({ player, armies, activeBattles, onFlyTo, on
             <Stat icon={totals.threatened ? <WarningIcon size={14} color="#ff6060" /> : null} value={totals.threatened} label="Threatened" color={totals.threatened ? '#ff6060' : undefined} />
             <Stat value={totals.empty} label="Undefended" color={totals.empty ? '#e0a040' : undefined} />
           </div>
-          {nextTier && (
-            <div style={{ fontSize: 12, color: theme.text.secondary, marginBottom: 10 }}>
-              Next unlock: <span style={{ color: theme.accentStrong }}>{nextTier.name}</span> at {nextTier.hexes} hexes
-              ({Math.max(0, nextTier.hexes - unlocks.effective)} to go) - {nextTier.desc}
-              <div style={{ height: 4, background: 'rgba(255,255,255,0.08)', borderRadius: 2, marginTop: 5 }}>
-                <div style={{ height: '100%', width: `${Math.min(100, (unlocks.effective / nextTier.hexes) * 100)}%`, background: theme.accent, borderRadius: 2 }} />
+          <div style={{ display: 'flex', gap: 2 }}>
+            {TABS.map(t => (
+              <button key={t.id} onClick={() => setTab(t.id)} style={{
+                padding: '8px 16px', background: 'none', cursor: 'pointer', fontSize: 13, letterSpacing: 1,
+                fontFamily: 'Georgia, serif', border: 'none',
+                borderBottom: `2px solid ${tab === t.id ? theme.accent : 'transparent'}`,
+                color: tab === t.id ? theme.accentStrong : theme.text.secondary,
+              }}>{t.label}</button>
+            ))}
+          </div>
+        </div>
+
+        {tab === 'hexes' && (
+          <>
+            <div style={{ padding: '12px 20px', borderBottom: `1px solid ${theme.border}` }}>
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 8 }}>
+                {FILTERS.map(f => {
+                  const n = f.id === 'all' ? null : all.filter(MATCH[f.id]).length
+                  return <button key={f.id} style={S.chip(filter === f.id)} onClick={() => setFilter(f.id)}>{f.label}{n != null ? ` ${n}` : ''}</button>
+                })}
+              </div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <input style={{ ...S.input, flex: 1, minWidth: 0 }} placeholder="Search country, #code, landmark" value={query} onChange={e => setQuery(e.target.value)} />
+                <select style={{ ...S.input, maxWidth: 160 }} value={country} onChange={e => setCountry(e.target.value)}>
+                  <option value="">All countries</option>
+                  {countries.map(c => <option key={c} value={c}>{c}</option>)}
+                </select>
               </div>
             </div>
-          )}
-          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 8 }}>
-            {FILTERS.map(f => {
-              const n = f.id === 'all' ? null : all.filter(MATCH[f.id]).length
-              return <button key={f.id} style={S.chip(filter === f.id)} onClick={() => setFilter(f.id)}>{f.label}{n != null ? ` ${n}` : ''}</button>
-            })}
-          </div>
-          <div style={{ display: 'flex', gap: 8 }}>
-            <input style={{ ...S.input, flex: 1, minWidth: 0 }} placeholder="Search country, #code, landmark" value={query} onChange={e => setQuery(e.target.value)} />
-            <select style={{ ...S.input, maxWidth: 160 }} value={country} onChange={e => setCountry(e.target.value)}>
-              <option value="">All countries</option>
-              {countries.map(c => <option key={c} value={c}>{c}</option>)}
-            </select>
-          </div>
-        </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: cols, gap: 8, padding: '8px 20px', fontSize: 10, letterSpacing: 1, textTransform: 'uppercase', borderBottom: `1px solid ${theme.border}` }}>
-          {colHead('Hex', 'country')}
-          {colHead('Troops', 'troops')}
-          {colHead('Built')}
-          {!isMobile && colHead('Income', 'income')}
-          {!isMobile && colHead('Lvl')}
-          {!isMobile && colHead('Order')}
-          {colHead('Status', 'attention')}
-        </div>
-
-        <div style={{ flex: 1, overflowY: 'auto' }}>
-          {rows === null && <div style={{ padding: 24, textAlign: 'center', color: theme.text.tertiary }}>Loading...</div>}
-          {rows !== null && visible.length === 0 && <div style={{ padding: 24, textAlign: 'center', color: theme.text.tertiary }}>No hexes match.</div>}
-          {visible.map(h => (
-            <div
-              key={h.h3_index}
-              onClick={() => { onFlyTo(h.h3_index); onClose() }}
-              style={{
-                display: 'grid', gridTemplateColumns: cols, gap: 8, alignItems: 'center',
-                padding: '7px 20px', cursor: 'pointer', fontSize: 13,
-                borderBottom: '1px solid rgba(255,255,255,0.04)',
-                background: h.threatened ? 'rgba(180,40,40,0.12)' : 'transparent',
-              }}
-              onMouseEnter={e => { e.currentTarget.style.background = 'rgba(201,160,64,0.12)' }}
-              onMouseLeave={e => { e.currentTarget.style.background = h.threatened ? 'rgba(180,40,40,0.12)' : 'transparent' }}>
-              <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {h.is_capital && <CrownIcon size={12} />} {h.strategic_name || h.country || 'Ocean / Islands'}
-                <span style={{ color: theme.text.tertiary, fontSize: 11, marginLeft: 6 }}>#{shortHex(h.h3_index)}</span>
-              </span>
-              <span style={{ color: h.troops === 0 ? '#e0a040' : theme.text.primary }}>
-                {h.troops}{h.training > 0 && <span style={{ color: theme.text.tertiary }}> +{h.training}</span>}
-              </span>
-              <span style={{ display: 'flex', gap: 4 }}>
-                {h.buildings.map((b, i) => {
-                  const Icon = BUILDING_ICON[b.type]
-                  return Icon ? <span key={i} title={`${b.type}${b.ready ? '' : ' (under construction)'}`} style={{ opacity: b.ready ? 1 : 0.4, display: 'flex' }}><Icon size={13} /></span> : null
-                })}
-              </span>
-              {!isMobile && <span>+{h.income}</span>}
-              {!isMobile && <span>{h.upgrade_level}{h.upgrading ? '↑' : ''}</span>}
-              {!isMobile && (
-                <span style={{ fontSize: 12, color: theme.text.secondary }}>
-                  {h.order ? [h.order.min_troops ? `Hold ${h.order.min_troops}` : null, h.order.build ? `+${h.order.build}` : null].filter(Boolean).join(' ') : ''}
-                </span>
-              )}
-              <span style={{ fontSize: 12, color: h.threatened ? '#ff8080' : theme.text.tertiary }}>
-                {h.fighting ? 'Under attack' : h.incoming ? `Attack in ${eta(h.incoming.arrives_at)}` : h.rally_hex ? 'Rallying' : ''}
-              </span>
+            <div style={{ display: 'grid', gridTemplateColumns: cols, gap: 8, padding: '8px 20px', fontSize: 10, letterSpacing: 1, textTransform: 'uppercase', borderBottom: `1px solid ${theme.border}` }}>
+              {colHead('Hex', 'country')}
+              {colHead('Troops', 'troops')}
+              {colHead('Built')}
+              {!isMobile && colHead('Income', 'income')}
+              {!isMobile && colHead('Lvl')}
+              {!isMobile && colHead('Order')}
+              {colHead('Status', 'attention')}
             </div>
-          ))}
-        </div>
 
-        <div style={{ padding: '10px 20px 14px', borderTop: `1px solid ${theme.border}` }}>
-          <div style={{ fontSize: 10, letterSpacing: 1, textTransform: 'uppercase', color: theme.text.tertiary, marginBottom: 6 }}>
-            Defence{reinLabel ? ` - ${reinLabel}` : ''}
+            <div style={{ flex: 1, overflowY: 'auto' }}>
+              {rows === null && <div style={{ padding: 24, textAlign: 'center', color: theme.text.tertiary }}>Loading...</div>}
+              {rows !== null && visible.length === 0 && <div style={{ padding: 24, textAlign: 'center', color: theme.text.tertiary }}>No hexes match.</div>}
+              {visible.map(h => (
+                <div
+                  key={h.h3_index}
+                  onClick={() => { onFlyTo(h.h3_index); onClose() }}
+                  style={{
+                    display: 'grid', gridTemplateColumns: cols, gap: 8, alignItems: 'center',
+                    padding: '7px 20px', cursor: 'pointer', fontSize: 13,
+                    borderBottom: '1px solid rgba(255,255,255,0.04)',
+                    background: h.threatened ? 'rgba(180,40,40,0.12)' : 'transparent',
+                  }}
+                  onMouseEnter={e => { e.currentTarget.style.background = 'rgba(201,160,64,0.12)' }}
+                  onMouseLeave={e => { e.currentTarget.style.background = h.threatened ? 'rgba(180,40,40,0.12)' : 'transparent' }}>
+                  <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {h.is_capital && <CrownIcon size={12} />} {h.strategic_name || h.country || 'Ocean / Islands'}
+                    <span style={{ color: theme.text.tertiary, fontSize: 11, marginLeft: 6 }}>#{shortHex(h.h3_index)}</span>
+                  </span>
+                  <span style={{ color: h.troops === 0 ? '#e0a040' : theme.text.primary }}>
+                    {h.troops}{h.training > 0 && <span style={{ color: theme.text.tertiary }}> +{h.training}</span>}
+                  </span>
+                  <span style={{ display: 'flex', gap: 4 }}>
+                    {h.buildings.map((b, i) => {
+                      const Icon = BUILDING_ICON[b.type]
+                      return Icon ? <span key={i} title={`${b.type}${b.ready ? '' : ' (under construction)'}`} style={{ opacity: b.ready ? 1 : 0.4, display: 'flex' }}><Icon size={13} /></span> : null
+                    })}
+                  </span>
+                  {!isMobile && <span>+{h.income}</span>}
+                  {!isMobile && <span>{h.upgrade_level}{h.upgrading ? '↑' : ''}</span>}
+                  {!isMobile && (
+                    <span style={{ fontSize: 12, color: theme.text.secondary }}>
+                      {h.order ? [h.order.min_troops ? `Hold ${h.order.min_troops}` : null, h.order.build ? `+${h.order.build}` : null].filter(Boolean).join(' ') : ''}
+                    </span>
+                  )}
+                  <span style={{ fontSize: 12, color: h.threatened ? '#ff8080' : theme.text.tertiary }}>
+                    {h.fighting ? 'Under attack' : h.incoming ? `Attack in ${eta(h.incoming.arrives_at)}` : h.rally_hex ? 'Rallying' : ''}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+
+        {tab === 'actions' && (
+          <div style={{ flex: 1, overflowY: 'auto', padding: '14px 20px' }}>
+            {scopeBar}
+            <div style={card}>
+              <div style={cardTitle}>Keep at least</div>
+              <div style={cardDesc}>The fewest troops any hex may be left with by the actions below. A hex that can't send without dropping under this stays put.</div>
+              <div style={row}>
+                <input style={{ ...S.input, width: 64 }} inputMode="numeric" value={keep} onChange={e => setKeep(e.target.value.replace(/\D/g, '').slice(0, 3))} />
+                <span style={{ fontSize: 13, color: theme.text.secondary }}>troops per hex</span>
+                <label style={{ ...row, marginLeft: 'auto', fontSize: 12, color: syncLabel ? theme.text.tertiary : theme.text.secondary }}>
+                  <input type="checkbox" checked={sync && !syncLabel} disabled={!!syncLabel} onChange={e => setSync(e.target.checked)} />
+                  Arrive together{syncLabel ? ` - ${syncLabel}` : ''}
+                </label>
+              </div>
+            </div>
+
+            <div style={card}>
+              <div style={cardTitle}>Reinforce threatened{reinLabel ? <span style={{ color: theme.text.tertiary, fontSize: 12 }}> - {reinLabel}</span> : null}</div>
+              <div style={cardDesc}>Sends spare troops from your other hexes to the hexes under attack, nearest first, only if they can arrive in time. Uses all your hexes, not just the filter.</div>
+              <div style={row}>
+                <button
+                  style={{ ...S.chip(true), opacity: !!reinLabel || reinBusy || totals.threatened === 0 ? 0.5 : 1 }}
+                  disabled={!!reinLabel || reinBusy || totals.threatened === 0} onClick={reinforce}>
+                  {reinLabel ? reinLabel
+                    : rein ? `Confirm: ${rein.troops} troops to ${rein.covered} hexes${rein.late ? ` (${rein.late} too far)` : ''}`
+                    : totals.threatened === 0 ? 'Nothing under threat' : `Reinforce ${totals.threatened} threatened hexes...`}
+                </button>
+                {rein && <button style={S.chip(false)} onClick={() => setReinPlan(null)}>Cancel</button>}
+              </div>
+            </div>
+
+            <div style={card}>
+              <div style={cardTitle}>Mass march{massLabel ? <span style={{ color: theme.text.tertiary, fontSize: 12 }}> - {massLabel}</span> : null}</div>
+              <div style={cardDesc}>Everything above your minimum, from every hex in the filter, to one hex you click on the map.</div>
+              <div style={row}>
+                <button
+                  style={{ ...S.chip(true), opacity: massLocked || !marchSources.length ? 0.5 : 1 }}
+                  disabled={massLocked || !marchSources.length}
+                  onClick={() => onMassMarch({ sources: marchSources.map(h => h.h3_index), keep: keepN, sync: sync && !syncLabel })}>
+                  {massLocked ? massLabel : `Send ${marchTroops} troops from ${marchSources.length} hexes...`}
+                </button>
+              </div>
+            </div>
+
+            <div style={card}>
+              <div style={cardTitle}>Fan out{fanLabel ? <span style={{ color: theme.text.tertiary, fontSize: 12 }}> - {fanLabel}</span> : null}</div>
+              <div style={cardDesc}>Sends an army of exactly the size you set from each hex to a neighbouring hex you don't own, to claim it or attack it. A hex sends only if it can afford that and stay at your minimum. Attacks only go where your army beats the visible garrison.</div>
+              <div style={{ ...row, marginBottom: 10 }}>
+                <span style={{ fontSize: 13, color: theme.text.secondary }}>Send</span>
+                <input
+                  style={{ ...S.input, width: 64 }} inputMode="numeric" placeholder={String(minClaim)}
+                  value={perTarget} onChange={e => setPerTarget(e.target.value.replace(/\D/g, '').slice(0, 3))} />
+                <span style={{ fontSize: 13, color: theme.text.secondary }}>troops to each target</span>
+                {decayMin > minClaim && (
+                  <button style={S.chip(false)} onClick={() => setPerTarget(String(decayMin))} title="A new border hex needs about this many to resist decay at your empire's size">
+                    Decay-safe ({decayMin})
+                  </button>
+                )}
+              </div>
+              <div style={row}>
+                <select style={S.input} value={fanMode} onChange={e => setFanMode(e.target.value)}>
+                  <option value="both">Claim and attack</option>
+                  <option value="claim">Claim empty land only</option>
+                  <option value="attack">Attack enemies only</option>
+                </select>
+                <button
+                  style={{ ...S.chip(true), opacity: fanLocked || fanBusy || !visible.length || !perTargetOk ? 0.5 : 1 }}
+                  disabled={fanLocked || fanBusy || !visible.length || !perTargetOk} onClick={fanOut}>
+                  {fanLocked ? fanLabel
+                    : !perTargetOk ? `Set at least ${minClaim} troops`
+                    : plan ? `Confirm: ${plan.troops} troops, ${plan.claims} claims, ${plan.attacks} attacks`
+                    : 'Fan out...'}
+                </button>
+                {plan && <button style={S.chip(false)} onClick={() => setFanPlan(null)}>Cancel</button>}
+              </div>
+            </div>
           </div>
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginBottom: 12 }}>
-            <button
-              style={{ ...S.chip(true), opacity: !!reinLabel || reinBusy || totals.threatened === 0 ? 0.5 : 1 }}
-              disabled={!!reinLabel || reinBusy || totals.threatened === 0} onClick={reinforce}>
-              {reinLabel ? reinLabel
-                : rein ? `Confirm: ${rein.troops} troops to ${rein.covered} hexes${rein.late ? ` (${rein.late} too far)` : ''}`
-                : totals.threatened === 0 ? 'Nothing under threat' : `Reinforce ${totals.threatened} threatened hexes...`}
-            </button>
-            {rein && <button style={S.chip(false)} onClick={() => setReinPlan(null)}>Cancel</button>}
-            <span style={{ fontSize: 12, color: theme.text.tertiary }}>from hexes with spare troops, only if they arrive in time</span>
+        )}
+
+        {tab === 'orders' && (
+          <div style={{ flex: 1, overflowY: 'auto', padding: '14px 20px' }}>
+            {scopeBar}
+            <div style={card}>
+              <div style={cardTitle}>Standing orders{ordersLabel ? <span style={{ color: theme.text.tertiary, fontSize: 12 }}> - {ordersLabel}</span> : null}</div>
+              <div style={cardDesc}>Rules each hex follows at the start of every harvest, paid from your gold at normal prices, emptiest hexes first. Set here, they show in the Order column on the Hexes tab.</div>
+              <div style={{ ...row, marginBottom: 10 }}>
+                <span style={{ fontSize: 13, color: theme.text.secondary }}>Keep at least</span>
+                <input
+                  style={{ ...S.input, width: 64 }} inputMode="numeric" placeholder="troops"
+                  value={orderTroops} onChange={e => setOrderTroops(e.target.value.replace(/\D/g, '').slice(0, 3))} />
+                {decayMin > 0 && (
+                  <button style={S.chip(false)} onClick={() => setOrderTroops(String(decayMin))} title="The garrison a hex needs to resist border decay at your empire's size">
+                    Decay-safe ({decayMin})
+                  </button>
+                )}
+              </div>
+              <div style={{ ...row, marginBottom: 10 }}>
+                <select style={S.input} value={orderBuild} onChange={e => setOrderBuild(e.target.value)}>
+                  <option value="">No building</option>
+                  <option value="fort" disabled={!!buildLabel}>Build fort if empty{buildLabel ? ` (${buildLabel})` : ''}</option>
+                  <option value="barracks" disabled={!!buildLabel}>Build barracks if empty{buildLabel ? ` (${buildLabel})` : ''}</option>
+                  <option value="mine" disabled={!!buildLabel}>Build mine if empty{buildLabel ? ` (${buildLabel})` : ''}</option>
+                </select>
+              </div>
+              <div style={row}>
+                <button
+                  style={{ ...S.chip(true), opacity: applying || !visible.length ? 0.5 : 1 }}
+                  disabled={applying || !visible.length || (!!ordersLabel && !!orderTroops) || (!!buildLabel && !!orderBuild)} onClick={() => applyOrders(false)}>
+                  Set orders
+                </button>
+                <button style={S.chip(false)} disabled={applying || !visible.length} onClick={() => applyOrders(true)}>Clear orders</button>
+              </div>
+              {shortfall > 0 && <div style={{ fontSize: 11, color: theme.text.tertiary, marginTop: 8 }}>Right now that would train about {shortfall} troops.</div>}
+            </div>
           </div>
-          <div style={{ fontSize: 10, letterSpacing: 1, textTransform: 'uppercase', color: theme.text.tertiary, marginBottom: 6 }}>
-            Mass march the {visible.length} hex{visible.length === 1 ? '' : 'es'} shown
+        )}
+
+        {tab === 'unlocks' && (
+          <div style={{ flex: 1, overflowY: 'auto', padding: '14px 20px' }}>
+            {unlocks ? (
+              <>
+                <div style={{ fontSize: 12, color: theme.text.secondary, marginBottom: 12 }}>
+                  Unlocks are earned by the most hexes you've held this season (yours: {unlocks.effective}).
+                </div>
+                {unlocks.tiers.map(t => (
+                  <div key={t.id} style={{ ...card, opacity: t.unlocked ? 1 : 0.75 }}>
+                    <div style={{ ...row, justifyContent: 'space-between' }}>
+                      <span style={cardTitle}>{t.name}</span>
+                      <span style={{ fontSize: 12, color: t.unlocked ? theme.success : theme.text.tertiary }}>
+                        {t.unlocked ? 'Unlocked' : `${t.hexes} hexes`}
+                      </span>
+                    </div>
+                    <div style={{ ...cardDesc, marginBottom: t.unlocked ? 0 : 8 }}>{t.desc}</div>
+                    {!t.unlocked && (
+                      <div style={{ height: 4, background: 'rgba(255,255,255,0.08)', borderRadius: 2 }}>
+                        <div style={{ height: '100%', width: `${Math.min(100, (unlocks.effective / t.hexes) * 100)}%`, background: theme.accent, borderRadius: 2 }} />
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </>
+            ) : <div style={{ padding: 24, textAlign: 'center', color: theme.text.tertiary }}>Loading...</div>}
           </div>
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginBottom: 12 }}>
-            <span style={{ fontSize: 13, color: theme.text.secondary }}>Leave</span>
-            <input
-              style={{ ...S.input, width: 56 }} inputMode="numeric" value={keep}
-              onChange={e => setKeep(e.target.value.replace(/\D/g, '').slice(0, 3))} />
-            <span style={{ fontSize: 13, color: theme.text.secondary }}>behind on each</span>
-            <button
-              style={{ ...S.chip(true), opacity: massLocked || !marchSources.length ? 0.5 : 1 }}
-              disabled={massLocked || !marchSources.length}
-              onClick={() => onMassMarch({ sources: marchSources.map(h => h.h3_index), keep: keepN, sync: sync && !syncLabel })}>
-              {massLocked ? massLabel : `Send ${marchTroops} troops from ${marchSources.length} hexes...`}
-            </button>
-          </div>
-          <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: syncLabel ? theme.text.tertiary : theme.text.secondary, marginBottom: 12 }}>
-            <input type="checkbox" checked={sync && !syncLabel} disabled={!!syncLabel} onChange={e => setSync(e.target.checked)} />
-            Arrive together (mass march and fan out) - every army waits for the slowest{syncLabel ? ` - ${syncLabel}` : ''}
-          </label>
-          <div style={{ fontSize: 10, letterSpacing: 1, textTransform: 'uppercase', color: theme.text.tertiary, marginBottom: 6 }}>
-            Fan out from the {visible.length} hex{visible.length === 1 ? '' : 'es'} shown
-          </div>
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginBottom: 12 }}>
-            <select style={S.input} value={fanMode} onChange={e => setFanMode(e.target.value)}>
-              <option value="both">Claim and attack</option>
-              <option value="claim">Claim empty land only</option>
-              <option value="attack">Attack enemies only</option>
-            </select>
-            <span style={{ fontSize: 12, color: theme.text.tertiary }}>leaving {keepN} on each</span>
-            <button
-              style={{ ...S.chip(true), opacity: fanLocked || fanBusy || !visible.length ? 0.5 : 1 }}
-              disabled={fanLocked || fanBusy || !visible.length} onClick={fanOut}>
-              {fanLocked ? fanLabel
-                : plan ? `Confirm: ${plan.troops} troops, ${plan.claims} claims, ${plan.attacks} attacks`
-                : 'Fan out...'}
-            </button>
-            {plan && <button style={S.chip(false)} onClick={() => setFanPlan(null)}>Cancel</button>}
-          </div>
-          <div style={{ fontSize: 10, letterSpacing: 1, textTransform: 'uppercase', color: theme.text.tertiary, marginBottom: 6 }}>
-            Standing orders for the {visible.length} hex{visible.length === 1 ? '' : 'es'} shown{ordersLabel ? ` - ${ordersLabel}` : ''}
-          </div>
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-            <span style={{ fontSize: 13, color: theme.text.secondary }}>Keep at least</span>
-            <input
-              style={{ ...S.input, width: 64 }} inputMode="numeric" placeholder="troops"
-              value={orderTroops} onChange={e => setOrderTroops(e.target.value.replace(/\D/g, '').slice(0, 3))} />
-            {decayMin > 0 && (
-              <button style={S.chip(false)} onClick={() => setOrderTroops(String(decayMin))} title="The garrison a hex needs to resist border decay at your empire's size">
-                Decay-safe ({decayMin})
-              </button>
-            )}
-            <select style={S.input} value={orderBuild} onChange={e => setOrderBuild(e.target.value)}>
-              <option value="">No building</option>
-              <option value="fort" disabled={!!buildLabel}>Build fort if empty{buildLabel ? ` (${buildLabel})` : ''}</option>
-              <option value="barracks" disabled={!!buildLabel}>Build barracks if empty{buildLabel ? ` (${buildLabel})` : ''}</option>
-              <option value="mine" disabled={!!buildLabel}>Build mine if empty{buildLabel ? ` (${buildLabel})` : ''}</option>
-            </select>
-            <button
-              style={{ ...S.chip(true), opacity: applying || !visible.length ? 0.5 : 1 }}
-              disabled={applying || !visible.length || (!!ordersLabel && !!orderTroops) || (!!buildLabel && !!orderBuild)} onClick={() => applyOrders(false)}>
-              Set orders
-            </button>
-            <button style={S.chip(false)} disabled={applying || !visible.length} onClick={() => applyOrders(true)}>Clear orders</button>
-          </div>
-          <div style={{ fontSize: 11, color: theme.text.tertiary, marginTop: 6 }}>
-            Runs at the start of each harvest and is paid from your gold at normal prices, emptiest hexes first.
-            {shortfall > 0 && ` Right now that would train about ${shortfall} troops.`}
-          </div>
-        </div>
+        )}
       </div>
     </div>
   )

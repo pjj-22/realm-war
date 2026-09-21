@@ -33,3 +33,10 @@ test('a target only one source can reach is not starved by a better-connected on
 test('targets nobody can afford are skipped', () => {
   assert.deepEqual(planFanOut(new Map([['b', 3]]), [{ h3: 'a', cost: 5, kind: 'claim' }], neighbors), [])
 })
+
+test('every army carries exactly the target cost, and a source will not drop below what it can spare', () => {
+  // spare is troops minus the player's minimum, so a source with 12 spare and a cost of 5 can only serve two targets
+  const plan = planFanOut(new Map([['b', 12]]), [{ h3: 'a', cost: 5, kind: 'claim' }, { h3: 'c', cost: 5, kind: 'claim' }, { h3: 'e', cost: 5, kind: 'claim' }], neighbors)
+  assert.ok(plan.every(p => p.quantity === 5))
+  assert.equal(plan.length, 2)
+})

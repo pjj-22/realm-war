@@ -6,13 +6,15 @@ import { buildVisibleSet, canSeeDetail } from './visibility.js'
 import { planFanOut } from './fanout.js'
 
 // Which of `sources` (hexes the player owns) should send troops where, for a
-// fan-out: unclaimed neighbours to claim (MIN_TROOPS_TO_CLAIM each) and/or
-// enemy neighbours to attack (1.5x the visible garrison + 2). mode is
-// 'claim' | 'attack' | 'both'. Attacks are only planned where the defender's
-// garrison is currently visible. Allies, ocean, hexes under siege and hexes one
-// of the player's armies is already heading for are skipped. Returns the plan
-// (see fanout.js planFanOut); nothing is sent.
-export async function gatherFanOut(me, { sources, keep, mode }) {
+// fan-out. Every army carries exactly `perTarget` troops - the player's number,
+// no auto-sizing - and a source only sends if that still leaves it at or above
+// `keep`. perTarget goes to each unclaimed neighbour (to claim; it must be at
+// least MIN_TROOPS_TO_CLAIM) and, in 'attack'/'both' mode, to each visible enemy
+// neighbour, but only where perTarget covers 1.5x the garrison + 2 (a smaller
+// force would just die). mode is 'claim' | 'attack' | 'both'. Allies, ocean,
+// hexes under siege and hexes one of the player's armies is already heading for
+// are skipped. Returns the plan (see fanout.js planFanOut); nothing is sent.
+export async function gatherFanOut(me, { sources, keep, mode, perTarget }) {
   const type = 'troop'
   const owned = await pool.query('SELECT h3_index FROM hexes WHERE owner_id=$1', [me])
   const ownedSet = new Set(owned.rows.map(r => r.h3_index))
@@ -20,7 +22,7 @@ export async function gatherFanOut(me, { sources, keep, mode }) {
 
   const garrisons = await pool.query(
     'SELECT h3_index, quantity FROM troops WHERE owner_id=$1 AND type=$2 AND h3_index = ANY($3)', [me, type, wanted])
-  const spare = new Map(garrisons.rows.map(r => [r.h3_index, r.quantity - keep]).filter(([, q]) => q >= MIN_TROOPS_TO_CLAIM))
+  const spare = new Map(garrisons.rows.map(r => [r.h3_index, r.quantity - keep]).filter(([, q]) => q >= perTarget))
   if (spare.size === 0) return []
 
   // Candidate targets: neighbours of the sources that can actually afford something
@@ -48,9 +50,10 @@ export async function gatherFanOut(me, { sources, keep, mode }) {
     if (besieged.has(h) || enRoute.has(h)) continue
     const o = ownerOf.get(h)
     if (!o) {
-      if (mode !== 'attack') targets.push({ h3: h, cost: MIN_TROOPS_TO_CLAIM, kind: 'claim' })
+      if (mode !== 'attack') targets.push({ h3: h, cost: perTarget, kind: 'claim' })
     } else if (mode !== 'claim' && !(myAlliance && o.alliance_id === myAlliance) && canSeeDetail(h, visible, false, now)) {
-      targets.push({ h3: h, cost: Math.ceil((defenders.get(`${h}|${o.owner_id}`) || 0) * 1.5) + 2, kind: 'attack' })
+      const needed = Math.ceil((defenders.get(`${h}|${o.owner_id}`) || 0) * 1.5) + 2
+      if (perTarget >= needed) targets.push({ h3: h, cost: perTarget, kind: 'attack' })
     }
   }
   return planFanOut(spare, targets, h => gridDisk(h, 1))

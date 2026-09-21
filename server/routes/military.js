@@ -175,20 +175,23 @@ router.post('/march-many', requireAuth, rateLimit({ windowMs: 60 * 1000, max: 10
 })
 
 // Fan out: one click, and troops from your hexes go to the hexes next to them
-// that aren't yours - unclaimed land to claim (MIN_TROOPS_TO_CLAIM each) and/or
-// enemy hexes to attack. Same unlock and source rules as mass march. Attacks
-// are only planned where the defender's garrison is currently visible (fog of
-// war, night) and are sent at 1.5x that garrison + 2, so this never throws
-// troops at a hex it can't size up. Allies, ocean, hexes already under
+// that aren't yours - unclaimed land to claim and/or enemy hexes to attack.
+// The player sets `perTarget`, the exact size of every army, and `keep`, the
+// least a source may be left with (a source that can't send perTarget without
+// dropping below it doesn't send). Attacks are only planned where the
+// defender's garrison is currently visible (fog of war, night) and perTarget
+// covers 1.5x that garrison + 2, so this never throws troops at a hex it
+// can't size up or can't beat. Allies, ocean, hexes already under
 // siege, and hexes one of your armies is already heading for are left alone.
 // dryRun returns the plan without sending anything.
 const FANOUT_MAX_ARMIES = 300
 const FANOUT_MODES = ['claim', 'attack', 'both']
 router.post('/fan-out', requireAuth, rateLimit({ windowMs: 60 * 1000, max: 20, key: req => `fan-out:${req.player.id}`, message: 'Slow down - too many fan-outs' }), async (req, res) => {
-  const { sources, keep = 1, mode = 'both', dryRun = false, sync = false } = req.body
+  const { sources, keep = 1, mode = 'both', dryRun = false, sync = false, perTarget } = req.body
   if (!Array.isArray(sources) || sources.length === 0) return res.status(400).json({ error: 'Invalid request' })
   if (!Number.isInteger(keep) || keep < 0 || keep > 500) return res.status(400).json({ error: 'Invalid keep amount' })
   if (!FANOUT_MODES.includes(mode)) return res.status(400).json({ error: 'Invalid mode' })
+  if (!Number.isInteger(perTarget) || perTarget < MIN_TROOPS_TO_CLAIM || perTarget > 500) return res.status(400).json({ error: `Send between ${MIN_TROOPS_TO_CLAIM} and 500 troops per target` })
   const type = 'troop'
   const stats = TROOP_STATS[type]
   const me = req.player.id
@@ -197,7 +200,7 @@ router.post('/fan-out', requireAuth, rateLimit({ windowMs: 60 * 1000, max: 20, k
     await requireUnlock(me, 'fan_out')
     if (sync) await requireUnlock(me, 'coordinated')
     const oceanMult = oceanMultiplierFor(await getUnlockState(me))
-    const plan = (await gatherFanOut(me, { sources, keep, mode })).slice(0, FANOUT_MAX_ARMIES)
+    const plan = (await gatherFanOut(me, { sources, keep, mode, perTarget })).slice(0, FANOUT_MAX_ARMIES)
     const summary = {
       armies: plan.length,
       troops: plan.reduce((s, p) => s + p.quantity, 0),
