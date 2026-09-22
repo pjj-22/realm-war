@@ -68,6 +68,48 @@ router.post('/train', requireAuth, async (req, res) => {
   }
 })
 
+// Auto-train (client's "Auto-Train" button): spreads the player's gold across
+// many hexes in one request instead of one /train call per hex - at a couple
+// hundred hexes that used to mean that many sequential round trips. The split
+// across hexes is decided client-side (GameMap.jsx handleAutoTrain); this just
+// executes it as a single transaction, one gold check, one price lock-in.
+const AUTO_TRAIN_MAX_HEXES = 500
+router.post('/train-batch', requireAuth, async (req, res) => {
+  const { orders } = req.body
+  if (!Array.isArray(orders) || orders.length === 0 || orders.length > AUTO_TRAIN_MAX_HEXES) return res.status(400).json({ error: 'Invalid request' })
+  const type = 'troop'
+  const clean = []
+  for (const o of orders) {
+    if (!o || typeof o.h3Index !== 'string' || !Number.isInteger(o.quantity) || o.quantity < 1) return res.status(400).json({ error: 'Invalid request' })
+    clean.push({ h3Index: o.h3Index, quantity: o.quantity })
+  }
+  const stats = TROOP_STATS[type]
+
+  try {
+    const owned = await pool.query('SELECT h3_index FROM hexes WHERE owner_id=$1', [req.player.id])
+    const ownedSet = new Set(owned.rows.map(r => r.h3_index))
+    const wanted = clean.filter(o => ownedSet.has(o.h3Index))
+
+    const { trained, hexes, spent, gold } = await withTransaction(async (tx) => {
+      const player = await tx.query('SELECT gold FROM players WHERE id=$1 FOR UPDATE', [req.player.id])
+      let budget = player.rows[0].gold
+      let trained = 0, hexes = 0, spent = 0
+      for (const o of wanted) {
+        const cost = stats.gold * o.quantity
+        if (cost > budget) continue
+        await queueTraining(tx, req.player.id, o.h3Index, type, o.quantity)
+        budget -= cost; spent += cost; trained += o.quantity; hexes++
+      }
+      if (spent > 0) await tx.query('UPDATE players SET gold=gold-$1 WHERE id=$2', [spent, req.player.id])
+      return { trained, hexes, spent, gold: budget }
+    })
+    res.json({ trained, hexes, spent, player: { gold } })
+  } catch (err) {
+    log.error('POST /train-batch failed', { err })
+    res.status(500).json({ error: 'Server error' })
+  }
+})
+
 router.post('/march', requireAuth, async (req, res) => {
   const { fromHex, toHex, type, quantity } = req.body
   // quantity must be a positive whole number - a negative value would slip past

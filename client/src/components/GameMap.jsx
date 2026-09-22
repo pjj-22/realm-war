@@ -2311,8 +2311,7 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
     // randomizes which hex ends up absorbing the remainder below.
     const targets = [...owned].sort(() => Math.random() - 0.5)
 
-    let trainedTotal = 0
-    let hexesUsed = 0
+    const orders = []
     for (let i = 0; i < targets.length; i++) {
       const maxAffordable = Math.floor(budget / goldPerTroop)
       if (maxAffordable < 1) break
@@ -2325,14 +2324,23 @@ export default function GameMap({ player, onLoginRequired, onPlayerUpdate, onSho
       const remaining = targets.length - i
       const evenShare = Math.max(1, Math.floor(maxAffordable / remaining))
       const qty = isLast ? maxAffordable : Math.min(maxAffordable, Math.max(1, Math.round(evenShare * (0.7 + Math.random() * 0.6))))
+      orders.push({ h3Index: targets[i].h3_index, quantity: qty })
+      budget -= qty * goldPerTroop
+    }
+
+    let trainedTotal = 0
+    let hexesUsed = 0
+    if (orders.length > 0) {
+      // One request for every hex instead of one round trip per hex - at a
+      // couple hundred owned hexes that used to mean that many sequential
+      // /train calls, each waiting on the last.
       try {
-        const r = await api.trainTroops(targets[i].h3_index, 'troop', qty)
+        const r = await api.trainBatch(orders)
+        trainedTotal = r.trained
+        hexesUsed = r.hexes
         budget = r.player.gold
-        trainedTotal += qty
-        hexesUsed++
       } catch (err) {
         toast(err.message)
-        break
       }
     }
 

@@ -41,6 +41,7 @@ export const api = {
   upgradeHex: (h3Index) => request('POST', `/buildings/${h3Index}/upgrade`),
   getMilitary: (h3Index) => request('GET', `/military/hex/${h3Index}`),
   trainTroops: (h3Index, type, quantity) => request('POST', '/military/train', { h3Index, type, quantity }),
+  trainBatch: (orders) => request('POST', '/military/train-batch', { orders }),
   marchArmy: (fromHex, toHex, type, quantity) => request('POST', '/military/march', { fromHex, toHex, type, quantity }),
   setOrders: (h3Indexes, min_troops, build = null) => request('POST', '/military/orders', { h3Indexes, min_troops, build }),
   marchMany: (sources, toHex, keep, sync = false) => request('POST', '/military/march-many', { sources, toHex, keep, sync }),
