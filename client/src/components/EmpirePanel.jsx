@@ -223,11 +223,20 @@ export default function EmpirePanel({ player, armies, activeBattles, onFlyTo, on
       if (!plan) {
         const preview = await api.fanOut(sources, keepN, fanMode, perTargetN, reachN, true, sync && !syncLabel)
         if (!preview.armies) {
+          const k = preview.skipped || {}
+          const why = [
+            k.enRoute && `${k.enRoute} already have your armies heading there`,
+            k.ocean && `${k.ocean} are open water`,
+            k.hidden && `${k.hidden} enemy hexes have a garrison you can't see (night or out of vision)`,
+            k.tooStrong && `${k.tooStrong} enemy garrisons are stronger than ${perTargetN}`,
+            k.besieged && `${k.besieged} are under siege`,
+            k.ally && `${k.ally} are allies'`,
+          ].filter(Boolean)
           toast(preview.senders === 0
             ? `No hex can send ${perTargetN} and still keep ${keepN} - the most any hex could send is ${preview.maxSpare}. Lower the number or the minimum.`
-            : preview.targets === 0
-              ? 'No neighbouring hexes to claim or attack with that many troops'
-              : 'Nothing to send')
+            : why.length
+              ? `Nothing to send. Of the hexes next to your land: ${why.join('; ')}.`
+              : 'No hexes next to your land to claim or attack')
         } else setFanPlan({ ...preview, key: fanKey })
       } else {
         const r = await api.fanOut(sources, keepN, fanMode, perTargetN, reachN, false, sync && !syncLabel)

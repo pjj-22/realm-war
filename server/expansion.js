@@ -17,8 +17,8 @@ import { planFanOut } from './fanout.js'
 // hexes under siege and hexes one of the player's armies is already heading for
 // are skipped. Returns { plan, senders, maxSpare, targets }: the plan (see
 // fanout.js planFanOut), how many hexes could afford perTarget, the most any
-// one hex could spare, and how many targets qualified - so an empty plan can
-// say why. Nothing is sent.
+// one hex could spare, how many targets qualified, and `skipped` counts of the
+// neighbouring hexes left out and why - so an empty plan can say why. Nothing is sent.
 export async function gatherFanOut(me, { sources, keep, mode, perTarget, range = 1 }) {
   const type = 'troop'
   const owned = await pool.query('SELECT h3_index FROM hexes WHERE owner_id=$1', [me])
@@ -30,7 +30,7 @@ export async function gatherFanOut(me, { sources, keep, mode, perTarget, range =
   const allSpare = garrisons.rows.map(r => [r.h3_index, r.quantity - keep])
   const maxSpare = allSpare.reduce((m, [, q]) => Math.max(m, q), 0)
   const spare = new Map(allSpare.filter(([, q]) => q >= perTarget))
-  if (spare.size === 0) return { plan: [], senders: 0, maxSpare, targets: 0 }
+  if (spare.size === 0) return { plan: [], senders: 0, maxSpare, targets: 0, skipped: {} }
 
   // Candidate targets: every non-owned hex next to any hex you own. (Not just
   // next to the sources - with a reach above 1, an interior hex can supply a
@@ -38,6 +38,8 @@ export async function gatherFanOut(me, { sources, keep, mode, perTarget, range =
   const candidates = new Set()
   for (const h of ownedSet) for (const n of gridDisk(h, 1)) if (!ownedSet.has(n)) candidates.add(n)
   const candList = [...candidates].filter(h => !isOcean(h))
+  // Why candidate hexes were left out, so an empty plan can say so
+  const skipped = { ocean: candidates.size - candList.length, enRoute: 0, besieged: 0, ally: 0, hidden: 0, tooStrong: 0 }
 
   const [hexRows, garr, battles, mine, alliance] = await Promise.all([
     pool.query('SELECT h.h3_index, h.owner_id, p.alliance_id FROM hexes h JOIN players p ON p.id = h.owner_id WHERE h.h3_index = ANY($1)', [candList]),
@@ -56,16 +58,23 @@ export async function gatherFanOut(me, { sources, keep, mode, perTarget, range =
 
   const targets = []
   for (const h of candList) {
-    if (besieged.has(h) || enRoute.has(h)) continue
+    if (enRoute.has(h)) { skipped.enRoute++; continue }
+    if (besieged.has(h)) { skipped.besieged++; continue }
     const o = ownerOf.get(h)
     if (!o) {
       if (mode !== 'attack') targets.push({ h3: h, cost: perTarget, kind: 'claim' })
-    } else if (mode !== 'claim' && !(myAlliance && o.alliance_id === myAlliance) && canSeeDetail(h, visible, false, now)) {
-      const needed = Math.ceil((defenders.get(`${h}|${o.owner_id}`) || 0) * 1.5) + 2
-      if (perTarget >= needed) targets.push({ h3: h, cost: perTarget, kind: 'attack' })
+    } else if (mode !== 'claim') {
+      if (myAlliance && o.alliance_id === myAlliance) skipped.ally++
+      else if (!canSeeDetail(h, visible, false, now)) skipped.hidden++
+      else {
+        const needed = Math.ceil((defenders.get(`${h}|${o.owner_id}`) || 0) * 1.5) + 2
+        if (perTarget >= needed) targets.push({ h3: h, cost: perTarget, kind: 'attack' })
+        else skipped.tooStrong++
+      }
     }
   }
+
   // Sources in reach of a target: every hex within `range` steps, with its distance
   const inReach = (h3) => gridDiskDistances(h3, range).flatMap((ring, d) => (d === 0 ? [] : ring.map(cell => ({ h3: cell, d }))))
-  return { plan: planFanOut(spare, targets, inReach), senders: spare.size, maxSpare, targets: targets.length }
+  return { plan: planFanOut(spare, targets, inReach), senders: spare.size, maxSpare, targets: targets.length, skipped }
 }

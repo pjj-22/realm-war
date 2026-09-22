@@ -212,7 +212,7 @@ router.post('/fan-out', requireAuth, rateLimit({ windowMs: 60 * 1000, max: 20, k
       claims: plan.filter(p => p.kind === 'claim').length,
       attacks: plan.filter(p => p.kind === 'attack').length,
     }
-    if (dryRun) return res.json({ dryRun: true, ...summary, senders: gathered.senders, maxSpare: gathered.maxSpare, targets: gathered.targets })
+    if (dryRun) return res.json({ dryRun: true, ...summary, senders: gathered.senders, maxSpare: gathered.maxSpare, targets: gathered.targets, skipped: gathered.skipped })
 
     const routed = plan.map(p => {
       const { path, cost } = findMarchPath(p.fromHex, p.toHex, oceanMult)
